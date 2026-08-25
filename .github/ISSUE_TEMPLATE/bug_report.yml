@@ -1,0 +1,53 @@
+name: "🐛 Bug Report"
+description: File a bug report to help us improve Antigravity Codespaces Pro
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! Please describe the problem in detail.
+
+  - type: input
+    id: ide_version
+    attributes:
+      label: Antigravity IDE / Code-OSS Version
+      placeholder: "e.g. 2.5.5 (1.107.0)"
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: Operating System
+      placeholder: "e.g. Windows 11 / Ubuntu 24.04 / macOS Sequoia"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: What steps led to this error?
+      placeholder: |
+        1. Open Antigravity IDE
+        2. Press 'Alt + C' or open Cloud Hub
+        3. Click 'Connect' on Codespace
+        4. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / SSH Output
+      description: Copy relevant logs from OpenSSH, Developer Tools, or Terminal.
+      render: shell

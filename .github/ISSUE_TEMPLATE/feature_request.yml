@@ -1,0 +1,31 @@
+name: "💡 Feature Request"
+description: Suggest an idea or enhancement for Antigravity Codespaces Pro
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to make cloud development even better? Let us know!
+
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: Feature Description
+      description: Explain what feature you would like to see added.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Problem / Use Case
+      description: What problem does this solve or why would this be beneficial?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Proposed Solution or Alternatives
+      description: Describe any alternative solutions or features you've considered.

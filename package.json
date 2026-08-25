@@ -1,0 +1,207 @@
+{
+  "name": "antigravity-codespaces",
+  "displayName": "Antigravity Codespaces Pro",
+  "description": "Enterprise multi-account GitHub Codespaces manager for Antigravity IDE & Code-OSS. Connect, start, stop, rebuild, test, and monitor all your cloud dev environments across multiple GitHub accounts with 1 click — by Nirbhay hiwse.",
+  "version": "4.3.0",
+  "publisher": "nirbhay-hiwse",
+  "author": {
+    "name": "Nirbhay hiwse",
+    "url": "https://github.com/Nir-Bhay"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Nir-Bhay/antigravity-codespaces#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nir-Bhay/antigravity-codespaces"
+  },
+  "bugs": {
+    "url": "https://github.com/Nir-Bhay/antigravity-codespaces/issues"
+  },
+  "keywords": [
+    "codespaces",
+    "github",
+    "remote",
+    "ssh",
+    "cloud",
+    "antigravity",
+    "devcontainer",
+    "multi-account",
+    "remote-development",
+    "github-codespaces"
+  ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "icon": "icon.png",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:antigravity-codespaces-view"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Antigravity Codespaces",
+      "properties": {
+        "antigravity-codespaces.autoSyncSSHOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically synchronize Codespaces into ~/.ssh/config on IDE startup."
+        },
+        "antigravity-codespaces.showStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "description": "Display the Codespaces quick-access badge in the bottom Status Bar."
+        },
+        "antigravity-codespaces.serverAliveInterval": {
+          "type": "number",
+          "default": 30,
+          "description": "SSH keepalive interval in seconds (prevents WebSocket drops during AI agent sessions)."
+        },
+        "antigravity-codespaces.serverAliveCountMax": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum SSH keepalive probes before declaring a connection dead."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "antigravity-codespaces-container",
+          "title": "Codespaces",
+          "icon": "icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "antigravity-codespaces-container": [
+        {
+          "type": "webview",
+          "id": "antigravity-codespaces-view",
+          "name": "GitHub Codespaces"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "antigravity-codespaces.openDashboard",
+        "title": "Open Cloud Hub Dashboard",
+        "icon": "$(layout-sidebar-left)"
+      },
+      {
+        "command": "antigravity-codespaces.quickConnect",
+        "title": "Quick Connect to Codespace...",
+        "icon": "$(play)"
+      },
+      {
+        "command": "antigravity-codespaces.quickMenu",
+        "title": "Open Quick Actions Menu",
+        "icon": "$(cloud)"
+      },
+      {
+        "command": "antigravity-codespaces.testSSH",
+        "title": "Test SSH Connectivity",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "antigravity-codespaces.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "antigravity-codespaces.switchAccount",
+        "title": "Switch GitHub Account",
+        "icon": "$(account)"
+      },
+      {
+        "command": "antigravity-codespaces.createCodespace",
+        "title": "Create New Codespace",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "antigravity-codespaces.syncAllSSH",
+        "title": "Sync SSH Config",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "antigravity-codespaces.connect",
+        "title": "Connect",
+        "icon": "$(play)"
+      },
+      {
+        "command": "antigravity-codespaces.start",
+        "title": "Turn ON",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "antigravity-codespaces.stop",
+        "title": "Stop",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "antigravity-codespaces.rebuild",
+        "title": "Rebuild Container",
+        "icon": "$(symbol-event)"
+      },
+      {
+        "command": "antigravity-codespaces.openInBrowser",
+        "title": "Open in Browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "antigravity-codespaces.copySSHCommand",
+        "title": "Copy SSH Command",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "antigravity-codespaces.deleteCodespace",
+        "title": "Delete Codespace",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "antigravity-codespaces.openPortUrl",
+        "title": "Open Port in Browser",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "antigravity-codespaces.loginGitHub",
+        "title": "Login to GitHub Account",
+        "icon": "$(key)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "antigravity-codespaces.quickConnect",
+        "key": "alt+c",
+        "mac": "alt+c"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "antigravity-codespaces.openDashboard",
+          "when": "view == antigravity-codespaces-view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "antigravity-codespaces.createCodespace",
+          "when": "view == antigravity-codespaces-view",
+          "group": "navigation@2"
+        },
+        {
+          "command": "antigravity-codespaces.switchAccount",
+          "when": "view == antigravity-codespaces-view",
+          "group": "navigation@3"
+        },
+        {
+          "command": "antigravity-codespaces.refresh",
+          "when": "view == antigravity-codespaces-view",
+          "group": "navigation@4"
+        }
+      ]
+    }
+  }
+}
