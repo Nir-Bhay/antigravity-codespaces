@@ -32,15 +32,15 @@ You're left copying SSH commands from the browser, managing config files by hand
 
 ### Cloud Hub Dashboard
 
-> Full-page Bento Grid management console with live metrics, search, and inline controls for every environment across all your GitHub accounts.
+> Full-page Bento Grid management console — real data: 9 total workspaces, 1 running instance, 8 stopped, 4 GitHub accounts. Live search, per-account tabs, and inline Connect / Stop / Start controls on every card.
 
-![Cloud Hub Dashboard](assets/dashboard-demo.jpg)
+![Cloud Hub Dashboard](assets/dashboard-demo.png)
 
 ### Activity Bar Sidebar
 
-> Persistent sidebar panel with account tabs, status indicators, and one-click actions — always one keystroke away.
+> Persistent sidebar in Antigravity IDE — shows the active account (`baythe19`), live Codespace list with green status dot, repo name, branch, and action buttons (Connect, Stop, Open in Browser) directly inline.
 
-![Sidebar Panel](assets/sidebar-demo.jpg)
+![Sidebar Panel](assets/sidebar-demo.png)
 
 ---
 
