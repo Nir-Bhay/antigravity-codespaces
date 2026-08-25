@@ -1,61 +1,135 @@
+<div align="center">
+
+<img src="icon.png" width="120" alt="Antigravity Codespaces Pro" />
+
 # Antigravity Codespaces Pro
 
-[![Version](https://img.shields.io/badge/version-4.3.0-blue.svg)](https://github.com/Nir-Bhay/antigravity-codespaces/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Open VSX](https://img.shields.io/badge/Open%20VSX-available-purple.svg)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
-[![Platform](https://img.shields.io/badge/platform-Antigravity%20IDE%20%7C%20Code--OSS-blueviolet.svg)](https://github.com/Nir-Bhay/antigravity-codespaces)
-[![GitHub Stars](https://img.shields.io/github/stars/Nir-Bhay/antigravity-codespaces?style=social)](https://github.com/Nir-Bhay/antigravity-codespaces/stargazers)
+**Enterprise multi-account GitHub Codespaces manager for Antigravity IDE & Code-OSS**
 
-> **Manage every GitHub Codespace across all your accounts — connect, start, stop, rebuild, and monitor — directly inside Antigravity IDE or Code-OSS with one click.**
+[![Version](https://img.shields.io/badge/version-4.3.0-6C63FF?style=for-the-badge&logo=github)](https://github.com/Nir-Bhay/antigravity-codespaces/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
+[![Open VSX](https://img.shields.io/badge/Open_VSX-Registry-A855F7?style=for-the-badge&logo=eclipse)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
+[![Platform](https://img.shields.io/badge/Antigravity_IDE-Compatible-3B82F6?style=for-the-badge)](https://github.com/Nir-Bhay/antigravity-codespaces)
+[![Stars](https://img.shields.io/github/stars/Nir-Bhay/antigravity-codespaces?style=for-the-badge&color=F59E0B&logo=github)](https://github.com/Nir-Bhay/antigravity-codespaces/stargazers)
 
----
+[**Install VSIX**](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) · [**Report Bug**](https://github.com/Nir-Bhay/antigravity-codespaces/issues) · [**Request Feature**](https://github.com/Nir-Bhay/antigravity-codespaces/issues/new)
 
-## The Problem This Solves
-
-Standard GitHub Codespaces extensions work only in proprietary Microsoft VS Code builds. If you use **Google Antigravity IDE**, **Gitpod**, **Code-OSS**, or any Open-Source VS Code fork, you get nothing — no sidebar, no connection UI, no SSH management.
-
-**Antigravity Codespaces Pro** fills that gap. It gives you a fully featured, enterprise-grade Codespaces control panel natively inside any Code-OSS compatible editor, with multi-account support and AI agent-optimized connection stability baked in.
+</div>
 
 ---
 
-## Key Features at a Glance
+## The Problem
 
-| Feature | What It Does |
+GitHub Codespaces has a great browser-based UI — but if you use **Antigravity IDE**, **Code-OSS**, **Gitpod**, or any non-Microsoft VS Code build, you get **zero native extension support**. No sidebar, no connection UI, no SSH management, no lifecycle controls.
+
+You're left copying SSH commands from the browser, managing config files by hand, and watching long-running AI agent sessions drop because of WebSocket timeouts.
+
+**Antigravity Codespaces Pro** fixes all of that in one extension.
+
+---
+
+## Screenshots
+
+### Cloud Hub Dashboard
+
+> Full-page Bento Grid management console with live metrics, search, and inline controls for every environment across all your GitHub accounts.
+
+![Cloud Hub Dashboard](assets/dashboard-demo.jpg)
+
+### Activity Bar Sidebar
+
+> Persistent sidebar panel with account tabs, status indicators, and one-click actions — always one keystroke away.
+
+![Sidebar Panel](assets/sidebar-demo.jpg)
+
+---
+
+## Features
+
+### ⚡ One-Click Quick Connect — `Alt+C`
+
+Press `Alt+C` from anywhere in the editor. A fuzzy-search launcher appears listing every Codespace across all your accounts. Select one, hit Enter — you're connected in under 5 seconds.
+
+### 🖥️ Cloud Hub Bento Dashboard
+
+A full-window webview dashboard with:
+- **Top metric strip** — Total environments, Online count, Inactive count, Connected accounts
+- **Per-account tabs** — Switch between `baythe19`, `Nir-Bhay`, `abhayhiwse-hub`, or view All
+- **Live search** — Filter by name, repo, branch, or machine type in real time
+- **Bento Cards** — Each card shows status pulse, vCPUs, RAM, region, branch, last active time, and a full action dock
+
+### 🔑 Multi-Account, Zero Token Collision
+
+The extension queries every authenticated GitHub account in parallel using isolated Bearer Tokens (`GH_TOKEN`). Your active local `git` credentials never get touched. No global CLI account hopping, no session conflicts.
+
+### 🤖 AI Agent Connection KeepAlive
+
+Long autonomous AI sessions need stable WebSockets. The extension injects `ServerAliveInterval` and `TCPKeepAlive` into every SSH host block, preventing the connection drops that kill mid-task agents.
+
+### 🔗 Automated SSH Config Engine
+
+On startup, the extension writes clean, deduplicated `Host cs-<name>` blocks to `~/.ssh/config` — ready for native OpenSSH, external terminals, and any remote editor plugin. No manual editing required.
+
+### 🧪 SSH Latency Tester
+
+Built-in tunnel health check that measures real roundtrip ping in milliseconds before you commit to a connection. Available from the sidebar, dashboard, or Command Palette.
+
+### 🛠️ Full DevContainer Lifecycle
+
+| Action | Description |
 |---|---|
-| 🖥️ **Bento Cloud Hub Dashboard** | Full-page webview with live cards for every environment across all accounts |
-| 🔑 **Multi-Account Architecture** | Query and manage unlimited GitHub accounts with isolated tokens — no global CLI switching |
-| ⚡ **Alt+C Quick Connect** | Fuzzy-search and attach to any running Codespace in under 2 seconds |
-| 🔗 **SSH Config Auto-Sync** | Writes clean, deduplicated `~/.ssh/config` blocks on startup |
-| 🧪 **SSH Latency Tester** | Real-time roundtrip ping to verify tunnel health before connecting |
-| 🤖 **AI Agent KeepAlive** | Custom `ServerAliveInterval` prevents WebSocket drops during long AI sessions |
-| 🛠️ **DevContainer Lifecycle** | Start, Stop, Rebuild (standard or full clean), Delete — all from the sidebar |
-| 🌐 **Port Forwarding View** | Detect and open forwarded ports in one click |
-| 📊 **Status Bar Widget** | Live online container count visible at all times in the editor |
+| **Turn ON** | Wake a stopped Codespace (cold boot) |
+| **Stop** | Shut down to conserve GitHub billable hours |
+| **Standard Rebuild** | Layer-cached devcontainer rebuild |
+| **Full Clean Rebuild** | Wipe cache and rebuild from scratch |
+| **Delete** | Confirmation-gated permanent removal |
+
+### 🌐 Port Forwarding Discovery
+
+Scans running containers for forwarded ports and provides direct `http://localhost:<port>` links to open in your browser.
+
+---
+
+## Extension vs Native Codespaces Tab
+
+| Capability | Native GitHub Tab (Browser) | **Antigravity Codespaces Pro** |
+|---|:---:|:---:|
+| Works in Antigravity IDE | ❌ | ✅ |
+| Works in Code-OSS / Gitpod | ❌ | ✅ |
+| Multi-account management | ❌ (one at a time) | ✅ (parallel, isolated) |
+| SSH Config auto-sync | ❌ | ✅ |
+| AI Agent KeepAlive | ❌ | ✅ |
+| In-editor Dashboard | ❌ | ✅ Bento Grid |
+| Keyboard Quick Connect | ❌ | ✅ Alt+C |
+| SSH Latency Tester | ❌ | ✅ |
+| Status Bar live count | ❌ | ✅ |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                   LOCAL WORKSTATION                  │
-│                                                      │
-│  ┌─────────────────────┐   ┌──────────────────────┐  │
-│  │  Antigravity IDE UI │   │ Codespaces Pro Engine │  │
-│  │  • Activity Sidebar │◄──►│ • Token-Isolated API  │  │
-│  │  • Cloud Hub Dash   │   │ • SSH Config Writer   │  │
-│  │  • Alt+C Launcher   │   │ • KeepAlive Manager   │  │
-│  └──────────┬──────────┘   └──────────┬────────────┘  │
-│             │                         │               │
-│             ▼                         ▼               │
-│       ~/.ssh/config  ←──── gh cs ssh ProxyCommand     │
-└─────────────────────────────┬────────────────────────┘
-                              │  Encrypted SSH Tunnel
-                              ▼
-┌──────────────────────────────────────────────────────┐
-│              GITHUB CODESPACES VM (Cloud)            │
-│  • DevContainer  • Remote Extension Host  • Ports    │
-└──────────────────────────────────────────────────────┘
+╔════════════════════════════════════════════════════════════╗
+║                    LOCAL WORKSTATION                       ║
+║                                                            ║
+║  ┌──────────────────────┐   ┌──────────────────────────┐   ║
+║  │   Antigravity IDE    │   │  Codespaces Pro Engine   │   ║
+║  │  ─────────────────   │   │  ──────────────────────  │   ║
+║  │  • Activity Sidebar  │◄─►│  • Token-Isolated API    │   ║
+║  │  • Cloud Hub Dash    │   │  • SSH Config Writer     │   ║
+║  │  • Alt+C Launcher    │   │  • KeepAlive Manager     │   ║
+║  │  • Status Bar Badge  │   │  • Port Scanner          │   ║
+║  └──────────┬───────────┘   └──────────┬───────────────┘   ║
+║             │                          │                   ║
+║             ▼                          ▼                   ║
+║      ~/.ssh/config  ◄──── gh cs ssh ProxyCommand          ║
+╚══════════════════════════╤═════════════════════════════════╝
+                           │  Encrypted SSH Tunnel (443)
+                           ▼
+╔════════════════════════════════════════════════════════════╗
+║             GITHUB CODESPACES VM  (Cloud)                  ║
+║  • devcontainer  • Antigravity Remote Host  • Ports        ║
+╚════════════════════════════════════════════════════════════╝
 ```
 
 ---
@@ -64,77 +138,54 @@ Standard GitHub Codespaces extensions work only in proprietary Microsoft VS Code
 
 ### Prerequisites
 
-1. **GitHub CLI** (required for Codespaces API access):
-   ```powershell
-   winget install --id GitHub.cli
-   ```
-
-2. **Antigravity IDE** or any Code-OSS / Open VSX compatible editor.
-
-3. **Remote SSH extension** (recommended): *Open Remote SSH* or *VSX Remote SSH* for automatic remote folder mounting.
-
-### Install the Extension
-
-**Option A — Direct VSIX install (recommended):**
+**1. GitHub CLI** — Required for Codespaces API and SSH proxy:
 ```powershell
-# Download the latest release from GitHub
-antigravity-ide --install-extension antigravity-codespaces-4.3.0.vsix
+winget install --id GitHub.cli
 ```
-Or inside the IDE: `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → select the `.vsix` file.
 
-**Option B — Open VSX Registry:**
-Search **"Antigravity Codespaces Pro"** in the Extensions panel of any Open VSX compatible editor.
+**2. Antigravity IDE** or any Code-OSS / Open VSX compatible editor.
 
-### Authenticate GitHub Account(s)
+**3. Remote SSH Extension** *(recommended)* — *Open Remote SSH* or *VSX Remote SSH* for automatic remote folder mounting after connect.
+
+---
+
+### Step 1 — Authenticate Your GitHub Account(s)
 
 ```bash
-# First account
+# Primary account (grant codespace scope)
 gh auth login -s codespace -w
 
-# Each additional account (repeat for every account you want to manage)
+# Repeat for every additional account you want to manage
 gh auth login -s codespace -w
 ```
 
 ---
 
-## Usage
+### Step 2 — Install the Extension
 
-### Cloud Hub Dashboard
+**Option A — Install from VSIX** *(recommended)*
 
-Open the full Bento Grid dashboard from the activity bar sidebar or run:
-```
-Ctrl+Shift+P → "Open Cloud Hub Dashboard"
-```
+Download from [Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest), then:
 
-Each environment card shows:
-- **Status** — Active (green pulse) or Inactive
-- **Machine specs** — vCPUs, RAM, cloud region
-- **Last active** timestamp and current branch
-- **Action dock** — Connect, Turn ON/Stop, Test SSH, Rebuild, Copy SSH Command, Open in Browser, Delete
-
-### Quick Connect (Alt+C)
-
-Press `Alt+C` from anywhere in the editor to instantly fuzzy-search across all your Codespaces and attach to one. No mouse required.
-
-### SSH Config Sync
-
-The extension automatically maintains clean `~/.ssh/config` entries on startup. You can also trigger a manual sync:
-```
-Ctrl+Shift+P → "Sync SSH Config"
+```powershell
+antigravity-ide --install-extension antigravity-codespaces-4.3.0.vsix
 ```
 
-After syncing, connect from any terminal:
-```bash
-ssh cs-your-codespace-name
-# or
-gh cs ssh -c your-codespace-name
-```
+Or inside the IDE: `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → pick the file.
+
+**Option B — Open VSX Registry**
+
+Search **"Antigravity Codespaces Pro"** in the Extensions panel (Open VSX compatible editors).
+
+---
+
+### Step 3 — Open the Sidebar
+
+Click the **cloud icon** in the Activity Bar. The extension auto-discovers all authenticated accounts and lists your Codespaces immediately.
 
 ---
 
 ## Configuration
-
-Add these to your `settings.json` to customize behavior:
 
 ```json
 {
@@ -146,37 +197,42 @@ Add these to your `settings.json` to customize behavior:
 ```
 
 | Setting | Default | Description |
-|---|---|---|
-| `autoSyncSSHOnStartup` | `true` | Sync SSH host blocks on IDE launch |
-| `showStatusBarItem` | `true` | Show live Codespace count in status bar |
-| `serverAliveInterval` | `30` | SSH keepalive interval in seconds |
-| `serverAliveCountMax` | `10` | Max keepalive probes before disconnect |
+|---|:---:|---|
+| `autoSyncSSHOnStartup` | `true` | Write SSH host blocks to `~/.ssh/config` on IDE launch |
+| `showStatusBarItem` | `true` | Show live Codespace count in the status bar |
+| `serverAliveInterval` | `30` | SSH keepalive ping interval in seconds |
+| `serverAliveCountMax` | `10` | Max missed pings before connection closes |
+
+> **Tip for AI Agent users:** Set `serverAliveInterval` to `15` and `serverAliveCountMax` to `20` for maximum connection stability during long autonomous sessions.
 
 ---
 
 ## Command Reference
 
-All commands are available via `Ctrl+Shift+P`:
+All commands available via `Ctrl+Shift+P`:
 
 | Command | Shortcut | Description |
-|---|---|---|
-| `Codespaces: Quick Connect` | `Alt+C` | Fuzzy-search and connect to any Codespace |
-| `Codespaces: Open Cloud Hub Dashboard` | — | Full-page visual management dashboard |
-| `Codespaces: Open Quick Actions Menu` | — | Switch account, sync SSH, test, dashboard |
-| `Codespaces: Sync SSH Config` | — | Write all Codespace hosts to `~/.ssh/config` |
-| `Codespaces: Test SSH Connectivity` | — | Ping and verify tunnel health |
-| `Codespaces: Switch GitHub Account` | — | Change active GitHub account |
-| `Codespaces: Create New Codespace` | — | Wizard with repo and branch picker |
-| `Codespaces: Turn ON` | — | Wake a stopped Codespace |
-| `Codespaces: Stop` | — | Stop container to save billable hours |
-| `Codespaces: Rebuild Container` | — | Standard or full clean DevContainer rebuild |
-| `Codespaces: Delete Codespace` | — | Confirmation-gated permanent deletion |
+|---|:---:|---|
+| **Quick Connect to Codespace** | `Alt+C` | Fuzzy-search all Codespaces and connect |
+| **Open Cloud Hub Dashboard** | — | Full Bento Grid management panel |
+| **Open Quick Actions Menu** | — | Fast launcher for common actions |
+| **Sync SSH Config** | — | Write all host blocks to `~/.ssh/config` |
+| **Test SSH Connectivity** | — | Ping and measure tunnel latency |
+| **Switch GitHub Account** | — | Change the active default account |
+| **Create New Codespace** | — | Wizard with repo and branch picker |
+| **Turn ON** | — | Wake a stopped container |
+| **Stop** | — | Shut down to save billable hours |
+| **Rebuild Container** | — | Standard or full clean devcontainer rebuild |
+| **Delete Codespace** | — | Confirmation-gated permanent deletion |
+| **Copy SSH Command** | — | Copy `gh cs ssh -c <name>` to clipboard |
+| **Open in Browser** | — | Open in GitHub Web editor |
+| **Refresh** | — | Re-query all accounts |
 
 ---
 
-## Optimizing Your DevContainer for Antigravity IDE
+## DevContainer Setup for Best Compatibility
 
-Add the OpenSSH feature to your `.devcontainer/devcontainer.json` for best compatibility:
+Add the SSH feature to your `.devcontainer/devcontainer.json`:
 
 ```json
 {
@@ -184,47 +240,106 @@ Add the OpenSSH feature to your `.devcontainer/devcontainer.json` for best compa
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
     "ghcr.io/devcontainers/features/sshd:1": { "version": "latest" }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
   }
 }
 ```
+
+This ensures the remote extension host starts cleanly when Antigravity IDE connects via SSH.
 
 ---
 
 ## Troubleshooting
 
-**Initial connection takes 30-40 seconds**
-This is normal on cold boot — GitHub is spinning up the container. Once connected, everything is instant.
+<details>
+<summary><strong>Initial connection takes 30–40 seconds</strong></summary>
 
-**`gh: command not found`**
-Ensure GitHub CLI is installed and `C:\Program Files\GitHub CLI` is in your `PATH`. Restart the IDE after installing.
+Normal on cold boot — GitHub is spinning up the container from scratch. Once the container is running, all subsequent connections, file edits, and terminal commands are instant.
 
-**WebSocket disconnects during AI agent sessions**
-Increase `serverAliveInterval` in settings. The default of `30` seconds should be sufficient for most networks; increase to `60` on unstable connections.
+</details>
 
-**SSH host not found after sync**
-Run `Ctrl+Shift+P` → **Sync SSH Config** manually, then check `~/.ssh/config` contains a `Host cs-<name>` block for your Codespace.
+<details>
+<summary><strong>"gh: command not found"</strong></summary>
+
+Install GitHub CLI and make sure `C:\Program Files\GitHub CLI` is in your Windows `PATH`. Restart the IDE after installing.
+
+```powershell
+winget install --id GitHub.cli
+```
+
+</details>
+
+<details>
+<summary><strong>WebSocket drops during AI agent sessions</strong></summary>
+
+Decrease `serverAliveInterval` in settings:
+```json
+{
+  "antigravity-codespaces.serverAliveInterval": 15,
+  "antigravity-codespaces.serverAliveCountMax": 20
+}
+```
+Then run **Sync SSH Config** to apply. If drops persist, run this in Admin PowerShell to fix Windows' own TCP timeout:
+```powershell
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" /v KeepAliveTime /t REG_DWORD /d 1800000 /f
+```
+
+</details>
+
+<details>
+<summary><strong>SSH host not found after sync</strong></summary>
+
+Run `Ctrl+Shift+P` → **Sync SSH Config** manually, then verify `~/.ssh/config` contains a `Host cs-<name>` block matching your Codespace name.
+
+</details>
+
+<details>
+<summary><strong>Extension shows no Codespaces</strong></summary>
+
+Make sure you authenticated with the `codespace` scope:
+```bash
+gh auth refresh -s codespace
+```
+Then click **Refresh** in the sidebar.
+
+</details>
 
 ---
 
 ## Roadmap
 
-- [ ] Windows Notification toasts on Codespace status changes
-- [ ] Org-level Codespace billing summary widget
-- [ ] Direct devcontainer feature installer from the dashboard
-- [ ] VS Code Marketplace submission (tracking: [#1](https://github.com/Nir-Bhay/antigravity-codespaces/issues))
+- [ ] Windows toast notifications on container status changes
+- [ ] Org-level billing summary widget in the dashboard
+- [ ] Direct devcontainer feature installer from Cloud Hub
+- [ ] VS Code Marketplace listing
+- [ ] Devcontainer template picker for new Codespace creation
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and pull request process.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and PR process.
 
-Found a bug? Open an issue → [github.com/Nir-Bhay/antigravity-codespaces/issues](https://github.com/Nir-Bhay/antigravity-codespaces/issues)
+- 🐛 **Found a bug?** [Open an issue](https://github.com/Nir-Bhay/antigravity-codespaces/issues)
+- 💡 **Have an idea?** [Start a discussion](https://github.com/Nir-Bhay/antigravity-codespaces/discussions)
+- ⭐ **Like the extension?** Star the repo — it helps with discovery
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE)
 
-**Author:** [Nirbhay hiwse](https://github.com/Nir-Bhay) • [GitHub Repository](https://github.com/Nir-Bhay/antigravity-codespaces)
+<div align="center">
+
+Built with ❤️ by [Nirbhay hiwse](https://github.com/Nir-Bhay)
+
+**[GitHub](https://github.com/Nir-Bhay/antigravity-codespaces) · [Open VSX](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces) · [Report Bug](https://github.com/Nir-Bhay/antigravity-codespaces/issues)**
+
+</div>
