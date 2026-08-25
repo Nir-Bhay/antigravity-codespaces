@@ -1,0 +1,34 @@
+name: Publish to Open VSX Registry
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-ovsx:
+    name: Publish to Open VSX
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate Extension Syntax
+        run: node -c extension.js
+
+      - name: Package Extension (VSIX)
+        run: npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
+
+      - name: Publish to Open VSX Registry
+        run: npx ovsx publish *.vsix -p ${{ secrets.OVSX_PAT }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}

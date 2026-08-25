@@ -19,22 +19,47 @@
   },
   "keywords": [
     "codespaces",
-    "github",
-    "remote",
-    "ssh",
-    "cloud",
-    "antigravity",
-    "devcontainer",
-    "multi-account",
+    "github-codespaces",
     "remote-development",
-    "github-codespaces"
+    "ssh",
+    "devcontainer",
+    "antigravity",
+    "antigravity-ide",
+    "code-oss",
+    "open-vsx",
+    "cloud-dev",
+    "multi-account",
+    "github",
+    "remote-ssh",
+    "workspace-manager",
+    "cloud-environment",
+    "developer-tools",
+    "productivity",
+    "ai-agent",
+    "websocket-keepalive",
+    "port-forwarding",
+    "devops",
+    "git",
+    "cloud-computing",
+    "remote-workspace",
+    "container",
+    "docker",
+    "vscode-extension",
+    "code-editor",
+    "workflow",
+    "automation"
   ],
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "SCM Providers"
   ],
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
   "icon": "icon.png",
   "activationEvents": [
     "onStartupFinished",
