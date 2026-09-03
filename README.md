@@ -6,13 +6,13 @@
 
 **Enterprise multi-account GitHub Codespaces manager for Antigravity IDE & Code-OSS**
 
-[![Version](https://img.shields.io/badge/version-4.3.0-6C63FF?style=for-the-badge&logo=github)](https://github.com/Nir-Bhay/antigravity-codespaces/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge)](LICENSE)
-[![Open VSX](https://img.shields.io/badge/Open_VSX-Registry-A855F7?style=for-the-badge&logo=eclipse)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/nirbhay-hiwse.antigravity-codespaces?style=for-the-badge&logo=visualstudiocode&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=nirbhay-hiwse.antigravity-codespaces)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/nirbhay-hiwse.antigravity-codespaces?style=for-the-badge&color=22C55E)](https://marketplace.visualstudio.com/items?itemName=nirbhay-hiwse.antigravity-codespaces)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Platform](https://img.shields.io/badge/Antigravity_IDE-Compatible-3B82F6?style=for-the-badge)](https://github.com/Nir-Bhay/antigravity-codespaces)
 [![Stars](https://img.shields.io/github/stars/Nir-Bhay/antigravity-codespaces?style=for-the-badge&color=F59E0B&logo=github)](https://github.com/Nir-Bhay/antigravity-codespaces/stargazers)
 
-[**Install VSIX**](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) · [**Report Bug**](https://github.com/Nir-Bhay/antigravity-codespaces/issues) · [**Request Feature**](https://github.com/Nir-Bhay/antigravity-codespaces/issues/new)
+[**Install from Marketplace**](https://marketplace.visualstudio.com/items?itemName=nirbhay-hiwse.antigravity-codespaces) · [**Download VSIX**](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) · [**Report Bug**](https://github.com/Nir-Bhay/antigravity-codespaces/issues) · [**Request Feature**](https://github.com/Nir-Bhay/antigravity-codespaces/issues/new)
 
 </div>
 
