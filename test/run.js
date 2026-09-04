@@ -101,6 +101,57 @@ function ok(name, fn) {
         }
     });
 
+    await ok('purgeLegacyBlocks removes stale artifacts, keeps user blocks', () => {
+        const dirty = [
+            'Host github.com',
+            '  HostName github.com',
+            '',
+            'Host cs-old-thing cs.old-123',
+            '  ProxyCommand "C:/gh.exe" cs ssh -c old-123 --stdio -- -i "C:/x/codespaces.auto"',
+            '  IdentityFile C:/x/codespaces.auto',
+            '',
+            '# CS_ENTRY:keep-1',
+            'Host cs.keep-1 cs-a-b keep-1',
+            '  ProxyCommand "C:/gh.exe" cs ssh -c "keep-1" --stdio',
+            '  TCPKeepAlive yes',
+            '# END_CS_ENTRY:keep-1',
+            '',
+            'Host myserver',
+            '  HostName 10.0.0.1',
+            ''
+        ].join('\n');
+        const { cfg, removedBlocks, removedKeys } = sshManager.purgeLegacyBlocks(dirty);
+        assert.strictEqual(removedBlocks, 1);
+        assert.strictEqual(removedKeys, 1);
+        assert.ok(cfg.includes('Host github.com'), 'user block must survive');
+        assert.ok(cfg.includes('Host myserver'), 'user block must survive');
+        assert.ok(cfg.includes('# CS_ENTRY:keep-1'), 'marked block must survive');
+        assert.ok(!cfg.includes('codespaces.auto'), 'phantom keys must go');
+        assert.ok(!cfg.includes('cs.old-123'), 'legacy block must go');
+        const clean = sshManager.purgeLegacyBlocks(cfg);
+        assert.deepStrictEqual([clean.removedBlocks, clean.removedKeys], [0, 0]);
+    });
+    await ok('purgeLegacyBlocks removes END-less v5.0.0 blocks (foreign END must not shield)', () => {
+        const dirty = [
+            '# CS_ENTRY:old-a',
+            'Host cs.old-a cs-x old-a',
+            '  ProxyCommand "C:/gh.exe" cs ssh -c old-a --stdio -- -i "C:/x/codespaces.auto"',
+            '  TCPKeepAlive yes',
+            '',
+            '# CS_ENTRY:keep-2',
+            'Host cs.keep-2 cs-a-b keep-2',
+            '  ProxyCommand "C:/gh.exe" cs ssh -c "keep-2" --stdio',
+            '  TCPKeepAlive yes',
+            '# END_CS_ENTRY:keep-2',
+            ''
+        ].join('\n');
+        const r = sshManager.purgeLegacyBlocks(dirty);
+        assert.strictEqual(r.removedBlocks, 1);
+        assert.ok(!r.cfg.includes('cs.old-a'), 'END-less legacy block must go');
+        assert.ok(r.cfg.includes('# CS_ENTRY:keep-2'), 'complete marked block must survive');
+        assert.ok(r.cfg.includes('# END_CS_ENTRY:keep-2'), 'END marker must survive');
+    });
+
     console.log('githubApi');
     await ok('normalizeRepoInput validates owner/repo', () => {
         const good = GithubApi.normalizeRepoInput('https://github.com/octocat/Hello-World.git');

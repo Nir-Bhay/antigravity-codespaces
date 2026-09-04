@@ -2,7 +2,7 @@
   "name": "antigravity-codespaces",
   "displayName": "Antigravity Codespaces Pro",
   "description": "Enterprise multi-account GitHub Codespaces manager for Antigravity IDE & Code-OSS. Connect, start, stop, rebuild, test, and monitor all your cloud dev environments across multiple GitHub accounts with 1 click — by Nirbhay hiwse.",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "publisher": "nirbhay-hiwse",
   "author": {
     "name": "Nirbhay hiwse",

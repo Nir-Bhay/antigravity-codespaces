@@ -37,6 +37,107 @@ function escapeRegExp(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Removes stale pre-v5.0.1 artifacts from an ssh config text WITHOUT touching
+ * anything else. Pure function (no file I/O) so it is fully unit-testable.
+ *
+ * Drops exactly two provably-ours kinds of leftovers:
+ *  1. `IdentityFile …codespaces.auto` lines — that key file was never created
+ *     (historic BUG-06); OpenSSH wastes time on the missing key and old
+ *     ProxyCommand lines even forwarded it via `-- -i`.
+ *  2. Unmarked legacy `Host` blocks whose ProxyCommand invokes `gh cs ssh`
+ *     (pre-marker generations). Marked `# CS_ENTRY:` blocks are left alone —
+ *     `ensureSSHConfigEntry` migrates those itself on sync.
+ *
+ * User blocks (github.com, custom hosts, …) never match the `gh cs ssh`
+ * signature and are always preserved.
+ *
+ * Returns { cfg, removedBlocks, removedKeys }.
+ */
+function purgeLegacyBlocks(cfgText) {
+    let cfg = String(cfgText || '');
+    let removedBlocks = 0;
+    let removedKeys = 0;
+
+    // 1. Stray IdentityFile lines for the never-created key.
+    cfg = cfg.replace(/^[ \t]*IdentityFile[ \t]+.*codespaces\.auto.*(?:\r?\n|$)/gim, () => {
+        removedKeys++;
+        return '';
+    });
+
+    // 2. Unmarked legacy blocks with a `gh cs ssh` ProxyCommand.
+    // A `# CS_ENTRY:` … `# END_CS_ENTRY:` region is skipped wholesale ONLY when
+    // the matching END marker exists ahead; marker-less (v5.0.0-era) regions fall
+    // through so their inner Host lines are judged on their own merits.
+    const isMarker = (l) => /^\s*#\s*(END_)?CS_ENTRY:/.test(l);
+    const isEndMarker = (l) => /^\s*#\s*END_CS_ENTRY:/.test(l);
+    const isHost = (l) => /^\s*Host\s+/i.test(l);
+    const lines = cfg.split(/\r?\n/);
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+        if (isMarker(lines[i]) && !isEndMarker(lines[i])) {
+            // Look ahead for the MATCHING end marker (same codespace name).
+            // A foreign END marker (different block) must not legitimize this region.
+            const startName = lines[i].trim().replace(/^#\s*CS_ENTRY:\s*/, '').split(/\s/)[0];
+            const wantEnd = `# END_CS_ENTRY:${startName}`;
+            let k = i + 1;
+            while (k < lines.length && lines[k].trim() !== wantEnd) k++;
+            if (k < lines.length) {
+                // Complete marked region — preserve verbatim.
+                while (i <= k) out.push(lines[i++]);
+                continue;
+            }
+            // Marker-less legacy region: fall through to line-by-line handling.
+            out.push(lines[i++]);
+            continue;
+        }
+        if (isHost(lines[i])) {
+            let j = i + 1;
+            while (j < lines.length && !isHost(lines[j]) && !isMarker(lines[j])) j++;
+            const block = lines.slice(i, j).join('\n');
+            if (/ProxyCommand.*\bgh(\.exe)?["']?\s+cs\s+ssh\b/i.test(block)) {
+                removedBlocks++;
+                // Drop an orphaned `# CS_ENTRY:` marker that introduced this block.
+                if (out.length && /^#\s*CS_ENTRY:/.test(out[out.length - 1].trim())) out.pop();
+                i = j;
+                continue;
+            }
+        }
+        out.push(lines[i]);
+        i++;
+    }
+    // Collapse 3+ consecutive blank lines left behind by removals.
+    cfg = out.join('\n').replace(/\n{4,}/g, '\n\n\n');
+
+    return { cfg, removedBlocks, removedKeys };
+}
+
+/**
+ * Backs up and cleans the real ssh config file. Returns counts so callers can
+ * report them. Never throws — returns { cleaned: false } on any I/O problem.
+ */
+function cleanSshConfigFile() {
+    try {
+        const sshConfigPath = getSshConfigPath();
+        if (!fs.existsSync(sshConfigPath)) return { cleaned: true, removedBlocks: 0, removedKeys: 0 };
+        const original = fs.readFileSync(sshConfigPath, 'utf8');
+        const { cfg, removedBlocks, removedKeys } = purgeLegacyBlocks(original);
+        if (!removedBlocks && !removedKeys) return { cleaned: true, removedBlocks: 0, removedKeys: 0 };
+        try {
+            fs.copyFileSync(sshConfigPath, `${sshConfigPath}.pre-cleanup.bak`);
+        } catch {}
+        const tmpPath = `${sshConfigPath}.tmp`;
+        fs.writeFileSync(tmpPath, cfg, 'utf8');
+        try { fs.chmodSync(tmpPath, 0o600); } catch {}
+        fs.renameSync(tmpPath, sshConfigPath);
+        return { cleaned: true, removedBlocks, removedKeys };
+    } catch (err) {
+        console.error('SSH config cleanup error:', err);
+        return { cleaned: false, removedBlocks: 0, removedKeys: 0 };
+    }
+}
+
 // Memoized gh discovery: execSync on every call was blocking the event loop
 // on auth/API hot paths.
 let _ghExeCache = null;
@@ -261,12 +362,31 @@ async function testSshTunnel(csName, token) {
     return Date.now() - start;
 }
 
+/**
+ * Returns the GitHub CLI's currently active username (`gh api user --jq .login`,
+ * clean JSON — no fragile `auth status` parsing). Null when gh is missing or
+ * the check fails; callers must fail open (never block on this).
+ */
+async function getGhActiveUser() {
+    try {
+        const ghExe = findGhExecutable();
+        const raw = await runCommand(ghExe, ['api', 'user', '--jq', '.login'], 8000);
+        const login = (raw || '').split(/\s+/)[0].trim();
+        return login || null;
+    } catch {
+        return null;
+    }
+}
+
 module.exports = {
     findGhExecutable,
     findAntigravityExecutable,
     ensureSSHConfigEntry,
     testSshTunnel,
     sanitizeCsName,
+    purgeLegacyBlocks,
+    cleanSshConfigFile,
+    getGhActiveUser,
     getSshConfigPath,
     SSH_DIR,
     SSH_CONFIG_PATH

@@ -180,7 +180,7 @@ Search **"Antigravity Codespaces Pro"** in the Extensions panel and hit Install.
 Download from [Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest), then:
 
 ```powershell
-antigravity-ide --install-extension antigravity-codespaces-5.0.1.vsix
+antigravity-ide --install-extension antigravity-codespaces-5.0.2.vsix
 ```
 
 Or inside the IDE: `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → pick the file.

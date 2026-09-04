@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.2] - 2026-09-05
+
+### Fixed
+- **Connect killing bug (live-test finding)**: `gh cs ssh` authenticates as the CLI's
+  active user, so connecting to another account's Codespace died with HTTP 404 /
+  exit 255. Connect now pre-flights the gh identity and offers one-click
+  **Switch gh CLI & Retry** instead of a cryptic SSH failure.
+- **Stale SSH config generations**: auto-purge of unmarked legacy blocks and phantom
+  `codespaces.auto` keys on every Sync/startup (with `.pre-cleanup.bak` backup);
+  END markers now match by codespace name so foreign markers can't shield old blocks.
+- **Palette dead ends**: Start/Stop/Rebuild/Delete/Copy SSH/Open in Browser invoked
+  without a card context now ask which Codespace (shared picker); Connect opens
+  Quick Connect instead of silently doing nothing.
+- **Create guards**: `owner/repo` validated inline at input; warns when creation would
+  silently fall back to the gh CLI under the wrong account.
+- Start on an already-running Codespace now says so instead of a misleading toast.
+
 ## [5.0.1] - 2026-09-04
 
 ### Security
