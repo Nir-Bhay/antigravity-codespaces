@@ -3,6 +3,7 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 
 const { friendlyError, formatRelativeTime, runCommand } = require('./src/utils');
+const logger = require('./src/logger');
 const { AuthManager } = require('./src/authManager');
 const { GithubApi } = require('./src/githubApi');
 const {
@@ -39,6 +40,21 @@ async function activate(context) {
     const dashboardProvider = new DashboardProvider(context, authManager, githubApi);
 
     /**
+     * Guided error toast: logs full context to the output channel and offers
+     * "Show Logs", so a normal user always sees WHAT failed and where to look.
+     */
+    async function showOpError(message, context) {
+        logger.error(context || 'operation failed', message);
+        const act = await vscode.window.showErrorMessage(message, 'Show Logs');
+        if (act === 'Show Logs') logger.show();
+    }
+
+    /** Refresh the dashboard so disabled card buttons never get stuck. */
+    function resetDashboardView() {
+        try { dashboardProvider.refreshHtml(); } catch {}
+    }
+
+    /**
      * Shared picker for palette-invoked commands that arrive without a webview
      * context item. Previously these commands silently did nothing — now they
      * ask which Codespace to act on. Returns a `{ codespaceData }`-shaped item
@@ -55,13 +71,14 @@ async function activate(context) {
             try {
                 const list = await githubApi.listCodespaces(acc.account);
                 return list.map(c => ({ ...c, account: acc.account }));
-            } catch {
+            } catch (err) {
+                logger.warn(`pickCodespace: list failed for ${acc.account}`, err.message);
                 return [];
             }
         }));
         const all = settled.flat();
         if (!all.length) {
-            vscode.window.showWarningMessage('No Codespaces found for any account.');
+            vscode.window.showWarningMessage('No Codespaces found for any account. If this looks wrong, check your connection and sign-in, then Refresh (details in Antigravity Codespaces logs).');
             return null;
         }
         all.sort((a, b) => {
@@ -141,19 +158,26 @@ async function activate(context) {
                 { location: vscode.ProgressLocation.Window, title: 'Fetching Codespaces...' },
                 async () => {
                     // Fetch all accounts in parallel instead of serially.
+                    const failedAccounts = [];
                     const settled = await Promise.all(accounts.map(async (acc) => {
                         try {
                             const list = await githubApi.listCodespaces(acc.account);
                             return list.map(c => ({ ...c, account: acc.account }));
-                        } catch {
+                        } catch (err) {
+                            failedAccounts.push(acc.account);
+                            logger.warn(`quickConnect: list failed for ${acc.account}`, err.message);
                             return [];
                         }
                     }));
                     const allCs = settled.flat();
 
                     if (allCs.length === 0) {
-                        const create = await vscode.window.showInformationMessage('No active Codespaces found.', 'Create New Codespace');
-                        if (create) vscode.commands.executeCommand('antigravity-codespaces.createCodespace');
+                        const msg = failedAccounts.length
+                            ? `Couldn't load Codespaces (${failedAccounts.join(', ')} failed). Check connection and sign-in, then retry.`
+                            : 'No active Codespaces found.';
+                        const create = await vscode.window.showInformationMessage(msg, failedAccounts.length ? 'Retry' : 'Create New Codespace');
+                        if (create === 'Create New Codespace') vscode.commands.executeCommand('antigravity-codespaces.createCodespace');
+                        else if (create === 'Retry') vscode.commands.executeCommand('antigravity-codespaces.quickConnect');
                         return;
                     }
 
@@ -256,17 +280,22 @@ async function activate(context) {
             let cs = item?.codespaceData;
             if (!cs) {
                 const accounts = await authManager.getAccounts();
+                const failedAccounts = [];
                 const settled = await Promise.all(accounts.map(async (acc) => {
                     try {
                         const list = await githubApi.listCodespaces(acc.account);
                         return list.map(c => ({ ...c, account: acc.account }));
-                    } catch {
+                    } catch (err) {
+                        failedAccounts.push(acc.account);
+                        logger.warn(`testSSH picker: list failed for ${acc.account}`, err.message);
                         return [];
                     }
                 }));
                 const all = settled.flat();
                 if (!all.length) {
-                    vscode.window.showWarningMessage('No Codespaces found to test.');
+                    vscode.window.showWarningMessage(failedAccounts.length
+                        ? `Couldn't load Codespaces (${failedAccounts.join(', ')} failed). Check connection and sign-in, then retry.`
+                        : 'No Codespaces found to test.');
                     return;
                 }
                 const pick = await vscode.window.showQuickPick(
@@ -281,6 +310,22 @@ async function activate(context) {
                 cs = pick.cs;
             }
 
+            // A stopped machine cannot answer an SSH probe — guide instead of failing.
+            if (cs.state && cs.state !== 'Available') {
+                const act = await vscode.window.showInformationMessage(
+                    `"${cs.displayName || cs.name}" is stopped, so an SSH test cannot reach it.`,
+                    'Start Now',
+                    'Test Anyway'
+                );
+                if (act === 'Start Now') {
+                    vscode.commands.executeCommand('antigravity-codespaces.start', { codespaceData: cs });
+                    vscode.window.showInformationMessage('Starting — press Test SSH again once it shows RUNNING.');
+                    return;
+                } else if (act !== 'Test Anyway') {
+                    return;
+                }
+            }
+
             await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Testing SSH tunnel to ${cs.displayName || cs.name}...`, cancellable: false },
                 async () => {
@@ -289,7 +334,10 @@ async function activate(context) {
                         const latency = await testSshTunnel(cs.name, token);
                         vscode.window.showInformationMessage(`✅ SSH tunnel to "${cs.displayName || cs.name}" is healthy! Latency: ${latency}ms`);
                     } catch (e) {
-                        vscode.window.showErrorMessage(`SSH test failed for ${cs.displayName || cs.name}: ${friendlyError(e)}`);
+                        logger.error(`testSSH failed for ${cs.name}`, e.message);
+                        const act = await vscode.window.showErrorMessage(`SSH test failed for ${cs.displayName || cs.name}: ${friendlyError(e)}`, 'Show Logs', 'Test Again');
+                        if (act === 'Show Logs') logger.show();
+                        else if (act === 'Test Again') vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
                     }
                 }
             );
@@ -434,7 +482,7 @@ async function activate(context) {
                         dashboardProvider.refreshHtml();
                         statusBar.update();
                     } catch (e) {
-                        vscode.window.showErrorMessage(`Create failed: ${friendlyError(e)}`);
+                        await showOpError(`Create failed: ${friendlyError(e)}`, 'createCodespace');
                     }
                 }
             );
@@ -482,9 +530,11 @@ async function activate(context) {
                                 t.show();
                                 t.sendText(`gh auth switch --hostname github.com --user ${account}`);
                                 vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). Run the command in the terminal, then retry Connect.`);
+                                resetDashboardView();
                                 return;
                             }
                         } else if (act !== 'Connect Anyway') {
+                            resetDashboardView();
                             return;
                         }
                     }
@@ -523,16 +573,20 @@ async function activate(context) {
                             connected = true;
                         } catch {}
 
-                        // Tier 2: Remote SSH extension commands
+                        // Tier 2: Remote SSH extension commands (new-window variants
+                        // first; current-window last resort before the terminal).
+                        // Includes Antigravity's Open Remote-SSH (jeanp413) IDs.
                         if (!connected) {
                             const allCmds = await vscode.commands.getCommands();
-                            for (const cmd of ['open-remote-ssh.connectToHostInNewWindow', 'vsx-remote-ssh.connectHost', 'remote-ssh.connectHost']) {
+                            for (const cmd of ['open-remote-ssh.connectToHostInNewWindow', 'vsx-remote-ssh.connectHost', 'remote-ssh.connectHost', 'open-remote-ssh.connectToHost']) {
                                 if (allCmds.includes(cmd)) {
                                     try {
                                         await vscode.commands.executeCommand(cmd, hostAlias);
                                         connected = true;
                                         break;
-                                    } catch {}
+                                    } catch (err) {
+                                        logger.warn(`connect Tier-2 ${cmd} failed`, err.message);
+                                    }
                                 }
                             }
                         }
@@ -564,6 +618,9 @@ async function activate(context) {
                                 const t = vscode.window.createTerminal(`SSH: ${cs.displayName || cs.name}`);
                                 t.show();
                                 t.sendText(`gh cs ssh -c ${cs.name}`);
+                                vscode.window.showInformationMessage(
+                                    `Opened a terminal fallback for "${cs.displayName || cs.name}". If the tunnel connects there, you're in. Otherwise run Test SSH Connectivity — its message tells you exactly what to fix.`
+                                );
                             }
                         }
 
@@ -573,7 +630,7 @@ async function activate(context) {
                     }
                 );
             } catch (err) {
-                vscode.window.showErrorMessage(`Connection error: ${friendlyError(err)}`);
+                await showOpError(`Connection error: ${friendlyError(err)}`, `connect ${cs.name}`);
             } finally {
                 connectingSet.delete(cs.name);
             }
@@ -600,7 +657,7 @@ async function activate(context) {
                         dashboardProvider.refreshHtml();
                         statusBar.update();
                     } catch (e) {
-                        vscode.window.showErrorMessage(`Could not start: ${friendlyError(e)}`);
+                        await showOpError(`Could not start: ${friendlyError(e)}`, `start ${cs.name}`);
                     }
                 }
             );
@@ -620,7 +677,7 @@ async function activate(context) {
                 dashboardProvider.refreshHtml();
                 statusBar.update();
             } catch (e) {
-                vscode.window.showErrorMessage(`Stop failed: ${friendlyError(e)}`);
+                await showOpError(`Stop failed: ${friendlyError(e)}`, `stop ${cs.name}`);
             }
         })
     );
@@ -652,7 +709,7 @@ async function activate(context) {
                         dashboardProvider.refreshHtml();
                         statusBar.update();
                     } catch (e) {
-                        vscode.window.showErrorMessage(`Rebuild failed: ${friendlyError(e)}`);
+                        await showOpError(`Rebuild failed: ${friendlyError(e)}`, `rebuild ${cs.name}`);
                     }
                 }
             );
@@ -682,7 +739,7 @@ async function activate(context) {
                 dashboardProvider.refreshHtml();
                 statusBar.update();
             } catch (e) {
-                vscode.window.showErrorMessage(`Delete failed: ${friendlyError(e)}`);
+                await showOpError(`Delete failed: ${friendlyError(e)}`, `delete ${cs.name}`);
             }
         })
     );
@@ -735,18 +792,29 @@ async function activate(context) {
                     const cleaned = cleanSshConfigFile();
                     const accounts = await authManager.getAccounts();
                     let n = 0;
+                    const failedSync = [];
                     await Promise.all(accounts.map(async (acc) => {
                         try {
                             const list = await githubApi.listCodespaces(acc.account);
                             list.forEach(cs => { ensureSSHConfigEntry(cs, acc.account); n++; });
-                        } catch {}
+                        } catch (err) {
+                            failedSync.push(`${acc.account} (${friendlyError(err)})`);
+                            logger.warn(`syncAllSSH: list failed for ${acc.account}`, err.message);
+                        }
                     }));
-                    vscode.window.showInformationMessage(
-                        `Synced ${n} Codespace SSH entries to ~/.ssh/config` +
-                        ((cleaned.removedBlocks || cleaned.removedKeys)
-                            ? ` (cleaned ${cleaned.removedBlocks || 0} stale blocks, ${cleaned.removedKeys || 0} phantom keys)`
-                            : '')
-                    );
+                    if (failedSync.length && n === 0) {
+                        await showOpError(
+                            `Sync failed for every account: ${failedSync.join('; ')}. Check connection and sign-in, then retry.`,
+                            'syncAllSSH'
+                        );
+                    } else {
+                        let msg = `Synced ${n} Codespace SSH entries to ~/.ssh/config` +
+                            ((cleaned.removedBlocks || cleaned.removedKeys)
+                                ? ` (cleaned ${cleaned.removedBlocks || 0} stale blocks, ${cleaned.removedKeys || 0} phantom keys)`
+                                : '');
+                        if (failedSync.length) msg += ` — skipped: ${failedSync.join('; ')}`;
+                        vscode.window.showInformationMessage(msg);
+                    }
                     sidebarProvider.refresh();
                     dashboardProvider.refreshHtml();
                     statusBar.update();

@@ -59,7 +59,16 @@ function friendlyError(err) {
         return 'GitHub authentication expired or token is invalid. Please sign in again.';
     }
     if (msg.includes('not found') || msg.includes('404')) {
-        return 'Codespace not found. It may have been stopped, deleted, or belongs to another account.';
+        return 'Codespace not found for this account. Only the owner can open a Codespace — verify at github.com/codespaces. Multi-account? The gh CLI may be signed into the wrong account (gh auth switch --user <owner>), then retry.';
+    }
+    if (msg.includes('timed out while waiting for the codespace to start') || msg.includes('timed out while waiting')) {
+        return 'The container is still booting — this can take a minute on cold start. Press Start, wait for RUNNING, then connect again.';
+    }
+    if (msg.includes('failed to start SSH server') || msg.includes('SSH server') && msg.includes('check if')) {
+        return 'No SSH server inside the container. Add "ghcr.io/devcontainers/features/sshd:1" to devcontainer.json features and rebuild, then connect.';
+    }
+    if (msg.includes('255') || msg.includes('closed unexpectedly') || msg.includes('Connection closed')) {
+        return 'SSH tunnel dropped unexpectedly. Check the machine is RUNNING (press Start if stopped), verify the gh CLI account owns it, then retry. Details in Antigravity Codespaces logs.';
     }
     if (msg.includes('403') || msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('abuse')) {
         return 'GitHub API rate limit reached. Wait a few minutes, then refresh.';

@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently fall back to the gh CLI under the wrong account.
 - Start on an already-running Codespace now says so instead of a misleading toast.
 
+### Added (normal-user guidance — no silent failures anymore)
+- **Output channel + Show Logs**: every operation error logs full context to the
+  "Antigravity Codespaces" channel and offers a Show Logs button on the toast.
+- **Guided error texts**: 404 explains owner-only access + wrong-gh-account switch;
+  boot timeouts explain Start-and-wait; missing container SSH server points to the
+  devcontainer sshd feature; dropped tunnels explain RUNNING/account/log checks.
+- **Total list failure surfaces**: empty states, banners, tooltips, and pickers now
+  distinguish "no machines" from "couldn't load" (with Retry), and Sync reports
+  per-account skips instead of a blanket success.
+- **Stopped-machine SSH test**: offers Start Now instead of a cryptic probe failure;
+  terminal fallback explains itself with a Test SSH pointer.
+
 ## [5.0.1] - 2026-09-04
 
 ### Security

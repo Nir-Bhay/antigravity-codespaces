@@ -126,6 +126,7 @@ class GithubApi {
             } catch (err) {
                 // Auth/rate-limit errors must surface, not silently fall back.
                 if (/authentication expired|rate limit/i.test(err.message || '')) throw err;
+                restErr = err;
                 console.warn(`REST listCodespaces(${account}) failed, trying CLI fallback:`, err.message);
             }
         }
@@ -144,9 +145,20 @@ class GithubApi {
             this._setFresh(this._csCache, cacheKey, list);
             return list;
         } catch (cliErr) {
-            console.warn(`CLI listCodespaces(${account}) failed:`, cliErr.message);
-            return [];
+            // Total failure must SURFACE (dashboard banners, sidebar error state,
+            // status-bar tooltip all handle it) — never masquerade as "no machines".
+            throw GithubApi.buildListError(account, restErr, cliErr);
         }
+    }
+
+    /**
+     * Builds the guided aggregate error when both REST and CLI list paths fail.
+     * Pure — fully unit-testable.
+     */
+    static buildListError(account, restErr, cliErr) {
+        const who = account || 'active account';
+        const cause = ((restErr && restErr.message) || (cliErr && cliErr.message) || 'unknown error');
+        return new Error(`Couldn't load Codespaces for "${who}": ${cause}. Check your connection and sign-in, then press Refresh (details in Antigravity Codespaces logs).`);
     }
 
     sortCodespaces(list) {

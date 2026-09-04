@@ -46,6 +46,28 @@ function ok(name, fn) {
         assert.match(friendlyError('getaddrinfo EAI_AGAIN api.github.com'), /Network unreachable/i);
         assert.ok(friendlyError('x'.repeat(500)).length <= 301);
     });
+    await ok('friendlyError guides 404/boot/ssh-server/drop cases', () => {
+        assert.match(friendlyError('HTTP 404: Not Found'), /Only the owner can open/i);
+        assert.match(friendlyError('timed out while waiting for the codespace to start'), /still booting/i);
+        assert.match(friendlyError('failed to start SSH server: check if SSH is installed'), /devcontainer.*sshd/i);
+        assert.match(friendlyError('Connection closed exit 255'), /RUNNING/i);
+    });
+    await ok('listCodespaces failure paths stay guided', async () => {
+        // Pure aggregate builder (deterministic, no network/gh needed).
+        const err = GithubApi.buildListError('ghost', new Error('net down'), new Error('cli boom'));
+        assert.match(err.message, /Couldn't load Codespaces for "ghost"/);
+        assert.match(err.message, /press Refresh/i);
+        // Bogus token must reject (401-auth when online, aggregate when offline).
+        const api = new GithubApi({ getActiveAccount: () => '', getToken: async () => 'bogus-invalid-token-xyz' });
+        await assert.rejects(api.listCodespaces('ghost'), /expired|Couldn't load/);
+    });
+    await ok('logger works without vscode (console fallback)', () => {
+        const logger = require('../src/logger');
+        logger.info('test info');
+        logger.warn('test warn');
+        logger.error('test error');
+        logger.show();
+    });
     await ok('runCommand resolves stdout only (stderr ignored)', async () => {
         const out = await runCommand(process.execPath, ['-e', "console.log('out'); console.error('warn noise')"], 8000);
         assert.strictEqual(out, 'out');
