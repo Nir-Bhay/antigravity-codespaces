@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -32,6 +32,11 @@ jobs:
         run: npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
 
       - name: Publish to Open VSX Registry
-        run: npx ovsx publish *.vsix -p ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT secret is not set — add it in Settings → Secrets → Actions."
+            exit 1
+          fi
+          npx ovsx publish *.vsix --pat "$OVSX_PAT"
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
