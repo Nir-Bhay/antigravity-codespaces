@@ -168,7 +168,7 @@ gh auth login -s codespace -w
 Download from [Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest), then:
 
 ```powershell
-antigravity-ide --install-extension antigravity-codespaces-4.3.0.vsix
+antigravity-ide --install-extension antigravity-codespaces-5.0.1.vsix
 ```
 
 Or inside the IDE: `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → pick the file.

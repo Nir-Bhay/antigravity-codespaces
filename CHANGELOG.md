@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.1] - 2026-09-04
+
+### Security
+- SSH config injection hardening: Codespace names are allowlist-validated before any
+  `~/.ssh/config` write; block-strip regex is escaped with an explicit end marker.
+- Webview XSS gaps closed: sidebar machine/ports metadata and dashboard repo lists are
+  HTML-escaped at every injection point.
+- CLI runner no longer uses a shell fallback: `execFile` argv only, stdout-only capture,
+  child killed on timeout.
+
+### Fixed
+- Cloud Hub error page Retry button now works (missing `script-src` CSP directive added).
+- Dashboard shows a Sign In call-to-action when logged out instead of a dead end.
+- Per-account load failures surface as banners instead of silently showing empty lists.
+- Dashboard preserves search text, account filter, and grid/list mode across refreshes.
+- Start/stop/delete/rebuild/connect/sync now refresh the dashboard too (was sidebar only).
+- Dashboard/sidebar no longer show stale data after login/logout (auth-change fan-out).
+- `stop`/`rebuild` timeouts raised (30s/180s) to match real operation durations.
+- PAT accounts survive offline (lazy re-verify with 10-min TTL, offline tolerance).
+- Active account is never auto-clobbered when an account is temporarily undiscoverable.
+- `fetchUserRepos`/`listCodespaces` paginate (up to 500) instead of capping at 100.
+- `createCodespace` validates `owner/repo` format and trims the branch input.
+- Serial per-account fetching replaced with parallel fetches; status bar debounced.
+- `formatRelativeTime` returns `N/A` for invalid dates instead of `NaNd ago`.
+
 ## [5.0.0] - 2026-09-04
 
 ### Added

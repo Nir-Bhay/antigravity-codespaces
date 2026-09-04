@@ -23,7 +23,7 @@ Open VSX is the vendor-neutral extension registry for Code-OSS, Gitpod, Eclipse 
 ```bash
 # From the repo root after building the VSIX
 npx @vscode/vsce package --no-git-tag-version
-npx ovsx publish antigravity-codespaces-4.3.0.vsix -p <your-token>
+npx ovsx publish antigravity-codespaces-5.0.1.vsix -p <your-token>
 ```
 
 ### Automated Publish via CI (See `open-vsx-publish.yml`)
@@ -106,7 +106,7 @@ Dark themed banner (`#1a1a2e`) with white text to match the extension icon and d
 - [x] GitHub Release with attached VSIX
 - [x] Repository topics set
 - [ ] Demo GIF in README
-- [ ] Open VSX CI publish workflow
+- [x] Open VSX CI publish workflow (`.github/workflows/open-vsx-publish.yml`)
 - [ ] GitHub Sponsors profile (optional but signals active maintenance)
 
 ---

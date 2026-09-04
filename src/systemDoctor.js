@@ -1,11 +1,12 @@
 const vscode = require('vscode');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execFile } = require('child_process');
 const { findGhExecutable } = require('./sshManager');
 
 class SystemDoctor {
     /**
      * Inspects local environment prerequisites and returns health status.
+     * Uses async exec to avoid blocking the VS Code UI thread.
      */
     static async diagnose(authManager) {
         const platform = process.platform;
@@ -13,32 +14,45 @@ class SystemDoctor {
         let ghInstalled = false;
         let ghVersion = '';
 
-        if (fs.existsSync(ghPath) || ghPath === 'gh.exe' || ghPath === 'gh') {
-            try {
-                const out = execSync(`"${ghPath}" --version`, { encoding: 'utf8', timeout: 4000, stdio: ['pipe', 'pipe', 'ignore'] });
-                ghInstalled = true;
-                const match = out.match(/gh version ([^\s]+)/);
-                ghVersion = match ? match[1] : 'installed';
-            } catch {
-                ghInstalled = false;
-            }
+        // Async gh version check — does NOT block the UI thread
+        let ghPathExists = false;
+        try { ghPathExists = fs.existsSync(ghPath); } catch {} // safe on UNC paths
+
+        if (ghPathExists || ghPath === 'gh.exe' || ghPath === 'gh') {
+            await new Promise((resolve) => {
+                execFile(ghPath, ['--version'], { timeout: 4000, windowsHide: true }, (err, stdout) => {
+                    if (!err && stdout) {
+                        ghInstalled = true;
+                        const match = stdout.match(/gh version ([^\s]+)/);
+                        ghVersion = match ? match[1] : 'installed';
+                    }
+                    resolve();
+                });
+            });
         }
 
-        // Check SSH Remote extension presence
+        // Check SSH Remote extension presence (supports standard, Open-VSX, and fork-specific remote-ssh extensions)
         const remoteExts = [
             'jeanp413.open-remote-ssh',
             'ms-vscode-remote.remote-ssh',
             'vsx-remote-ssh.vsx-remote-ssh'
         ];
-        const hasRemoteSsh = vscode.extensions.all.some(e => remoteExts.includes(e.id));
+        const hasRemoteSsh = vscode.extensions.all.some(e =>
+            remoteExts.includes(e.id) ||
+            e.id.toLowerCase().includes('remote-ssh') ||
+            e.id.toLowerCase().includes('open-remote-ssh')
+        );
 
-        // Check OpenSSH client
+        // Check OpenSSH client (async)
         let hasOpenSsh = false;
-        try {
-            const checkSsh = platform === 'win32' ? 'where.exe ssh 2>nul' : 'which ssh 2>/dev/null';
-            execSync(checkSsh, { stdio: ['pipe', 'pipe', 'ignore'] });
-            hasOpenSsh = true;
-        } catch {}
+        await new Promise((resolve) => {
+            const cmd = platform === 'win32' ? 'where.exe' : 'which';
+            const args = ['ssh'];
+            execFile(cmd, args, { timeout: 3000, windowsHide: true }, (err) => {
+                if (!err) hasOpenSsh = true;
+                resolve();
+            });
+        });
 
         const accounts = await authManager.getAccounts();
 

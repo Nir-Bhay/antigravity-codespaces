@@ -1,6 +1,6 @@
 const vscode = require('vscode');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 
 const { friendlyError, formatRelativeTime } = require('./src/utils');
 const { AuthManager } = require('./src/authManager');
@@ -45,6 +45,15 @@ async function activate(context) {
         )
     );
 
+    // Auth changes fan out to every surface. The sidebar subscribes internally;
+    // without this the dashboard and status bar stay stale after login/logout.
+    context.subscriptions.push(
+        authManager.onAuthChanged(async () => {
+            try { await dashboardProvider.refreshHtml(); } catch {}
+            try { await statusBar.update(); } catch {}
+        })
+    );
+
     // ── Settings Change Listener (fixes BUG-11) ──────────────────────────────
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -75,14 +84,19 @@ async function activate(context) {
                 return;
             }
 
-            await vscode.window.withProgress(
+                await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Window, title: 'Fetching Codespaces...' },
                 async () => {
-                    const allCs = [];
-                    for (const acc of accounts) {
-                        const list = await githubApi.listCodespaces(acc.account);
-                        list.forEach(c => allCs.push({ ...c, account: acc.account }));
-                    }
+                    // Fetch all accounts in parallel instead of serially.
+                    const settled = await Promise.all(accounts.map(async (acc) => {
+                        try {
+                            const list = await githubApi.listCodespaces(acc.account);
+                            return list.map(c => ({ ...c, account: acc.account }));
+                        } catch {
+                            return [];
+                        }
+                    }));
+                    const allCs = settled.flat();
 
                     if (allCs.length === 0) {
                         const create = await vscode.window.showInformationMessage('No active Codespaces found.', 'Create New Codespace');
@@ -189,11 +203,15 @@ async function activate(context) {
             let cs = item?.codespaceData;
             if (!cs) {
                 const accounts = await authManager.getAccounts();
-                const all = [];
-                for (const acc of accounts) {
-                    const list = await githubApi.listCodespaces(acc.account);
-                    list.forEach(c => all.push({ ...c, account: acc.account }));
-                }
+                const settled = await Promise.all(accounts.map(async (acc) => {
+                    try {
+                        const list = await githubApi.listCodespaces(acc.account);
+                        return list.map(c => ({ ...c, account: acc.account }));
+                    } catch {
+                        return [];
+                    }
+                }));
+                const all = settled.flat();
                 if (!all.length) {
                     vscode.window.showWarningMessage('No Codespaces found to test.');
                     return;
@@ -239,7 +257,17 @@ async function activate(context) {
 
     // ── Command: Switch Account ──────────────────────────────────────────────
     context.subscriptions.push(
-        vscode.commands.registerCommand('antigravity-codespaces.switchAccount', async () => {
+        vscode.commands.registerCommand('antigravity-codespaces.switchAccount', async (target) => {
+            const accName = typeof target === 'string' ? target : target?.account;
+            if (accName) {
+                authManager.setActiveAccount(accName);
+                await sidebarProvider.refresh();
+                await dashboardProvider.refreshHtml();
+                await statusBar.update();
+                vscode.window.showInformationMessage(`Switched active account to: ${accName}`);
+                return;
+            }
+
             const accounts = await authManager.getAccounts();
             const picks = [
                 ...accounts.map(a => ({
@@ -353,7 +381,11 @@ async function activate(context) {
             try {
                 const hostAlias = ensureSSHConfigEntry(cs, account);
                 const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
-                const remoteFolder = `/workspaces/${repoShort}`;
+                const config = vscode.workspace.getConfiguration('antigravity-codespaces');
+                const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
+                const remoteFolder = folderTemplate
+                    .replace(/\${repo}/g, repoShort)
+                    .replace(/\${name}/g, cs.name);
 
                 // Fast REST wake-up if container is not available (fixes BUG-10)
                 if (cs.state !== 'Available') {
@@ -394,10 +426,20 @@ async function activate(context) {
                             }
                         }
 
-                        // Tier 3: Binary CLI launcher (ANTIGRAVITY_EXE resolved properly, fixes BUG-02)
-                        if (!connected && fs.existsSync(ANTIGRAVITY_EXE)) {
+                        // Tier 3: Binary CLI launcher (execFile argv — no shell
+                        // interpolation). Only attempted when the launcher binary
+                        // actually exists, so Tier 4 terminal fallback still runs
+                        // when it does not.
+                        let launcherExists = false;
+                        try { launcherExists = !!ANTIGRAVITY_EXE && fs.existsSync(ANTIGRAVITY_EXE); } catch {}
+                        if (!connected && launcherExists) {
                             try {
-                                exec(`"${ANTIGRAVITY_EXE}" --folder-uri "vscode-remote://ssh-remote+${hostAlias}${remoteFolder}"`, { windowsHide: true });
+                                const child = execFile(ANTIGRAVITY_EXE,
+                                    ['--folder-uri', `vscode-remote://ssh-remote+${hostAlias}${remoteFolder}`],
+                                    { windowsHide: true },
+                                    () => {});
+                                child.on('error', () => {});
+                                child.unref?.();
                                 connected = true;
                             } catch {}
                         }
@@ -415,6 +457,7 @@ async function activate(context) {
                         }
 
                         sidebarProvider.refresh();
+                        dashboardProvider.refreshHtml();
                         statusBar.update();
                     }
                 );
@@ -438,6 +481,7 @@ async function activate(context) {
                         await githubApi.startCodespace(cs.name, cs.account);
                         vscode.window.showInformationMessage(`${cs.displayName || cs.name} is starting!`);
                         sidebarProvider.refresh();
+                        dashboardProvider.refreshHtml();
                         statusBar.update();
                     } catch (e) {
                         vscode.window.showErrorMessage(`Could not start: ${friendlyError(e)}`);
@@ -456,6 +500,7 @@ async function activate(context) {
                 await githubApi.stopCodespace(cs.name, cs.account);
                 vscode.window.showInformationMessage(`Stopped ${cs.displayName || cs.name}.`);
                 sidebarProvider.refresh();
+                dashboardProvider.refreshHtml();
                 statusBar.update();
             } catch (e) {
                 vscode.window.showErrorMessage(`Stop failed: ${friendlyError(e)}`);
@@ -468,19 +513,26 @@ async function activate(context) {
         vscode.commands.registerCommand('antigravity-codespaces.rebuild', async (item) => {
             const cs = item?.codespaceData;
             if (!cs) return;
-            const mode = await vscode.window.showQuickPick([
-                { label: '$(debug-start) Standard Rebuild', desc: 'Uses layer cache', full: false },
-                { label: '$(symbol-event) Full Rebuild (no cache)', desc: 'Clean container rebuild', full: true }
-            ], { placeHolder: `Rebuild ${cs.displayName || cs.name}?` });
-            if (!mode) return;
+
+            let isFull = item?.full;
+            if (isFull === undefined) {
+                const mode = await vscode.window.showQuickPick([
+                    { label: '$(debug-start) Standard Rebuild', desc: 'Uses layer cache', full: false },
+                    { label: '$(symbol-event) Full Rebuild (no cache)', desc: 'Clean container rebuild', full: true }
+                ], { placeHolder: `Rebuild ${cs.displayName || cs.name}?` });
+                if (!mode) return;
+                isFull = mode.full;
+            }
 
             await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Rebuilding ${cs.displayName || cs.name}...`, cancellable: false },
                 async () => {
                     try {
-                        await githubApi.rebuildCodespace(cs.name, cs.account, mode.full);
+                        await githubApi.rebuildCodespace(cs.name, cs.account, isFull);
                         vscode.window.showInformationMessage(`Rebuild started for ${cs.displayName || cs.name}.`);
                         sidebarProvider.refresh();
+                        dashboardProvider.refreshHtml();
+                        statusBar.update();
                     } catch (e) {
                         vscode.window.showErrorMessage(`Rebuild failed: ${friendlyError(e)}`);
                     }
@@ -494,17 +546,21 @@ async function activate(context) {
         vscode.commands.registerCommand('antigravity-codespaces.deleteCodespace', async (item) => {
             const cs = item?.codespaceData;
             if (!cs) return;
-            const ok = await vscode.window.showWarningMessage(
-                `Delete "${cs.displayName || cs.name}"? This is permanent.`,
-                { modal: true },
-                'Delete'
-            );
-            if (ok !== 'Delete') return;
+
+            if (!item?.confirmed) {
+                const ok = await vscode.window.showWarningMessage(
+                    `Delete "${cs.displayName || cs.name}"? This is permanent.`,
+                    { modal: true },
+                    'Delete'
+                );
+                if (ok !== 'Delete') return;
+            }
 
             try {
                 await githubApi.deleteCodespace(cs.name, cs.account);
                 vscode.window.showInformationMessage(`Deleted ${cs.displayName || cs.name}.`);
                 sidebarProvider.refresh();
+                dashboardProvider.refreshHtml();
                 statusBar.update();
             } catch (e) {
                 vscode.window.showErrorMessage(`Delete failed: ${friendlyError(e)}`);
@@ -554,14 +610,15 @@ async function activate(context) {
                 async () => {
                     const accounts = await authManager.getAccounts();
                     let n = 0;
-                    for (const acc of accounts) {
+                    await Promise.all(accounts.map(async (acc) => {
                         try {
                             const list = await githubApi.listCodespaces(acc.account);
                             list.forEach(cs => { ensureSSHConfigEntry(cs, acc.account); n++; });
                         } catch {}
-                    }
+                    }));
                     vscode.window.showInformationMessage(`Synced ${n} Codespace SSH entries to ~/.ssh/config`);
                     sidebarProvider.refresh();
+                    dashboardProvider.refreshHtml();
                     statusBar.update();
                 }
             );
@@ -574,10 +631,12 @@ async function activate(context) {
         setTimeout(async () => {
             try {
                 const accounts = await authManager.getAccounts();
-                for (const acc of accounts) {
-                    const list = await githubApi.listCodespaces(acc.account);
-                    list.forEach(cs => ensureSSHConfigEntry(cs, acc.account));
-                }
+                await Promise.all(accounts.map(async (acc) => {
+                    try {
+                        const list = await githubApi.listCodespaces(acc.account);
+                        list.forEach(cs => ensureSSHConfigEntry(cs, acc.account));
+                    } catch {}
+                }));
                 await statusBar.update();
             } catch {}
         }, 2000);

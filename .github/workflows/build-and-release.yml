@@ -26,6 +26,9 @@ jobs:
       - name: Validate Extension Syntax
         run: node -c extension.js
 
+      - name: Run Unit Tests
+        run: npm test
+
       - name: Package Extension (VSIX)
         run: npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
 
