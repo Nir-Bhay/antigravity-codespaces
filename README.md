@@ -322,6 +322,12 @@ Then click **Refresh** in the sidebar.
 
 ---
 
+## Developer Documentation
+
+- 📖 **[Deep Audit & Complete Blueprint](docs/AUDIT_AND_BLUEPRINT.md)** — Comprehensive architectural audit, detailed bug analysis (BUG-01 through BUG-12), cross-platform path handling fixes, token security, and 50-point release checklist.
+
+---
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and PR process.
