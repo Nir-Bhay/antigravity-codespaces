@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.0] - 2026-09-04
+
+### Added
+- **Zero-CLI REST API Core**: Direct HTTPS integration (`https://api.github.com/user/codespaces`) using native `fetch` — list, start, stop, rebuild, delete, and create without requiring GitHub CLI pre-installed.
+- **Native VS Code GitHub OAuth**: Seamless login via `vscode.authentication.getSession('github')` with zero terminal popups.
+- **Encrypted PAT Support**: Corporate and proxy-safe Personal Access Token login backed by VS Code's encrypted `context.secrets` API.
+- **System Doctor Diagnostics**: Pre-flight environment inspector detecting GitHub CLI, OpenSSH client, Remote SSH extensions, and active accounts with one-click install recommendations.
+- **Smart Onboarding Welcome View**: Comprehensive first-time setup guide explaining Codespaces, free tier quota, direct sign-in, and system prerequisite checklist.
+- **Strict Content Security Policy (CSP)**: Hardened all webviews with cryptographically random nonces and comprehensive HTML entity sanitization.
+- **Cross-Platform Binary Discovery**: Automated path discovery for GitHub CLI and Antigravity IDE on Windows, macOS (Apple Silicon & Intel Homebrew), and Linux.
+
+### Fixed
+- **BUG-01**: Fixed fatal login crash on clean machines lacking `gh` CLI in PATH by adopting native OAuth.
+- **BUG-02**: Fixed unhandled `ReferenceError: ANTIGRAVITY_EXE is not defined` in connection fallback.
+- **BUG-03**: Initialized `GH_PATH` dynamically via `findGhExecutable()` rather than a static string.
+- **BUG-04**: Eliminated hardcoded developer laptop directories (`C:\Users\lenovo\...`) from production code.
+- **BUG-05**: Removed personal GitHub handle (`Nir-Bhay`) fallback in SSH config host alias generator.
+- **BUG-06**: Cleaned up SSH config generation to remove non-existent `~/.ssh/codespaces.auto` key dependencies.
+- **BUG-07**: Fixed `getAccounts()` failure by parsing both stdout and stderr from `gh auth status` without failing on exit code 1.
+- **BUG-08**: Added complete macOS and Linux binary path resolution.
+- **BUG-09**: Automatic token cache invalidation on refresh, account switch, and logout.
+- **BUG-10**: Replaced 30-second SSH tunnel wake probe (`echo up`) with instant REST API calls (`POST /user/codespaces/{name}/start`).
+- **BUG-11**: Added live listener for `vscode.workspace.onDidChangeConfiguration`.
+- **BUG-12**: Implemented proper state teardown and cache clearing in `deactivate()`.
+- **BUG-13**: Replaced global boolean connection lock with a per-container concurrency Set.
+- **BUG-14**: Added interactive sign-in options to the Quick Actions menu when unauthenticated.
+- **BUG-15**: Corrected multiple `acquireVsCodeApi()` calls in webviews.
+- **BUG-16**: Fixed `gitStatus.ref` fallback to prevent mislabeling custom branches as `'main'`.
+
+---
+
 ## [4.3.0] - 2026-08-25
 
 ### Added
