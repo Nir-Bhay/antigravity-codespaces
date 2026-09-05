@@ -46,17 +46,28 @@ function ok(name, fn) {
         assert.match(friendlyError('getaddrinfo EAI_AGAIN api.github.com'), /Network unreachable/i);
         assert.ok(friendlyError('x'.repeat(500)).length <= 301);
     });
-    await ok('friendlyError guides 404/boot/ssh-server/drop cases', () => {
+    await ok('friendlyError guides 404/boot/ssh-server/drop/scope cases', () => {
         assert.match(friendlyError('HTTP 404: Not Found'), /Only the owner can open/i);
         assert.match(friendlyError('timed out while waiting for the codespace to start'), /still booting/i);
         assert.match(friendlyError('failed to start SSH server: check if SSH is installed'), /devcontainer.*sshd/i);
         assert.match(friendlyError('Connection closed exit 255'), /RUNNING/i);
+        assert.match(friendlyError('This API operation needs the "codespace" scope'), /codespace.*permission/i);
+        assert.match(friendlyError('Flag shorthand -r has been deprecated\nerror getting machine type: no terminal'), /machine/i);
     });
-    await ok('listCodespaces failure paths stay guided', async () => {
-        // Pure aggregate builder (deterministic, no network/gh needed).
+    await ok('listCodespaces failure paths stay guided and safe from ReferenceError', async () => {
+        // Pure aggregate builder with scope guidance
+        const scopeErr = GithubApi.buildListError('abhay', null, new Error('needs the "codespace" scope'));
+        assert.match(scopeErr.message, /gh auth refresh.*codespace/i);
+
+        // Standard aggregate error
         const err = GithubApi.buildListError('ghost', new Error('net down'), new Error('cli boom'));
         assert.match(err.message, /Couldn't load Codespaces for "ghost"/);
         assert.match(err.message, /press Refresh/i);
+
+        // Null token (CLI-only fallback path) must NEVER throw ReferenceError: restErr is not defined
+        const nullApi = new GithubApi({ getActiveAccount: () => '', getToken: async () => null });
+        await assert.rejects(nullApi.listCodespaces('ghost'), /Couldn't load/);
+
         // Bogus token must reject (401-auth when online, aggregate when offline).
         const api = new GithubApi({ getActiveAccount: () => '', getToken: async () => 'bogus-invalid-token-xyz' });
         await assert.rejects(api.listCodespaces('ghost'), /expired|Couldn't load/);

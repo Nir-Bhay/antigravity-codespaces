@@ -152,12 +152,16 @@ class AuthManager {
             const activeMatch = rawStatus.match(/account ([A-Za-z0-9_\-.]+)[^\n]*\n[^\n]*Active account:\s*true/);
             const cliActive = activeMatch ? activeMatch[1] : (cliAccounts[0] || '');
 
+            // Detect if the CLI token has granted the 'codespace' scope
+            const hasCodespaceScope = /Token scopes:[^\n]*'codespace'/i.test(rawStatus);
+
             for (const acc of cliAccounts) {
                 if (!seenNames.has(acc)) {
                     discovered.push({
                         account: acc,
                         type: 'cli',
-                        active: acc === cliActive
+                        active: acc === cliActive,
+                        hasCodespaceScope
                     });
                     seenNames.add(acc);
                 }

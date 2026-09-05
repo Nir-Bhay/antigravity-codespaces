@@ -48,7 +48,16 @@ function formatRelativeTime(dateStr) {
  */
 function friendlyError(err) {
     if (!err) return 'Unknown error occurred.';
-    const msg = typeof err === 'string' ? err : (err.message || String(err));
+    let msg = typeof err === 'string' ? err : (err.message || String(err));
+    if (msg.includes('Flag shorthand -r has been deprecated')) {
+        msg = msg.replace(/Flag shorthand -r has been deprecated[^\n]*\n?/g, '').trim();
+    }
+    if (msg.includes('needs the "codespace" scope') || msg.includes('Must have admin rights to Repository') || msg.includes('lack the "codespace"')) {
+        return 'GitHub account is missing the "codespace" permission. Run "gh auth refresh -h github.com -s codespace" in terminal or click Sign In.';
+    }
+    if (msg.includes('error getting machine type') || msg.includes('no terminal')) {
+        return 'Could not determine Codespace machine type in non-interactive mode. Please specify a machine tier or use the dashboard wizard.';
+    }
     if (msg.includes('Timed out')) {
         return 'Operation timed out. The cloud container may still be booting up — please try again in a few moments.';
     }
@@ -70,8 +79,11 @@ function friendlyError(err) {
     if (msg.includes('255') || msg.includes('closed unexpectedly') || msg.includes('Connection closed')) {
         return 'SSH tunnel dropped unexpectedly. Check the machine is RUNNING (press Start if stopped), verify the gh CLI account owns it, then retry. Details in Antigravity Codespaces logs.';
     }
-    if (msg.includes('403') || msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('abuse')) {
+    if (msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('abuse')) {
         return 'GitHub API rate limit reached. Wait a few minutes, then refresh.';
+    }
+    if (msg.includes('403') && (msg.includes('denied') || msg.includes('forbidden') || msg.includes('billing') || msg.includes('scope'))) {
+        return 'GitHub access denied (HTTP 403). Check that your account has Codespaces permissions and billing enabled.';
     }
     if (msg.includes('billing') || msg.includes('quota') || msg.includes('exceeded')) {
         return 'GitHub Codespaces spending or quota limit reached. Check your GitHub account billing settings.';

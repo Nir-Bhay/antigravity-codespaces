@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.3] - 2026-09-05
+
+### Fixed
+- **Fatal ReferenceError (`restErr is not defined`)**: Declared `let restErr = null;` in `listCodespaces(account)` and recorded non-200 REST responses so token scope/permission failures never crash with a runtime ReferenceError.
+- **GitHub CLI shorthand deprecation**: Replaced deprecated `-r` with `-R` (and added `--default-permissions`) in `createCodespace`.
+- **Non-interactive TTY machine prompt crash**: Passed default machine tier (`-m basicLinux32gb`) during headless CLI fallback creation to prevent `error getting machine type: no terminal`.
+- **Misleading Rate-Limit error labels**: Refined `friendlyError` so 403 missing OAuth scope errors (`needs the "codespace" scope`) guide the user to `gh auth refresh -s codespace` rather than masquerading as an API rate limit.
+- **CLI Scope Detection**: Added `hasCodespaceScope` detection in `authManager.getAccounts()`.
+
 ## [5.0.2] - 2026-09-05
 
 ### Fixed

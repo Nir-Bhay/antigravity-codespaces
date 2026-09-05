@@ -85,6 +85,7 @@ class GithubApi {
      * Lists Codespaces for an account. Prefers direct REST API, falls back to CLI.
      */
     async listCodespaces(account) {
+        let restErr = null;
         const cacheKey = this._csKey(account);
         const cached = this._getFresh(this._csCache, cacheKey, GithubApi.TTL_CS);
         if (cached !== undefined) {
@@ -96,7 +97,7 @@ class GithubApi {
         // 1. Direct REST API (Zero CLI dependency!)
         if (token) {
             try {
-                const { items, incomplete } = await this._fetchAllPages(
+                const { items, incomplete, status } = await this._fetchAllPages(
                     `${GITHUB_API_BASE}/user/codespaces`, token, 5);
                 if (!incomplete) {
                     const list = items.map(cs => ({
@@ -123,6 +124,9 @@ class GithubApi {
                     this._setFresh(this._csCache, cacheKey, list);
                     return list;
                 }
+                restErr = new Error(status === 403
+                    ? 'Access denied (HTTP 403). The account token may lack the "codespace" OAuth permission.'
+                    : `GitHub REST API returned HTTP ${status}`);
             } catch (err) {
                 // Auth/rate-limit errors must surface, not silently fall back.
                 if (/authentication expired|rate limit/i.test(err.message || '')) throw err;
@@ -157,6 +161,10 @@ class GithubApi {
      */
     static buildListError(account, restErr, cliErr) {
         const who = account || 'active account';
+        const raw = ((cliErr && cliErr.message) || (restErr && restErr.message) || '');
+        if (/needs the "codespace" scope|Must have admin rights|lack the "codespace"/i.test(raw)) {
+            return new Error(`Account "${who}" is missing the "codespace" permission. Run "gh auth refresh -h github.com -s codespace" or click Sign In to authenticate.`);
+        }
         const cause = ((restErr && restErr.message) || (cliErr && cliErr.message) || 'unknown error');
         return new Error(`Couldn't load Codespaces for "${who}": ${cause}. Check your connection and sign-in, then press Refresh (details in Antigravity Codespaces logs).`);
     }
@@ -469,19 +477,21 @@ class GithubApi {
     /**
      * Provisions a new Codespace on a repository and branch.
      */
-    async createCodespace(repo, branch, account) {
+    async createCodespace(repo, branch, account, machine = '') {
         const token = await this._authManager.getToken(account);
         const { owner, repoName, cleanRepo } = GithubApi.normalizeRepoInput(repo);
         if (!owner || !repoName) {
             throw new Error('Enter a repository in owner/repo format.');
         }
         const cleanBranch = (branch || '').trim();
+        const chosenMachine = (machine || '').trim();
 
         // Direct REST API
         if (token) {
             try {
                 const body = {};
                 if (cleanBranch) body.ref = cleanBranch;
+                if (chosenMachine) body.machine = chosenMachine;
                 const res = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repoName}/codespaces`, {
                     method: 'POST',
                     headers: {
@@ -496,22 +506,47 @@ class GithubApi {
                     this._invalidateCs(account);
                     return newCs.name;
                 }
+                const errJson = await res.json().catch(() => ({}));
+                const apiMsg = errJson.message || `HTTP ${res.status}`;
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
+                if (res.status === 403) {
+                    throw new Error(`Codespace creation denied (403): ${apiMsg}. Verify that Codespaces permissions and billing are enabled.`);
+                }
+                if (res.status === 404) {
+                    throw new Error(`Repository "${cleanRepo}" not found or not accessible.`);
+                }
+                if (res.status === 422) {
+                    throw new Error(`Invalid parameters for "${cleanRepo}": ${apiMsg}`);
+                }
             } catch (err) {
-                if (/authentication expired|owner\/repo format/i.test(err.message || '')) throw err;
+                if (/authentication expired|owner\/repo format|creation denied|not found|Invalid parameters/i.test(err.message || '')) throw err;
                 console.warn('REST createCodespace failed, attempting CLI fallback:', err.message);
             }
         }
 
         const ghExe = findGhExecutable();
         const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-        const args = ['codespace', 'create', '-r', cleanRepo];
+        const args = ['codespace', 'create', '-R', cleanRepo, '--default-permissions'];
         if (cleanBranch) args.push('-b', cleanBranch);
-        const result = await runCommand(ghExe, args, 120000, envOpts);
-        this._invalidateCs(account);
-        return result;
+        args.push('-m', chosenMachine || 'basicLinux32gb');
+
+        try {
+            const result = await runCommand(ghExe, args, 120000, envOpts);
+            this._invalidateCs(account);
+            return result;
+        } catch (cliErr) {
+            // If repository does not offer basicLinux32gb tier, retry once without -m constraint
+            if (cliErr.message && cliErr.message.includes('basicLinux32gb')) {
+                const retryArgs = ['codespace', 'create', '-R', cleanRepo, '--default-permissions'];
+                if (cleanBranch) retryArgs.push('-b', cleanBranch);
+                const retryResult = await runCommand(ghExe, retryArgs, 120000, envOpts);
+                this._invalidateCs(account);
+                return retryResult;
+            }
+            throw cliErr;
+        }
     }
 }
 
