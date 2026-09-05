@@ -209,14 +209,22 @@ class GithubApi {
             }
         }
 
-        // CLI Fallback: use `gh codespace start` directly (not SSH ping)
+        // CLI Fallback: use gh api POST endpoint (gh codespace start is not a native CLI command)
         try {
             const ghExe = findGhExecutable();
             const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            await runCommand(ghExe, ['codespace', 'start', '-c', name], 120000, envOpts);
+            await runCommand(ghExe, ['api', '-X', 'POST', `/user/codespaces/${encodeURIComponent(name)}/start`], 120000, envOpts);
             this._invalidateCs(account);
             return true;
         } catch (cliErr) {
+            // Secondary CLI Fallback: ping via SSH (connecting automatically boots a stopped container)
+            try {
+                const ghExe = findGhExecutable();
+                const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
+                await runCommand(ghExe, ['cs', 'ssh', '-c', name, '--', 'echo', 'started'], 45000, envOpts);
+                this._invalidateCs(account);
+                return true;
+            } catch {}
             console.warn('CLI start fallback failed:', cliErr.message);
             throw cliErr;
         }

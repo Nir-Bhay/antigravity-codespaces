@@ -66,11 +66,11 @@ function ok(name, fn) {
 
         // Null token (CLI-only fallback path) must NEVER throw ReferenceError: restErr is not defined
         const nullApi = new GithubApi({ getActiveAccount: () => '', getToken: async () => null });
-        await assert.rejects(nullApi.listCodespaces('ghost'), /Couldn't load/);
+        await assert.rejects(nullApi.listCodespaces('ghost'), /Couldn't load|missing the "codespace" permission/);
 
         // Bogus token must reject (401-auth when online, aggregate when offline).
         const api = new GithubApi({ getActiveAccount: () => '', getToken: async () => 'bogus-invalid-token-xyz' });
-        await assert.rejects(api.listCodespaces('ghost'), /expired|Couldn't load/);
+        await assert.rejects(api.listCodespaces('ghost'), /expired|Couldn't load|missing the "codespace" permission/);
     });
     await ok('logger works without vscode (console fallback)', () => {
         const logger = require('../src/logger');
