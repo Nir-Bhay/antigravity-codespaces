@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.5] - 2026-09-05
+
+### Fixed
+- **CLI Active Account Scope ReferenceError**: Declared `cliActive` before the discovery `try` block and populated it from active account blocks, eliminating a potential `ReferenceError` during CLI account discovery when no active account was previously persisted.
+- **Content Security Policy Hardening**: Replaced inline `onerror` fallback handlers on user and account avatars with nonced DOM event listeners, ensuring 100% strict CSP compliance and zero webview console warnings.
+- **Offline Testability & Contract Verification**: Made `AuthManager` constructor resilient in non-VSCode test environments and added automated static contract tests verifying zero inline event handlers across all webview providers.
+
 ## [5.0.4] - 2026-09-05
 
 ### Fixed

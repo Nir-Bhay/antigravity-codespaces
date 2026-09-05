@@ -1,4 +1,5 @@
-const vscode = require('vscode');
+let vscode;
+try { vscode = require('vscode'); } catch {}
 const { runCommand } = require('./utils');
 const { findGhExecutable } = require('./sshManager');
 
@@ -6,26 +7,28 @@ const PAT_SECRET_KEY_PREFIX = 'antigravity_github_pat_';  // per-account PAT key
 const PAT_SECRET_ACCOUNTS_KEY = 'antigravity_pat_accounts'; // index of accounts that have stored PATs
 
 class AuthManager {
-    constructor(context) {
+    constructor(context = {}) {
         this._context = context;
         this._tokenCache = new Map();
         // PAT validity stamps: { validAt } — avoids re-verifying stored PATs on
         // every discovery (slow startup, rate-limit burn, offline disappearance).
         this._patValidity = new Map();
-        this._activeAccount = this._context.globalState?.get('activeAccount') || '';
+        this._activeAccount = (this._context && this._context.globalState?.get('activeAccount')) || '';
         this._accounts = [];
-        this._onAuthChangedEmitter = new vscode.EventEmitter();
+        this._onAuthChangedEmitter = vscode?.EventEmitter ? new vscode.EventEmitter() : { event: () => {}, fire: () => {} };
         this.onAuthChanged = this._onAuthChangedEmitter.event;
 
         // Listen to native VS Code authentication session changes
-        context.subscriptions.push(
-            vscode.authentication.onDidChangeSessions(e => {
-                if (e.provider.id === 'github') {
-                    this.clearCache();
-                    this._onAuthChangedEmitter.fire();
-                }
-            })
-        );
+        if (vscode?.authentication?.onDidChangeSessions && context?.subscriptions) {
+            context.subscriptions.push(
+                vscode.authentication.onDidChangeSessions(e => {
+                    if (e.provider.id === 'github') {
+                        this.clearCache();
+                        this._onAuthChangedEmitter.fire();
+                    }
+                })
+            );
+        }
     }
 
     clearCache() {
@@ -130,6 +133,7 @@ class AuthManager {
         } catch {}
 
         // 3. Check Local GitHub CLI (if installed)
+        let cliActive = '';
         try {
             const ghExe = findGhExecutable();
             // Capture both stdout and stderr (fixes BUG-07: gh auth status outputs to stderr and exits with 1 on warnings)
@@ -148,6 +152,10 @@ class AuthManager {
                 const acc = nameMatch[1];
                 const isActive = /Active account:\s*true/i.test(block);
                 const hasCodespaceScope = /Token scopes:[^\n]*'codespace'/i.test(block);
+
+                if (isActive) {
+                    cliActive = acc;
+                }
 
                 if (!seenNames.has(acc)) {
                     discovered.push({

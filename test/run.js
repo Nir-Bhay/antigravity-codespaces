@@ -11,6 +11,7 @@ const ROOT = path.join(__dirname, '..');
 const { escapeHtml, generateNonce, formatRelativeTime, friendlyError, runCommand } = require('../src/utils');
 const sshManager = require('../src/sshManager');
 const { GithubApi } = require('../src/githubApi');
+const { AuthManager, PAT_SECRET_KEY_PREFIX, PAT_SECRET_ACCOUNTS_KEY } = require('../src/authManager');
 
 let passed = 0;
 function ok(name, fn) {
@@ -221,6 +222,46 @@ function ok(name, fn) {
         assert.strictEqual(m.machineDisplayName, '4 vCPU');
     });
 
+    console.log('authManager');
+    await ok('authManager tracks active account and manages token cache', () => {
+        const globalState = new Map();
+        const auth = new AuthManager({
+            globalState: {
+                get: (k) => globalState.get(k),
+                update: (k, v) => globalState.set(k, v)
+            }
+        });
+        assert.strictEqual(auth.getActiveAccount(), '');
+        auth.setActiveAccount('alice');
+        assert.strictEqual(auth.getActiveAccount(), 'alice');
+        assert.strictEqual(globalState.get('activeAccount'), 'alice');
+
+        auth._tokenCache.set('alice', 'ghp_secret');
+        assert.strictEqual(auth._tokenCache.get('alice'), 'ghp_secret');
+        auth.clearCache();
+        assert.strictEqual(auth._tokenCache.has('alice'), false);
+    });
+    await ok('authManager _readPatIndex repairs corrupt secret data gracefully', async () => {
+        let stored = '{ invalid json';
+        const auth = new AuthManager({
+            secrets: {
+                get: async () => stored,
+                store: async (k, v) => { stored = v; }
+            }
+        });
+        const index = await auth._readPatIndex();
+        assert.deepStrictEqual(index, []);
+        assert.strictEqual(stored, '[]');
+    });
+    await ok('authManager getAccounts executes cleanly without ReferenceError', async () => {
+        const auth = new AuthManager({
+            globalState: { get: () => '', update: () => {} },
+            secrets: { get: async () => '[]', store: async () => {} }
+        });
+        const accs = await auth.getAccounts();
+        assert.ok(Array.isArray(accs));
+    });
+
     console.log('contracts (static)');
     await ok('every contributed command is registered in extension.js', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -240,6 +281,18 @@ function ok(name, fn) {
             assert.ok(src.includes("script-src 'nonce-"), `${f}: missing script-src nonce`);
             assert.ok(!src.includes('window.prompt('), `${f}: window.prompt forbidden`);
             assert.ok(src.includes('unknown webview command'), `${f}: missing default message guard`);
+            
+            // Zero inline on<event>= handlers allowed in HTML templates (strictly enforced by CSP)
+            const regex = /\b(on[a-z]+)\s*=\s*["'][^"']*["']/gi;
+            let match;
+            const found = [];
+            while ((match = regex.exec(src)) !== null) {
+                const prefix = src.slice(Math.max(0, match.index - 10), match.index);
+                if (!prefix.includes('.') && !prefix.includes('addEventListener')) {
+                    found.push(match[0]);
+                }
+            }
+            assert.strictEqual(found.length, 0, `${f} has inline event handler(s): ${found.join(', ')}`);
         }
         const dash = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
         assert.ok(dash.includes('vscode.getState()') && dash.includes('vscode.setState('), 'dashboard must preserve UI state');
