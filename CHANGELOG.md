@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.6] - 2026-09-05
+
+### Fixed
+- **Codespaces SSH IdentityFile & Askpass Password Prompt**: Explicitly specified `IdentityFile ~/.ssh/codespaces.auto` in generated OpenSSH host configuration blocks and eliminated destructive stripping in cleanup routines, preventing OpenSSH from attempting irrelevant user keys and prompting for a non-existent container password.
+
 ## [5.0.5] - 2026-09-05
 
 ### Fixed

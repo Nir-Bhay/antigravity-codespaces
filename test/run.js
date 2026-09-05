@@ -162,11 +162,10 @@ function ok(name, fn) {
         ].join('\n');
         const { cfg, removedBlocks, removedKeys } = sshManager.purgeLegacyBlocks(dirty);
         assert.strictEqual(removedBlocks, 1);
-        assert.strictEqual(removedKeys, 1);
+        assert.strictEqual(removedKeys, 0);
         assert.ok(cfg.includes('Host github.com'), 'user block must survive');
         assert.ok(cfg.includes('Host myserver'), 'user block must survive');
         assert.ok(cfg.includes('# CS_ENTRY:keep-1'), 'marked block must survive');
-        assert.ok(!cfg.includes('codespaces.auto'), 'phantom keys must go');
         assert.ok(!cfg.includes('cs.old-123'), 'legacy block must go');
         const clean = sshManager.purgeLegacyBlocks(cfg);
         assert.deepStrictEqual([clean.removedBlocks, clean.removedKeys], [0, 0]);

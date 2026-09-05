@@ -59,13 +59,7 @@ function purgeLegacyBlocks(cfgText) {
     let removedBlocks = 0;
     let removedKeys = 0;
 
-    // 1. Stray IdentityFile lines for the never-created key.
-    cfg = cfg.replace(/^[ \t]*IdentityFile[ \t]+.*codespaces\.auto.*(?:\r?\n|$)/gim, () => {
-        removedKeys++;
-        return '';
-    });
-
-    // 2. Unmarked legacy blocks with a `gh cs ssh` ProxyCommand.
+    // Unmarked legacy blocks with a `gh cs ssh` ProxyCommand.
     // A `# CS_ENTRY:` … `# END_CS_ENTRY:` region is skipped wholesale ONLY when
     // the matching END marker exists ahead; marker-less (v5.0.0-era) regions fall
     // through so their inner Host lines are judged on their own merits.
@@ -308,12 +302,17 @@ function ensureSSHConfigEntry(cs, account) {
             if (Number.isFinite(rawMax)) aliveMax = Math.min(100, Math.max(1, Math.trunc(rawMax)));
         } catch {}
 
+        const autoKeyPath = path.join(SSH_DIR, 'codespaces.auto').replace(/\\/g, '/');
+        const identityLine = fs.existsSync(path.join(SSH_DIR, 'codespaces.auto'))
+            ? `  IdentityFile "${autoKeyPath}"\n`
+            : '';
+
         const newBlock = `
 ${blockId}
 Host ${exactHost} ${aliasLower} ${aliasExact} ${safeName}
   User codespace
   ProxyCommand "${normalizedGhExe}" cs ssh -c "${safeName}" --stdio
-  UserKnownHostsFile /dev/null
+${identityLine}  UserKnownHostsFile /dev/null
   StrictHostKeyChecking no
   LogLevel quiet
   ServerAliveInterval ${aliveInterval}
