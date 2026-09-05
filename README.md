@@ -213,6 +213,16 @@ Tools like Cursor Agent, Antigravity Agent, Claude Code, and Aider frequently pe
 
 ---
 
+## Deep-Dive Guides & Documentation
+
+Explore dedicated architecture and workflow guides:
+
+- 📖 **[Connecting Cursor IDE to GitHub Codespaces (Step-by-Step)](docs/CURSOR_IDE_CODESPACES_GUIDE.md)** — Complete walkthrough for Cursor users, including Open VSX installation, GitHub CLI auth, and port forwarding.
+- 🤖 **[AI Agent KeepAlive & Session Persistence](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md)** — How to prevent idle SSH socket termination during long Cursor Agent and Antigravity Agent runs.
+- 🏢 **[Multi-Account GitHub Codespaces Management](docs/MULTI_ACCOUNT_MANAGEMENT.md)** — Isolate personal, employer, and client org tokens with zero credential cross-contamination.
+
+---
+
 ## Search & Discovery Keywords
 
 `cursor-codespaces` · `cursor-ide` · `cursor-remote-ssh` · `cursor-agent` · `github-codespaces` · `antigravity-ide` · `antigravity-codespaces` · `remote-development` · `multi-account-github` · `ssh-tunnel` · `devcontainer` · `vscodium` · `windsurf` · `code-oss` · `open-vsx` · `cloud-ide` · `codespace-manager` · `ai-agent-keepalive` · `remote-ssh-codespaces`

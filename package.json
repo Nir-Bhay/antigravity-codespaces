@@ -2,7 +2,7 @@
   "name": "antigravity-codespaces",
   "displayName": "Antigravity Codespaces Pro",
   "description": "Enterprise multi-account GitHub Codespaces manager for Cursor IDE, Antigravity IDE, VS Code & Code-OSS. Connect, start, stop, rebuild, test, and monitor all your cloud dev environments across multiple GitHub accounts with 1 click — by Nirbhay hiwse.",
-  "version": "5.0.7",
+  "version": "5.0.8",
   "publisher": "nirbhay-hiwse",
   "author": {
     "name": "Nirbhay hiwse",

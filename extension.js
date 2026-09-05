@@ -578,7 +578,15 @@ async function activate(context) {
                         // Includes Antigravity's Open Remote-SSH (jeanp413) IDs.
                         if (!connected) {
                             const allCmds = await vscode.commands.getCommands();
-                            for (const cmd of ['open-remote-ssh.connectToHostInNewWindow', 'vsx-remote-ssh.connectHost', 'remote-ssh.connectHost', 'open-remote-ssh.connectToHost']) {
+                            const candidateCmds = [
+                                'anysphere-remote-ssh.connectToHostInNewWindow',
+                                'anysphere-remote-ssh.connectHost',
+                                'open-remote-ssh.connectToHostInNewWindow',
+                                'vsx-remote-ssh.connectHost',
+                                'remote-ssh.connectHost',
+                                'open-remote-ssh.connectToHost'
+                            ];
+                            for (const cmd of candidateCmds) {
                                 if (allCmds.includes(cmd)) {
                                     try {
                                         await vscode.commands.executeCommand(cmd, hostAlias);

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.8] - 2026-09-05
+
+### Added
+- **Cursor IDE / Anysphere Remote SSH Command Probes**: Added `anysphere-remote-ssh.connectToHostInNewWindow` and `anysphere-remote-ssh.connectHost` to Tier-2 remote SSH connection resolver, ensuring bulletproof native window spawning inside Cursor IDE.
+- **Deep-Dive Technical Documentation Suite**: Added comprehensive developer guides:
+  - `docs/CURSOR_IDE_CODESPACES_GUIDE.md`: Step-by-step setup, Open VSX installation, and port forwarding in Cursor.
+  - `docs/AI_AGENT_KEEP_ALIVE_GUIDE.md`: Technical analysis of SSH idle sockets, keepalive tuning, and long agent session persistence.
+  - `docs/MULTI_ACCOUNT_MANAGEMENT.md`: Architectural overview of OS keyring token isolation and safe multi-account switching.
+- **Repository Optimization**: Removed deprecated binary and draft specification files, streamlining the extension repository and reducing package size.
+
 ## [5.0.7] - 2026-09-05
 
 ### Enhanced
