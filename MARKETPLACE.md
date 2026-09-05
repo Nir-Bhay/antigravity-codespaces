@@ -50,17 +50,17 @@ The Microsoft Marketplace requires a publisher account and is restricted to thei
 
 ## 3. SEO Metadata Summary
 
-The following metadata is already configured in `package.json`. This section documents the reasoning.
+The following metadata is configured in `package.json` for maximum discoverability on Open VSX and search engines (SEO & GEO).
 
 ### Keywords Used (30-slot limit)
 
 ```
-codespaces, github-codespaces, remote-development, ssh, devcontainer,
-antigravity, antigravity-ide, code-oss, open-vsx, cloud-dev,
-multi-account, github, remote-ssh, workspace-manager, cloud-environment,
-developer-tools, productivity, ai-agent, websocket-keepalive, port-forwarding,
-devops, git, cloud-computing, remote-workspace, container, docker,
-vscode-extension, code-editor, workflow, automation
+cursor, cursor-ide, cursor-codespaces, cursor-agent, codespaces,
+github-codespaces, antigravity, antigravity-ide, remote-development, remote-ssh,
+ssh, devcontainer, multi-account, windsurf, vscodium,
+code-oss, open-vsx, vscode, cloud-ide, cloud-dev,
+ai-agent, ssh-keepalive, websocket-keepalive, port-forwarding, workspace-manager,
+developer-tools, productivity, docker, container, github
 ```
 
 ### Gallery Banner
@@ -80,17 +80,18 @@ Dark themed banner (`#1a1a2e`) with white text to match the extension icon and d
 
 | Platform | Action | Link |
 |---|---|---|
-| **dev.to** | Write a "How I built X" article linking to the repo | [dev.to](https://dev.to) |
-| **Reddit r/github** | Post announcement with use case screenshots | [reddit.com/r/github](https://reddit.com/r/github) |
-| **Reddit r/vscode** | Cross-post targeting Code-OSS / fork users | [reddit.com/r/vscode](https://reddit.com/r/vscode) |
-| **Hacker News** | "Show HN: Antigravity Codespaces Pro" | [news.ycombinator.com](https://news.ycombinator.com) |
+| **Cursor Community Forum** | Post: "How to connect Cursor IDE to GitHub Codespaces with Multi-Account & KeepAlive" | [forum.cursor.com](https://forum.cursor.com) |
+| **Reddit r/cursor** | Guide: Connecting Cursor IDE directly to GitHub Codespaces without Microsoft extension limits | [reddit.com/r/cursor](https://reddit.com/r/cursor) |
+| **Reddit r/github** | Post announcement with Bento Cloud Hub dashboard screenshots | [reddit.com/r/github](https://reddit.com/r/github) |
+| **Reddit r/vscode** | Cross-post targeting Code-OSS, Antigravity, and VSCodium users | [reddit.com/r/vscode](https://reddit.com/r/vscode) |
+| **Hacker News** | "Show HN: Antigravity Codespaces Pro — Codespaces for Cursor & Antigravity IDE" | [news.ycombinator.com](https://news.ycombinator.com) |
 | **GitHub Discussions** | Post in `github/codespaces` community discussions | [github.com/github/codespaces](https://github.com/github/codespaces) |
 
 ### Content Ideas
 
-1. **"Connecting Antigravity IDE to GitHub Codespaces: The Missing Extension"** — Blog post for dev.to/Medium explaining the gap this extension solves.
-2. **Short demo GIF/video** — Record the flow: open sidebar → see all Codespaces → press Alt+C → connected in 5 seconds.
-3. **Tweet/X thread** — "I use Google Antigravity IDE but GitHub Codespaces only works in VS Code. So I built this extension..." with a GIF.
+1. **"Using GitHub Codespaces in Cursor IDE: The Complete Guide"** — Tutorial on dev.to and Medium explaining how to install from Open VSX and connect in 1 click.
+2. **"Why AI Agent Long-Sessions Disconnect (and How to Fix Them)"** — Technical write-up on SSH keepalive tuning for Cursor Agent and Antigravity Agent.
+3. **Twitter/X Thread** — "Cursor users: Microsoft's official Codespaces extension isn't on Open VSX. We built the native multi-account Codespaces manager for Cursor & Antigravity IDE (750+ downloads in 24h!)..." with GIF.
 
 ---
 

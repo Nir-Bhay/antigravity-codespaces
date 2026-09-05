@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.7] - 2026-09-05
+
+### Enhanced
+- **Cursor IDE & Universal Open VSX Search Discovery**: Expanded metadata, documentation, and keyword taxonomy specifically optimized for Cursor IDE (`cursor`, `cursor-ide`, `cursor-codespaces`, `cursor-agent`), Windsurf, VSCodium, Antigravity IDE, and Code-OSS.
+- **AI Agent KeepAlive & Session Persistence Documentation**: Added deep-dive architectural guidelines and configuration reference for keeping long-running AI agent sessions (Cursor Agent, Antigravity Agent, Claude Code, Aider) connected over SSH without idle tunnel drops.
+- **Comprehensive README Overhaul**: Redesigned documentation with editor compatibility matrix, quickstart workflows for Cursor and Antigravity, zero-password key handling explanations, and FAQ for search engine optimization (SEO) and generative engine optimization (GEO).
+
 ## [5.0.6] - 2026-09-05
 
 ### Fixed
