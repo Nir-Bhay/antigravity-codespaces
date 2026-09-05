@@ -1306,10 +1306,17 @@ body {
         <span class="error-icon-circle">${I.alertCircle}</span>
         <div class="error-headline">Failed to load Codespaces:</div>
         <div class="error-subtext">${escapeHtml(errorMsg)}</div>
-        <button class="btn-retry" id="retryBtn">
-            ${I.refresh}
-            <span>Retry</span>
-        </button>
+        <div style="display:flex; gap:8px; width:100%; justify-content:center; margin-top:10px; flex-wrap:wrap;">
+            <button class="btn-retry" id="retryBtn">
+                ${I.refresh}
+                <span>Retry</span>
+            </button>
+            ${/permission|scope|sign-in|sign in|auth/i.test(errorMsg) ? `
+            <button class="btn-retry" id="authFixBtn" style="background:var(--vscode-button-background); color:var(--vscode-button-foreground); border-color:transparent;">
+                ${I.key}
+                <span>Sign In with GitHub</span>
+            </button>` : ''}
+        </div>
     </div>
     ` : codespaces.length === 0 ? `
     <!-- Screen 4: Empty State -->
@@ -1441,10 +1448,14 @@ body {
         });
     }
 
-    // ── Retry Button (Error state) ──
+    // ── Retry & Auth Actions (Error state) ──
     const retryBtn = document.getElementById('retryBtn');
     if (retryBtn) {
         retryBtn.addEventListener('click', () => vscode.postMessage({ command: 'refresh' }));
+    }
+    const authFixBtn = document.getElementById('authFixBtn');
+    if (authFixBtn) {
+        authFixBtn.addEventListener('click', () => vscode.postMessage({ command: 'loginGitHub' }));
     }
 
     // ── Empty State Create Actions ──
