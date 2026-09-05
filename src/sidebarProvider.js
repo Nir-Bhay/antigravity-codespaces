@@ -496,7 +496,7 @@ body {
             return `
             <div class="modal-account-row ${isActive ? 'is-active' : ''}" data-acc="${escapeHtml(acc.account)}">
                 <div class="acc-avatar-wrap">
-                    <img class="acc-avatar-img" src="https://github.com/${encodeURIComponent(acc.account)}.png?size=64" alt="" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <img class="acc-avatar-img" src="https://github.com/${encodeURIComponent(acc.account)}.png?size=64" alt="">
                     <div class="acc-avatar-fallback" style="display:none;">${escapeHtml(acc.account.slice(0, 2).toUpperCase())}</div>
                 </div>
                 <div class="acc-details-text">
@@ -1284,7 +1284,7 @@ body {
     <div class="top-account-bar">
         <div class="account-selector" id="accountSelectorBtn" title="Current Active GitHub Account: ${escapeHtml(activeAccount)}">
             <div class="user-avatar-wrap">
-                <img class="user-avatar-img" src="https://github.com/${encodeURIComponent(activeAccount)}.png?size=64" alt="" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <img class="user-avatar-img" src="https://github.com/${encodeURIComponent(activeAccount)}.png?size=64" alt="">
                 <div class="user-avatar-fallback" style="display:none;">${escapeHtml(activeAccount.slice(0, 2).toUpperCase())}</div>
             </div>
             <span class="account-username">${escapeHtml(activeAccount)}</span>
@@ -1447,6 +1447,14 @@ body {
             }
         });
     }
+
+    // ── Avatar image fallback listeners (CSP safe) ──
+    document.querySelectorAll('.acc-avatar-img, .user-avatar-img').forEach(img => {
+        img.addEventListener('error', () => {
+            img.style.display = 'none';
+            if (img.nextElementSibling) img.nextElementSibling.style.display = 'flex';
+        });
+    });
 
     // ── Retry & Auth Actions (Error state) ──
     const retryBtn = document.getElementById('retryBtn');
