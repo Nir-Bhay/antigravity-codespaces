@@ -140,27 +140,20 @@ class AuthManager {
                 });
             });
 
-            const cliAccounts = [];
-            // Extended regex: GitHub allows alphanumeric, hyphens, and dots (e.g., john.doe)
-            const re = /Logged in to github\.com account ([A-Za-z0-9_\-.]+)/g;
-            let m;
-            while ((m = re.exec(rawStatus)) !== null) {
-                const acc = m[1];
-                if (!cliAccounts.includes(acc)) cliAccounts.push(acc);
-            }
+            // Parse each account section to accurately extract its own token scopes and active state
+            const accountBlocks = rawStatus.split(/Logged in to /i).slice(1);
+            for (const block of accountBlocks) {
+                const nameMatch = block.match(/github\.com account ([A-Za-z0-9_\-.]+)/i);
+                if (!nameMatch) continue;
+                const acc = nameMatch[1];
+                const isActive = /Active account:\s*true/i.test(block);
+                const hasCodespaceScope = /Token scopes:[^\n]*'codespace'/i.test(block);
 
-            const activeMatch = rawStatus.match(/account ([A-Za-z0-9_\-.]+)[^\n]*\n[^\n]*Active account:\s*true/);
-            const cliActive = activeMatch ? activeMatch[1] : (cliAccounts[0] || '');
-
-            // Detect if the CLI token has granted the 'codespace' scope
-            const hasCodespaceScope = /Token scopes:[^\n]*'codespace'/i.test(rawStatus);
-
-            for (const acc of cliAccounts) {
                 if (!seenNames.has(acc)) {
                     discovered.push({
                         account: acc,
                         type: 'cli',
-                        active: acc === cliActive,
+                        active: isActive,
                         hasCodespaceScope
                     });
                     seenNames.add(acc);

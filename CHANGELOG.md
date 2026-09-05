@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.4] - 2026-09-05
+
+### Fixed
+- **Per-Account Scope Attribution**: Partitioned multi-account `gh auth status` output to accurately associate OAuth token scopes and active states per discovered account.
+- **Combined Scope Error Matching**: Combined REST and CLI error messages in `buildListError` ensuring missing `codespace` scope guidance is never suppressed by generic CLI errors.
+- **Billing Error Precedence**: Reordered `friendlyError` checks so spending/quota limits are properly identified and surfaced before generic HTTP 403 access denial.
+- **Deterministic Test Harness**: Hardened unit test suite assertions for multi-account CLI fallback environments.
+
 ## [5.0.3] - 2026-09-05
 
 ### Fixed

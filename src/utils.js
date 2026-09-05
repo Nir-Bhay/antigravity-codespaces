@@ -82,11 +82,11 @@ function friendlyError(err) {
     if (msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('abuse')) {
         return 'GitHub API rate limit reached. Wait a few minutes, then refresh.';
     }
-    if (msg.includes('403') && (msg.includes('denied') || msg.includes('forbidden') || msg.includes('billing') || msg.includes('scope'))) {
-        return 'GitHub access denied (HTTP 403). Check that your account has Codespaces permissions and billing enabled.';
-    }
     if (msg.includes('billing') || msg.includes('quota') || msg.includes('exceeded')) {
         return 'GitHub Codespaces spending or quota limit reached. Check your GitHub account billing settings.';
+    }
+    if (msg.includes('403') && (msg.includes('denied') || msg.includes('forbidden') || msg.includes('scope'))) {
+        return 'GitHub access denied (HTTP 403). Check that your account has Codespaces permissions and billing enabled.';
     }
     if (msg.includes('EAI_AGAIN') || msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.includes('network') || msg.includes('fetch failed')) {
         return 'Network unreachable. Check your internet connection, proxy, or corporate firewall, then try again.';

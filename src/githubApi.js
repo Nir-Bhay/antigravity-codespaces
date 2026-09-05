@@ -161,7 +161,7 @@ class GithubApi {
      */
     static buildListError(account, restErr, cliErr) {
         const who = account || 'active account';
-        const raw = ((cliErr && cliErr.message) || (restErr && restErr.message) || '');
+        const raw = `${restErr && restErr.message ? restErr.message : ''} ${cliErr && cliErr.message ? cliErr.message : ''}`.trim();
         if (/needs the "codespace" scope|Must have admin rights|lack the "codespace"/i.test(raw)) {
             return new Error(`Account "${who}" is missing the "codespace" permission. Run "gh auth refresh -h github.com -s codespace" or click Sign In to authenticate.`);
         }
