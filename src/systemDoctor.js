@@ -369,6 +369,9 @@ class SystemDoctor {
         return statusOutput
             .replace(/gho_[A-Za-z0-9_]+/g, 'gho_[REDACTED]')
             .replace(/ghp_[A-Za-z0-9_]+/g, 'ghp_[REDACTED]')
+            .replace(/ghu_[A-Za-z0-9_]+/g, 'ghu_[REDACTED]')
+            .replace(/ghs_[A-Za-z0-9_]+/g, 'ghs_[REDACTED]')
+            .replace(/ghr_[A-Za-z0-9_]+/g, 'ghr_[REDACTED]')
             .replace(/github_pat_[A-Za-z0-9_]+/g, 'github_pat_[REDACTED]')
             .replace(/Bearer [A-Za-z0-9_-]+/gi, 'Bearer [REDACTED]')
             .replace(/token: [^\s]+/gi, 'token: [REDACTED]')

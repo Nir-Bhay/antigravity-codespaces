@@ -17,6 +17,8 @@ const {
     getGhAuthHealth,
     mapTunnelError,
     removeHostFromManagedKnownHosts,
+    checkRemoteFolderExists,
+    listRemoteWorkspaces,
     setConfigLogger
 } = require('./src/sshManager');
 const { SystemDoctor } = require('./src/systemDoctor');
@@ -699,12 +701,17 @@ async function activate(context) {
                             log: (m) => logger.info(m)
                         });
 
-                        const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
+                        // Determine the best folder to open (Issue #4 §D)
                         const config = vscode.workspace.getConfiguration('antigravity-codespaces');
                         const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
-                        const remoteFolder = folderTemplate
-                            .replace(/\${repo}/g, repoShort)
-                            .replace(/\${name}/g, cs.name);
+                        
+                        // Fetch metadata with recentFolders and devcontainerPath
+                        let meta = {};
+                        try {
+                            meta = await githubApi.fetchMeta(cs.name, account);
+                        } catch {}
+                        
+                        let remoteFolder = GithubApi.getBestFolder(meta, cs.repository, cs.name, folderTemplate);
 
                         // Stage 3: Wake container if needed
                         if (cs.state !== 'Available') {
@@ -714,7 +721,48 @@ async function activate(context) {
                             progress.report({ message: 'Step 3/4: Container running...' });
                         }
 
-                        // Stage 4: Open folder
+                        // Stage 4: Verify folder exists and open
+                        progress.report({ message: 'Step 4/4: Verifying remote folder...' });
+                        
+                        // Check if the folder exists via SSH (Issue #4 §D)
+                        const folderCheck = await checkRemoteFolderExists(hostAlias, remoteFolder);
+                        if (!folderCheck.exists && !folderCheck.error) {
+                            // Folder doesn't exist, offer alternatives
+                            const workspaces = await listRemoteWorkspaces(hostAlias);
+                            const choices = [];
+                            if (workspaces.length > 0) {
+                                choices.push(...workspaces.slice(0, 5).map(w => `/workspaces/${w}`));
+                            }
+                            if (!choices.includes('/workspaces')) {
+                                choices.push('/workspaces');
+                            }
+                            choices.push('Enter custom path...');
+                            
+                            const pick = await vscode.window.showQuickPick(choices, {
+                                placeHolder: `Folder "${remoteFolder}" not found. Select an alternative:`
+                            });
+                            
+                            if (!pick) {
+                                connectingSet.delete(cs.name);
+                                return;
+                            }
+                            
+                            if (pick === 'Enter custom path...') {
+                                const custom = await vscode.window.showInputBox({
+                                    prompt: 'Enter the remote folder path',
+                                    value: '/workspaces/',
+                                    validateInput: (v) => v && v.startsWith('/') ? null : 'Path must start with /'
+                                });
+                                if (!custom) {
+                                    connectingSet.delete(cs.name);
+                                    return;
+                                }
+                                remoteFolder = custom;
+                            } else {
+                                remoteFolder = pick;
+                            }
+                        }
+                        
                         progress.report({ message: 'Step 4/4: Opening remote folder...' });
                         let connected = false;
 

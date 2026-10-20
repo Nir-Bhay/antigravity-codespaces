@@ -625,11 +625,14 @@ function ok(name, fn) {
         assert.ok(src.includes('lastTunnelStderr'), 'includes last tunnel stderr');
         assert.ok(src.includes('setLastTunnelStderr'), 'has method to store tunnel stderr');
     });
-    await ok('systemDoctor._redactAuthStatus removes tokens (source check)', () => {
+    await ok('systemDoctor._redactAuthStatus removes all token types (source check)', () => {
         const src = fs.readFileSync(path.join(ROOT, 'src', 'systemDoctor.js'), 'utf8');
-        assert.ok(src.includes("gho_[A-Za-z0-9_]+"), 'redacts gho tokens');
-        assert.ok(src.includes("ghp_[A-Za-z0-9_]+"), 'redacts ghp tokens');
-        assert.ok(src.includes("github_pat_[A-Za-z0-9_]+"), 'redacts github_pat tokens');
+        assert.ok(src.includes("gho_[A-Za-z0-9_]+"), 'redacts gho_ tokens (OAuth)');
+        assert.ok(src.includes("ghp_[A-Za-z0-9_]+"), 'redacts ghp_ tokens (classic PAT)');
+        assert.ok(src.includes("ghu_[A-Za-z0-9_]+"), 'redacts ghu_ tokens (user-to-server)');
+        assert.ok(src.includes("ghs_[A-Za-z0-9_]+"), 'redacts ghs_ tokens (server-to-server)');
+        assert.ok(src.includes("ghr_[A-Za-z0-9_]+"), 'redacts ghr_ tokens (refresh)');
+        assert.ok(src.includes("github_pat_[A-Za-z0-9_]+"), 'redacts github_pat_ tokens (fine-grained)');
         assert.ok(src.includes("Bearer [A-Za-z0-9_-]+"), 'redacts Bearer tokens');
         assert.ok(src.includes('[REDACTED]'), 'uses REDACTED marker');
     });
@@ -668,6 +671,68 @@ function ok(name, fn) {
         const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
         const cmds = pkg.contributes.commands.map(c => c.command);
         assert.ok(cmds.includes('antigravity-codespaces.reconnectLast'), 'reconnectLast in package.json');
+    });
+
+    // ── Issue #4 §D folder detection tests ────────────────────────────────────
+    console.log('issue #4 §D folder detection');
+    await ok('GithubApi.getBestFolder prefers recentFolders[0]', () => {
+        const { GithubApi } = require('../src/githubApi');
+        const meta = { recentFolders: ['/workspaces/my-project', '/home/user'] };
+        const result = GithubApi.getBestFolder(meta, 'owner/repo', 'cs-name', '/workspaces/${repo}');
+        assert.strictEqual(result, '/workspaces/my-project', 'uses first recentFolders entry');
+    });
+    await ok('GithubApi.getBestFolder falls back to template when no recentFolders', () => {
+        const { GithubApi } = require('../src/githubApi');
+        const meta = { devcontainerPath: '.devcontainer/devcontainer.json' };
+        const result = GithubApi.getBestFolder(meta, 'owner/my-repo', 'cs-name', '/workspaces/${repo}');
+        assert.strictEqual(result, '/workspaces/my-repo', 'derives from repo name');
+    });
+    await ok('GithubApi.getBestFolder uses template fallback', () => {
+        const { GithubApi } = require('../src/githubApi');
+        const result = GithubApi.getBestFolder({}, 'owner/test-repo', 'cs-name', '/workspaces/${repo}');
+        assert.strictEqual(result, '/workspaces/test-repo', 'uses template');
+    });
+    await ok('GithubApi.getBestFolder handles ${name} placeholder', () => {
+        const { GithubApi } = require('../src/githubApi');
+        const result = GithubApi.getBestFolder({}, null, 'my-codespace', '/home/${name}');
+        assert.strictEqual(result, '/home/my-codespace', 'replaces ${name}');
+    });
+    await ok('GithubApi._normalizeMeta includes recentFolders and devcontainerPath', () => {
+        const { GithubApi } = require('../src/githubApi');
+        const mockAuthManager = { getToken: async () => null };
+        const api = new GithubApi(mockAuthManager);
+        const raw = {
+            name: 'test',
+            recentFolders: ['/workspaces/proj'],
+            devcontainerPath: '.devcontainer/devcontainer.json'
+        };
+        const m = api._normalizeMeta(raw, 'user');
+        assert.deepStrictEqual(m.recentFolders, ['/workspaces/proj'], 'recentFolders preserved');
+        assert.strictEqual(m.devcontainerPath, '.devcontainer/devcontainer.json', 'devcontainerPath preserved');
+    });
+    await ok('checkRemoteFolderExists is exported from sshManager', () => {
+        const sshManager = require('../src/sshManager');
+        assert.ok(typeof sshManager.checkRemoteFolderExists === 'function', 'checkRemoteFolderExists exported');
+        assert.ok(typeof sshManager.listRemoteWorkspaces === 'function', 'listRemoteWorkspaces exported');
+    });
+    await ok('checkRemoteFolderExists returns exists:true when folder found (mocked)', async () => {
+        const sshManager = require('../src/sshManager');
+        const mockRunner = async () => ({ stdout: 'exists\n', stderr: '', exitCode: 0 });
+        const result = await sshManager.checkRemoteFolderExists('cs.test', '/workspaces/proj', { runCommandWithDetails: mockRunner });
+        assert.strictEqual(result.exists, true, 'folder exists');
+    });
+    await ok('checkRemoteFolderExists returns exists:false when folder missing (mocked)', async () => {
+        const sshManager = require('../src/sshManager');
+        const mockRunner = async () => { const e = new Error('exit 1'); e.exitCode = 1; throw e; };
+        const result = await sshManager.checkRemoteFolderExists('cs.test', '/workspaces/missing', { runCommandWithDetails: mockRunner });
+        assert.strictEqual(result.exists, false, 'folder does not exist');
+    });
+    await ok('extension.js connect uses GithubApi.getBestFolder and checkRemoteFolderExists', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.ok(src.includes('GithubApi.getBestFolder'), 'uses getBestFolder');
+        assert.ok(src.includes('checkRemoteFolderExists'), 'uses checkRemoteFolderExists');
+        assert.ok(src.includes('listRemoteWorkspaces'), 'uses listRemoteWorkspaces');
+        assert.ok(src.includes("Folder \"${remoteFolder}\" not found"), 'offers alternative when folder missing');
     });
 
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));

@@ -798,6 +798,68 @@ function mapTunnelError(stderr, exitCode, host) {
     };
 }
 
+/**
+ * Checks if a remote folder exists on a codespace via SSH.
+ * @param {string} hostAlias - The SSH host alias (e.g., cs.my-codespace)
+ * @param {string} folderPath - The folder path to check
+ * @param {object} deps - Injectable dependencies for testing
+ * @returns {Promise<{exists: boolean, error?: string}>}
+ */
+async function checkRemoteFolderExists(hostAlias, folderPath, deps = {}) {
+    const runCmd = deps.runCommandWithDetails || runCommandWithDetails;
+    
+    if (!hostAlias || !folderPath) {
+        return { exists: false, error: 'Missing hostAlias or folderPath' };
+    }
+    
+    // Sanitize inputs to prevent injection
+    const safeAlias = hostAlias.replace(/[^a-zA-Z0-9._-]/g, '-');
+    const safePath = folderPath.replace(/['"\\]/g, '');
+    
+    try {
+        const result = await runCmd('ssh', [
+            '-o', 'BatchMode=yes',
+            '-o', 'ConnectTimeout=10',
+            safeAlias,
+            'test', '-d', safePath, '&&', 'echo', 'exists'
+        ], 15000);
+        
+        return { exists: result.stdout.includes('exists') };
+    } catch (err) {
+        // Exit code 1 means test -d returned false (folder doesn't exist)
+        if (err.exitCode === 1) {
+            return { exists: false };
+        }
+        // Other errors (connection failed, etc.)
+        return { exists: false, error: err.message || 'SSH check failed' };
+    }
+}
+
+/**
+ * Lists available folders in /workspaces directory.
+ * @param {string} hostAlias - The SSH host alias
+ * @param {object} deps - Injectable dependencies
+ * @returns {Promise<string[]>}
+ */
+async function listRemoteWorkspaces(hostAlias, deps = {}) {
+    const runCmd = deps.runCommandWithDetails || runCommandWithDetails;
+    
+    const safeAlias = hostAlias.replace(/[^a-zA-Z0-9._-]/g, '-');
+    
+    try {
+        const result = await runCmd('ssh', [
+            '-o', 'BatchMode=yes',
+            '-o', 'ConnectTimeout=10',
+            safeAlias,
+            'ls', '-1', '/workspaces'
+        ], 15000);
+        
+        return result.stdout.split('\n').filter(f => f.trim());
+    } catch {
+        return [];
+    }
+}
+
 module.exports = {
     findGhExecutable,
     findAntigravityExecutable,
@@ -816,6 +878,8 @@ module.exports = {
     buildSshConfigBlock,
     mapTunnelError,
     removeHostFromManagedKnownHosts,
+    checkRemoteFolderExists,
+    listRemoteWorkspaces,
     setConfigLogger,
     SSH_DIR,
     SSH_CONFIG_PATH,
