@@ -574,5 +574,43 @@ function ok(name, fn) {
         assert.ok(src.includes("'Fix Remote Platform'"));
     });
 
+    // ── First-Run Card Tests (Issue #4 §A-B) ─────────────────────────────────
+    console.log('sidebarProvider (first-run card)');
+    await ok('sidebarProvider has first-run card HTML with three steps', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'sidebarProvider.js'), 'utf8');
+        assert.ok(src.includes('first-run-card'), 'first-run-card class exists');
+        assert.ok(src.includes('first-run-steps'), 'first-run-steps container exists');
+        assert.ok(src.includes('1. Sign in to GitHub'), 'step 1 label');
+        assert.ok(src.includes('2. Set up GitHub CLI'), 'step 2 label');
+        assert.ok(src.includes('3. Connect to a Codespace'), 'step 3 label');
+        assert.ok(src.includes('dismissFirstRunBtn'), 'dismiss button exists');
+        assert.ok(src.includes('stepSignInBtn'), 'step 1 action button');
+        assert.ok(src.includes('stepSetupGhBtn'), 'step 2 action button');
+        assert.ok(src.includes('stepConnectBtn'), 'step 3 action button');
+    });
+    await ok('sidebarProvider stores first-run dismissed in globalState', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'sidebarProvider.js'), 'utf8');
+        assert.ok(src.includes('FIRST_RUN_DISMISSED_KEY'), 'key constant defined');
+        assert.ok(src.includes('globalState.get'), 'reads from globalState');
+        assert.ok(src.includes('globalState.update'), 'writes to globalState');
+        assert.ok(src.includes('isFirstRunDismissed()'), 'check method exists');
+        assert.ok(src.includes('dismissFirstRun()'), 'dismiss method exists');
+    });
+    await ok('sidebarProvider first-run card shows based on gh health and dismissal', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'sidebarProvider.js'), 'utf8');
+        assert.ok(src.includes('showFirstRunCard = !this.isFirstRunDismissed() && !ghHealthy'), 'card visibility logic');
+        assert.ok(src.includes('showFirstRunCard ? `'), 'conditional HTML rendering');
+        assert.ok(src.includes('step1Done = accounts.length > 0'), 'step 1 completion check');
+        assert.ok(src.includes("step2Done = diag.ghInstalled && ghHealth.state === 'ok'"), 'step 2 completion check');
+        assert.ok(src.includes('step3Done = codespaces.length > 0'), 'step 3 completion check');
+    });
+    await ok('sidebarProvider first-run card buttons dispatch correct messages', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'sidebarProvider.js'), 'utf8');
+        assert.ok(src.includes("command: 'dismissFirstRun'"), 'dismiss posts dismissFirstRun');
+        assert.ok(src.includes("command: 'loginGitHub'") && src.includes('stepSignInBtn'), 'step 1 posts loginGitHub');
+        assert.ok(src.includes("command: 'openSetupDoctor'") && src.includes('stepSetupGhBtn'), 'step 2 posts openSetupDoctor');
+        assert.ok(src.includes("command: 'createCodespace'") && src.includes('stepConnectBtn'), 'step 3 posts createCodespace');
+    });
+
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
 })();

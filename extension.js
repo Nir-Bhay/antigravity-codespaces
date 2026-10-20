@@ -49,7 +49,7 @@ async function activate(context) {
     globalGithubApi = githubApi;
 
     const statusBar = new StatusBarManager(context, authManager, githubApi);
-    const sidebarProvider = new SidebarProvider(context.extensionUri, authManager, githubApi);
+    const sidebarProvider = new SidebarProvider(context, authManager, githubApi);
     const dashboardProvider = new DashboardProvider(context, authManager, githubApi);
     const setupDoctorProvider = new SetupDoctorProvider(context, authManager);
 
