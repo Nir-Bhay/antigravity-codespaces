@@ -345,7 +345,8 @@ function buildSshConfigBlock(opts) {
     const endMarker = `# END_CS_ENTRY:${codespace}`;
 
     const identityLine = identityFile ? `  IdentityFile "${identityFile}"\n` : '';
-    const knownHostsLine = knownHostsFile ? `  UserKnownHostsFile "${knownHostsFile}"` : '  UserKnownHostsFile /dev/null';
+    const effectiveKnownHostsFile = knownHostsFile || getManagedKnownHostsPath().replace(/\\/g, '/');
+    const knownHostsLine = `  UserKnownHostsFile "${effectiveKnownHostsFile}"`;
 
     return `
 ${blockId}

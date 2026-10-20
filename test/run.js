@@ -285,13 +285,14 @@ function ok(name, fn) {
         assert.match(block, /# END_CS_ENTRY:test-cs-123/);
     });
 
-    await ok('buildSshConfigBlock defaults to /dev/null when no knownHostsFile', () => {
+    await ok('buildSshConfigBlock uses managed known_hosts when knownHostsFile omitted (never /dev/null)', () => {
         const block = sshManager.buildSshConfigBlock({
             codespace: 'test-cs',
             hostAliases: 'cs.test-cs',
             ghExePath: 'gh'
         });
-        assert.match(block, /UserKnownHostsFile \/dev\/null/);
+        assert.ok(!block.includes('/dev/null'), 'must not emit /dev/null');
+        assert.match(block, /UserKnownHostsFile ".*\.antigravity-codespaces\/known_hosts"/);
         assert.match(block, /StrictHostKeyChecking accept-new/);
         assert.match(block, /LogLevel ERROR/);
     });
