@@ -2,7 +2,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const { execFile } = require('child_process');
 
-const { friendlyError, formatRelativeTime, runCommand } = require('./src/utils');
+const { friendlyError, friendlyTunnelError, sniffTunnelStderr, formatRelativeTime, runCommand } = require('./src/utils');
 const logger = require('./src/logger');
 const { AuthManager } = require('./src/authManager');
 const { GithubApi } = require('./src/githubApi');
@@ -11,8 +11,10 @@ const {
     findAntigravityExecutable,
     ensureSSHConfigEntry,
     testSshTunnel,
+    probeSshTunnelVerbose,
     cleanSshConfigFile,
-    getGhActiveUser
+    getGhActiveUser,
+    getGhAuthHealth
 } = require('./src/sshManager');
 const { SystemDoctor } = require('./src/systemDoctor');
 const { SidebarProvider } = require('./src/sidebarProvider');
@@ -331,11 +333,20 @@ async function activate(context) {
                 async () => {
                     try {
                         const token = await authManager.getToken(cs.account);
-                        const latency = await testSshTunnel(cs.name, token);
-                        vscode.window.showInformationMessage(`✅ SSH tunnel to "${cs.displayName || cs.name}" is healthy! Latency: ${latency}ms`);
+                        const { latencyMs } = await probeSshTunnelVerbose(cs.name, token);
+                        vscode.window.showInformationMessage(`✅ SSH tunnel to "${cs.displayName || cs.name}" is healthy! Latency: ${latencyMs}ms`);
                     } catch (e) {
                         logger.error(`testSSH failed for ${cs.name}`, e.message);
-                        const act = await vscode.window.showErrorMessage(`SSH test failed for ${cs.displayName || cs.name}: ${friendlyError(e)}`, 'Show Logs', 'Test Again');
+                        // Surface the exact tunnel stderr (gh auth state, platform
+                        // mismatch, …) as actionable guidance instead of a bare
+                        // exit-255 notification (issues #3, #4 §E).
+                        const detail = friendlyTunnelError(e);
+                        const rawLine = sniffTunnelStderr(e.stderr) ? '' : ` (${e.message})`;
+                        const act = await vscode.window.showErrorMessage(
+                            `SSH test failed for ${cs.displayName || cs.name}: ${detail}${rawLine}`,
+                            'Show Logs',
+                            'Test Again'
+                        );
                         if (act === 'Show Logs') logger.show();
                         else if (act === 'Test Again') vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
                     }
@@ -508,35 +519,84 @@ async function activate(context) {
             const account = cs.account || authManager.getActiveAccount();
 
             try {
-                // Preflight: `gh cs ssh` authenticates as the CLI's ACTIVE user, not
-                // as our per-account token. A mismatch means GitHub answers 404 and
-                // the tunnel dies with exit 255 — catch it here with a fix action
-                // instead of a cryptic SSH failure. Fails open (proceeds on any doubt).
-                if (account) {
-                    const ghUser = await getGhActiveUser();
-                    if (ghUser && ghUser.toLowerCase() !== String(account).toLowerCase()) {
-                        const act = await vscode.window.showWarningMessage(
-                            `gh CLI is signed in as "${ghUser}", but "${cs.displayName || cs.name}" belongs to "${account}". SSH would fail (Codespace not found for ${ghUser}).`,
-                            'Switch gh CLI & Retry',
-                            'Connect Anyway'
-                        );
-                        if (act === 'Switch gh CLI & Retry') {
-                            try {
-                                const ghExe = findGhExecutable();
-                                await runCommand(ghExe, ['auth', 'switch', '--hostname', 'github.com', '--user', account], 15000);
-                                vscode.window.showInformationMessage(`gh CLI switched to ${account}. Retrying…`);
-                            } catch (swErr) {
-                                const t = vscode.window.createTerminal('gh auth switch');
-                                t.show();
-                                t.sendText(`gh auth switch --hostname github.com --user ${account}`);
-                                vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). Run the command in the terminal, then retry Connect.`);
-                                resetDashboardView();
-                                return;
-                            }
-                        } else if (act !== 'Connect Anyway') {
+                // Preflight: `gh cs ssh` authenticates with the gh CLI's OWN keyring
+                // token — fully separate from the extension's OAuth/PAT session.
+                // Catches the four common first-run failure states BEFORE launching
+                // SSH, each with a one-click fix (issues #3, #4):
+                //   1. gh not installed          → install guidance
+                //   2. gh logged out             → gh auth login -s codespace
+                //   3. token missing 'codespace' → gh auth refresh -s codespace
+                //   4. active-user mismatch      → gh auth switch (existing flow)
+                // Every branch fails open on doubt ('unknown' state proceeds) so a
+                // probe glitch can never hard-block a working connection.
+                const health = await getGhAuthHealth();
+                if (health.state === 'missing') {
+                    const act = await vscode.window.showWarningMessage(
+                        'GitHub CLI (gh) is not installed — SSH tunnels to Codespaces are powered by it.',
+                        'Install Instructions',
+                        'Connect Anyway'
+                    );
+                    if (act === 'Install Instructions') {
+                        await SystemDoctor.promptInstallGhCli();
+                        resetDashboardView();
+                        return;
+                    }
+                } else if (health.state === 'logged_out') {
+                    const act = await vscode.window.showWarningMessage(
+                        'GitHub CLI is signed out — SSH would fail immediately. Note: this is separate from the extension sign-in that powers the dashboard.',
+                        'Run gh auth login',
+                        'Connect Anyway'
+                    );
+                    if (act === 'Run gh auth login') {
+                        const t = vscode.window.createTerminal('gh auth login');
+                        t.show();
+                        t.sendText('gh auth login -s codespace');
+                        vscode.window.showInformationMessage('Complete the browser login in the terminal ("codespace" scope included), then retry Connect.');
+                    } else if (act !== 'Connect Anyway') {
+                        resetDashboardView();
+                        return;
+                    }
+                } else if (health.state === 'scope_missing') {
+                    const act = await vscode.window.showWarningMessage(
+                        `gh CLI is signed in as "${health.user}" but its token is missing the "codespace" scope — SSH would fail with HTTP 403.`,
+                        'Fix scope now',
+                        'Connect Anyway'
+                    );
+                    if (act === 'Fix scope now') {
+                        const t = vscode.window.createTerminal('gh auth refresh');
+                        t.show();
+                        t.sendText('gh auth refresh -h github.com -s codespace');
+                        vscode.window.showInformationMessage('Complete the device flow in the terminal, then retry Connect.');
+                    } else if (act !== 'Connect Anyway') {
+                        resetDashboardView();
+                        return;
+                    }
+                } else if (health.state === 'ok' && account &&
+                           health.user.toLowerCase() !== String(account).toLowerCase()) {
+                    const ghUser = health.user;
+                    const act = await vscode.window.showWarningMessage(
+                        `gh CLI is signed in as "${ghUser}", but "${cs.displayName || cs.name}" belongs to "${account}". SSH would fail (Codespace not found for ${ghUser}).`,
+                        'Switch gh CLI & Retry',
+                        'Connect Anyway'
+                    );
+                    if (act === 'Switch gh CLI & Retry') {
+                        try {
+                            const ghExe = findGhExecutable();
+                            await runCommand(ghExe, ['auth', 'switch', '--hostname', 'github.com', '--user', account], 15000);
+                            vscode.window.showInformationMessage(`gh CLI switched to ${account}. Retrying…`);
+                        } catch (swErr) {
+                            // gh auth switch can never work when the CLI has zero
+                            // logged-in accounts — steer those users to login instead.
+                            const t = vscode.window.createTerminal('gh auth');
+                            t.show();
+                            t.sendText('gh auth login -s codespace');
+                            vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). If the CLI has no logged-in accounts, complete "gh auth login -s codespace" in the terminal, then retry Connect.`);
                             resetDashboardView();
                             return;
                         }
+                    } else if (act !== 'Connect Anyway') {
+                        resetDashboardView();
+                        return;
                     }
                 }
 
