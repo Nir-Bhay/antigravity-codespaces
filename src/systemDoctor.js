@@ -260,18 +260,53 @@ class SystemDoctor {
     /**
      * Generates a diagnostic report for clipboard/issue filing.
      * Redacts tokens and sensitive data.
+     * Includes: extension, IDE, OS and gh versions, redacted gh auth status,
+     * gh path, codespace SSH config blocks, last Doctor results, last tunnel stderr.
      */
-    static async generateReport(authManager) {
+    static async generateReport(authManager, opts = {}) {
         const diag = await SystemDoctor.diagnose(authManager);
         const ghHealth = diag.ghAuthHealth || {};
+        
+        // Get OS version
+        const osRelease = os.release();
+        const osType = os.type();
+        const osPlatform = os.platform();
+        const osArch = os.arch();
+        
+        // Get redacted gh auth status (no tokens)
+        let ghAuthStatusRedacted = 'Not available';
+        if (diag.ghInstalled) {
+            try {
+                const { runCommand } = require('./utils');
+                const ghExe = findGhExecutable();
+                const statusOut = await runCommand(ghExe, ['auth', 'status'], 5000).catch(() => '');
+                ghAuthStatusRedacted = SystemDoctor._redactAuthStatus(statusOut);
+            } catch {}
+        }
+        
+        // Get codespace SSH config blocks
+        let sshConfigBlocks = 'Not available';
+        try {
+            const sshConfigPath = getSshConfigPath();
+            if (fs.existsSync(sshConfigPath)) {
+                const content = fs.readFileSync(sshConfigPath, 'utf8');
+                const csBlocks = SystemDoctor._extractCodespaceBlocks(content);
+                sshConfigBlocks = csBlocks.length > 0 ? csBlocks.join('\n\n') : 'No codespace blocks found';
+            }
+        } catch {}
+        
+        // Get last tunnel stderr from global state if available
+        const lastTunnelStderr = opts.lastTunnelStderr || SystemDoctor._lastTunnelStderr || 'No recent tunnel errors';
+        
         const lines = [
             '# Antigravity Codespaces Diagnostic Report',
             `Generated: ${new Date().toISOString()}`,
             '',
             '## Environment',
-            `- Platform: ${diag.platform}`,
+            `- OS: ${osType} ${osRelease} (${osPlatform}/${osArch})`,
             `- IDE: ${vscode.env.appName} ${vscode.version}`,
-            `- Extension: Antigravity Codespaces Pro`,
+            `- Extension: Antigravity Codespaces Pro v5.0.8`,
+            `- Node: ${process.version}`,
             '',
             '## GitHub CLI',
             `- Installed: ${diag.ghInstalled ? 'Yes' : 'No'}`,
@@ -281,17 +316,27 @@ class SystemDoctor {
             `- Active User: ${ghHealth.user ? '@' + ghHealth.user : 'N/A'}`,
             `- Codespace Scope: ${ghHealth.state === 'ok' ? (ghHealth.scopesUnknown ? 'Unknown (fine-grained PAT)' : 'Yes') : 'No'}`,
             '',
+            '### gh auth status (redacted)',
+            '```',
+            ghAuthStatusRedacted,
+            '```',
+            '',
             '## SSH',
             `- OpenSSH Client: ${diag.hasOpenSsh ? 'Available' : 'Not found'}`,
             `- Remote SSH Extension: ${diag.hasRemoteSsh ? 'Installed' : 'Not found'}`,
             `- SSH Config Issues: ${diag.sshConfigIssues.length > 0 ? diag.sshConfigIssues.join(', ') : 'None'}`,
             `- RemotePlatform Issues: ${diag.remotePlatformIssues.length > 0 ? diag.remotePlatformIssues.join(', ') : 'None'}`,
             '',
+            '### Codespace SSH Config Blocks',
+            '```',
+            sshConfigBlocks,
+            '```',
+            '',
             '## Accounts',
             `- Extension Accounts: ${diag.accountCount}`,
             `- Active Account: ${diag.activeAccount ? '@' + diag.activeAccount : 'None'}`,
             '',
-            '## Checks'
+            '## Setup Doctor Checks'
         ];
         
         for (const check of diag.checks) {
@@ -299,7 +344,64 @@ class SystemDoctor {
             lines.push(`${icon} ${check.label}: ${check.detail}`);
         }
         
+        // Add last tunnel stderr
+        lines.push('');
+        lines.push('## Last Tunnel Error');
+        lines.push('```');
+        lines.push(lastTunnelStderr);
+        lines.push('```');
+        
         return lines.join('\n');
+    }
+
+    /**
+     * Store the last tunnel stderr for diagnostic reports.
+     */
+    static setLastTunnelStderr(stderr) {
+        SystemDoctor._lastTunnelStderr = stderr ? stderr.slice(0, 2000) : null;
+    }
+
+    /**
+     * Redact tokens and sensitive data from gh auth status output.
+     */
+    static _redactAuthStatus(statusOutput) {
+        if (!statusOutput) return 'No output';
+        return statusOutput
+            .replace(/gho_[A-Za-z0-9_]+/g, 'gho_[REDACTED]')
+            .replace(/ghp_[A-Za-z0-9_]+/g, 'ghp_[REDACTED]')
+            .replace(/github_pat_[A-Za-z0-9_]+/g, 'github_pat_[REDACTED]')
+            .replace(/Bearer [A-Za-z0-9_-]+/gi, 'Bearer [REDACTED]')
+            .replace(/token: [^\s]+/gi, 'token: [REDACTED]')
+            .trim();
+    }
+
+    /**
+     * Extract codespace-related SSH config blocks.
+     */
+    static _extractCodespaceBlocks(sshConfig) {
+        const blocks = [];
+        const lines = sshConfig.split('\n');
+        let currentBlock = [];
+        let inCsBlock = false;
+        
+        for (const line of lines) {
+            const hostMatch = line.match(/^\s*Host\s+(.+)/i);
+            if (hostMatch) {
+                if (inCsBlock && currentBlock.length > 0) {
+                    blocks.push(currentBlock.join('\n'));
+                }
+                currentBlock = [line];
+                const hosts = hostMatch[1].split(/\s+/);
+                inCsBlock = hosts.some(h => /^cs[\.-]/.test(h));
+            } else if (currentBlock.length > 0) {
+                currentBlock.push(line);
+            }
+        }
+        if (inCsBlock && currentBlock.length > 0) {
+            blocks.push(currentBlock.join('\n'));
+        }
+        
+        return blocks.slice(0, 10);
     }
 
     /**

@@ -31,6 +31,9 @@ const connectingSet = new Set();
 let globalAuthManager = null;
 let globalGithubApi = null;
 
+// Key for storing last connected codespace in globalState (Issue #4 §G)
+const LAST_CODESPACE_KEY = 'antigravity.lastConnectedCodespace';
+
 /**
  * Extension activation entry point.
  */
@@ -443,6 +446,8 @@ async function activate(context) {
                         logger.error(`testSSH failed for ${cs.name}`, e.message);
                         if (e.stderr) {
                             logger.error(`testSSH stderr`, e.stderr);
+                            // Store for diagnostic report (Issue #4 §F)
+                            SystemDoctor.setLastTunnelStderr(e.stderr);
                         }
                         
                         // Surface the exact tunnel stderr (gh auth state, platform
@@ -627,10 +632,19 @@ async function activate(context) {
                 async () => {
                     try {
                         const newName = await githubApi.createCodespace(repoValue, branch || '', accPick.acc);
-                        vscode.window.showInformationMessage(`Created Codespace: ${newName}`);
                         sidebarProvider.refresh();
                         dashboardProvider.refreshHtml();
                         statusBar.update();
+                        // Offer "Connect now" button (Issue #4 §G)
+                        const action = await vscode.window.showInformationMessage(
+                            `Created Codespace: ${newName}`,
+                            'Connect Now'
+                        );
+                        if (action === 'Connect Now') {
+                            vscode.commands.executeCommand('antigravity-codespaces.connect', {
+                                codespaceData: { name: newName, account: accPick.acc, repository: repoValue }
+                            });
+                        }
                     } catch (e) {
                         await showOpError(`Create failed: ${friendlyError(e)}`, 'createCodespace');
                     }
@@ -658,37 +672,50 @@ async function activate(context) {
             const account = cs.account || authManager.getActiveAccount();
 
             try {
-                if (!(await ghPreflight(cs, account))) return;
-
-                const hostAlias = ensureSSHConfigEntry(cs, account);
-                // Issue #3 Failure 3: Codespaces are Linux — a stale "windows"
-                // remotePlatform makes Remote-SSH run powershell → exit 127.
-                await ensureLinuxRemotePlatform(hostAlias, {
-                    config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
-                    target: vscode.ConfigurationTarget.Global,
-                    log: (m) => logger.info(m)
+                // Store last connected codespace for quick reconnect (Issue #4 §G)
+                await context.globalState.update(LAST_CODESPACE_KEY, {
+                    name: cs.name,
+                    displayName: cs.displayName || cs.name,
+                    account: account,
+                    repository: cs.repository
                 });
-                const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
-                const config = vscode.workspace.getConfiguration('antigravity-codespaces');
-                const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
-                const remoteFolder = folderTemplate
-                    .replace(/\${repo}/g, repoShort)
-                    .replace(/\${name}/g, cs.name);
-
-                // Fast REST wake-up if container is not available (fixes BUG-10)
-                if (cs.state !== 'Available') {
-                    await vscode.window.withProgress(
-                        { location: vscode.ProgressLocation.Notification, title: `Waking up ${cs.displayName || cs.name}...`, cancellable: false },
-                        async () => {
-                            await githubApi.startCodespace(cs.name, account);
-                        }
-                    );
-                }
 
                 await vscode.window.withProgress(
                     { location: vscode.ProgressLocation.Notification, title: `Connecting to ${cs.displayName || cs.name}...`, cancellable: false },
                     async (progress) => {
-                        progress.report({ message: 'Opening remote workspace in Antigravity...' });
+                        // Stage 1: Preflight checks
+                        progress.report({ message: 'Step 1/4: Checking gh CLI...' });
+                        if (!(await ghPreflight(cs, account))) {
+                            connectingSet.delete(cs.name);
+                            return;
+                        }
+
+                        // Stage 2: SSH config
+                        progress.report({ message: 'Step 2/4: Configuring SSH...' });
+                        const hostAlias = ensureSSHConfigEntry(cs, account);
+                        await ensureLinuxRemotePlatform(hostAlias, {
+                            config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
+                            target: vscode.ConfigurationTarget.Global,
+                            log: (m) => logger.info(m)
+                        });
+
+                        const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
+                        const config = vscode.workspace.getConfiguration('antigravity-codespaces');
+                        const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
+                        const remoteFolder = folderTemplate
+                            .replace(/\${repo}/g, repoShort)
+                            .replace(/\${name}/g, cs.name);
+
+                        // Stage 3: Wake container if needed
+                        if (cs.state !== 'Available') {
+                            progress.report({ message: 'Step 3/4: Waking container...' });
+                            await githubApi.startCodespace(cs.name, account);
+                        } else {
+                            progress.report({ message: 'Step 3/4: Container running...' });
+                        }
+
+                        // Stage 4: Open folder
+                        progress.report({ message: 'Step 4/4: Opening remote folder...' });
                         let connected = false;
 
                         // Tier 1: Direct URI resolution
@@ -700,9 +727,7 @@ async function activate(context) {
                             connected = true;
                         } catch {}
 
-                        // Tier 2: Remote SSH extension commands (new-window variants
-                        // first; current-window last resort before the terminal).
-                        // Includes Antigravity's Open Remote-SSH (jeanp413) IDs.
+                        // Tier 2: Remote SSH extension commands
                         if (!connected) {
                             const allCmds = await vscode.commands.getCommands();
                             const candidateCmds = [
@@ -726,10 +751,7 @@ async function activate(context) {
                             }
                         }
 
-                        // Tier 3: Binary CLI launcher (execFile argv — no shell
-                        // interpolation). Only attempted when the launcher binary
-                        // actually exists, so Tier 4 terminal fallback still runs
-                        // when it does not.
+                        // Tier 3: Binary CLI launcher
                         let launcherExists = false;
                         try { launcherExists = !!ANTIGRAVITY_EXE && fs.existsSync(ANTIGRAVITY_EXE); } catch {}
                         if (!connected && launcherExists) {
@@ -744,7 +766,7 @@ async function activate(context) {
                             } catch {}
                         }
 
-                        // Tier 4: Integrated Terminal SSH fallback
+                        // Tier 4: Terminal fallback
                         if (!connected) {
                             const diag = await SystemDoctor.diagnose(authManager);
                             if (!diag.ghInstalled) {
@@ -754,7 +776,7 @@ async function activate(context) {
                                 t.show();
                                 t.sendText(`gh cs ssh -c ${cs.name}`);
                                 vscode.window.showInformationMessage(
-                                    `Opened a terminal fallback for "${cs.displayName || cs.name}". If the tunnel connects there, you're in. Otherwise run Test SSH Connectivity — its message tells you exactly what to fix.`
+                                    `Opened a terminal fallback for "${cs.displayName || cs.name}". Run Test SSH Connectivity for detailed diagnostics.`
                                 );
                             }
                         }
@@ -919,6 +941,33 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.setupDoctor', async () => {
             await setupDoctorProvider.openOrReveal();
+        })
+    );
+
+    // ── Command: Reconnect to Last Codespace (Issue #4 §G) ───────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('antigravity-codespaces.reconnectLast', async () => {
+            const lastCs = context.globalState.get(LAST_CODESPACE_KEY);
+            if (!lastCs || !lastCs.name) {
+                vscode.window.showInformationMessage('No recent Codespace found. Connect to a Codespace first.');
+                return;
+            }
+            
+            // Wake and connect in one step
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: `Reconnecting to ${lastCs.displayName || lastCs.name}...`, cancellable: false },
+                async () => {
+                    try {
+                        // Wake the codespace if needed
+                        await githubApi.startCodespace(lastCs.name, lastCs.account).catch(() => {});
+                    } catch {}
+                }
+            );
+            
+            // Delegate to connect command
+            await vscode.commands.executeCommand('antigravity-codespaces.connect', {
+                codespaceData: lastCs
+            });
         })
     );
 

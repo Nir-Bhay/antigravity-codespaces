@@ -232,6 +232,11 @@
         "command": "antigravity-codespaces.setupDoctor",
         "title": "Codespaces: Setup Doctor",
         "icon": "$(checklist)"
+      },
+      {
+        "command": "antigravity-codespaces.reconnectLast",
+        "title": "Reconnect to Last Codespace",
+        "icon": "$(history)"
       }
     ],
     "keybindings": [

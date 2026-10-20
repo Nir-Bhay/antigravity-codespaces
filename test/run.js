@@ -612,5 +612,62 @@ function ok(name, fn) {
         assert.ok(src.includes("command: 'createCodespace'") && src.includes('stepConnectBtn'), 'step 3 posts createCodespace');
     });
 
+    // ── Issue #4 §D-G Tests ──────────────────────────────────────────────────
+    console.log('issue #4 §D-G features');
+    await ok('systemDoctor.generateReport includes all required fields (§F)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'systemDoctor.js'), 'utf8');
+        assert.ok(src.includes('os.release()'), 'includes OS version');
+        assert.ok(src.includes('vscode.env.appName'), 'includes IDE name');
+        assert.ok(src.includes('vscode.version'), 'includes IDE version');
+        assert.ok(src.includes('_redactAuthStatus'), 'redacts auth status');
+        assert.ok(src.includes('_extractCodespaceBlocks'), 'extracts SSH config blocks');
+        assert.ok(src.includes('lastTunnelStderr'), 'includes last tunnel stderr');
+        assert.ok(src.includes('setLastTunnelStderr'), 'has method to store tunnel stderr');
+    });
+    await ok('systemDoctor._redactAuthStatus removes tokens (source check)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'systemDoctor.js'), 'utf8');
+        assert.ok(src.includes("gho_[A-Za-z0-9_]+"), 'redacts gho tokens');
+        assert.ok(src.includes("ghp_[A-Za-z0-9_]+"), 'redacts ghp tokens');
+        assert.ok(src.includes("github_pat_[A-Za-z0-9_]+"), 'redacts github_pat tokens');
+        assert.ok(src.includes("Bearer [A-Za-z0-9_-]+"), 'redacts Bearer tokens');
+        assert.ok(src.includes('[REDACTED]'), 'uses REDACTED marker');
+    });
+    await ok('systemDoctor._extractCodespaceBlocks extracts cs. blocks (source check)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'systemDoctor.js'), 'utf8');
+        assert.ok(src.includes('_extractCodespaceBlocks'), 'method exists');
+        assert.ok(src.includes("/^cs[\\.-]/"), 'matches cs. pattern');
+        assert.ok(src.includes('blocks.slice(0, 10)'), 'limits to 10 blocks');
+    });
+    await ok('extension.js has reconnectLast command registered (§G)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.ok(src.includes("'antigravity-codespaces.reconnectLast'"), 'reconnectLast command registered');
+        assert.ok(src.includes('LAST_CODESPACE_KEY'), 'last codespace key defined');
+        assert.ok(src.includes('globalState.get(LAST_CODESPACE_KEY)'), 'reads last codespace from globalState');
+        assert.ok(src.includes('globalState.update(LAST_CODESPACE_KEY'), 'stores last codespace in globalState');
+    });
+    await ok('extension.js connect shows staged progress (§E)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.ok(src.includes("'Step 1/4: Checking gh CLI...'"), 'step 1 progress');
+        assert.ok(src.includes("'Step 2/4: Configuring SSH...'"), 'step 2 progress');
+        assert.ok(src.includes("'Step 3/4: Waking container...'"), 'step 3 progress');
+        assert.ok(src.includes("'Step 4/4: Opening remote folder...'"), 'step 4 progress');
+    });
+    await ok('extension.js createCodespace offers Connect Now button (§G)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.ok(src.includes("'Connect Now'"), 'Connect Now button offered');
+        assert.ok(src.includes("if (action === 'Connect Now')"), 'Connect Now action handler');
+    });
+    await ok('authManager validates PAT scopes at login (§G)', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'authManager.js'), 'utf8');
+        assert.ok(src.includes('x-oauth-scopes'), 'reads scopes from response header');
+        assert.ok(src.includes('hasCodespaceScope'), 'hasCodespaceScope method exists');
+        assert.ok(src.includes("missing the \"codespace\" scope"), 'warns about missing scope');
+    });
+    await ok('package.json has reconnectLast command', () => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+        const cmds = pkg.contributes.commands.map(c => c.command);
+        assert.ok(cmds.includes('antigravity-codespaces.reconnectLast'), 'reconnectLast in package.json');
+    });
+
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
 })();
