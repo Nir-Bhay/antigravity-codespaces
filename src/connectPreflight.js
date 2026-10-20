@@ -41,12 +41,25 @@ async function ensureLinuxRemotePlatform(hostAlias, deps) {
     }
 }
 
-/** True when tunnel/remote output shows the Linux-box-ran-powershell signature. */
-function isPlatformMismatchError(err) {
+/**
+ * True when tunnel/remote output shows a platform mismatch signature.
+ * Classic case: Linux box tried to run powershell → "command not found" + exit 127.
+ *
+ * When `host` is provided and starts with 'cs.' (a Codespace exact-host alias),
+ * a bare exit code 127 (no powershell text) also returns true — Codespaces are
+ * always Linux, so any 127 on such a host is almost certainly a platform config
+ * issue. Without a known-codespace host, bare 127 stays false to avoid false
+ * positives on generic SSH hosts.
+ */
+function isPlatformMismatchError(err, host) {
     const text = [err && err.stderr, err && err.message, typeof err === 'string' ? err : '']
         .filter(Boolean).join('\n');
+    const errCode = err && typeof err.code === 'number' ? err.code : null;
     if (/powershell(\.exe)?:?\s*(command )?not found|command not found:?\s*powershell/i.test(text)) return true;
-    return /exit(ed)?( with)? ?(code |status )?127\b/i.test(text) && /powershell/i.test(text);
+    if (/exit(ed)?( with)? ?(code |status )?127\b/i.test(text) && /powershell/i.test(text)) return true;
+    const isBare127 = /exit(ed)?( with)? ?(code |status )?127\b/i.test(text) || errCode === 127;
+    if (isBare127 && typeof host === 'string' && host.startsWith('cs.')) return true;
+    return false;
 }
 
 /**

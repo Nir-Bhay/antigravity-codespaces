@@ -412,6 +412,14 @@ function ok(name, fn) {
         assert.ok(!cp.isPlatformMismatchError(new Error('exit 255 nonexistent pipe')));
         assert.ok(!cp.isPlatformMismatchError(null));
     });
+    await ok('isPlatformMismatchError: bare 127 + cs. host => true, bare 127 + non-cs host => false', () => {
+        assert.ok(cp.isPlatformMismatchError(new Error('Process exited with code 127'), 'cs.my-codespace-abc123'));
+        assert.ok(cp.isPlatformMismatchError({ code: 127 }, 'cs.any-name'));
+        assert.ok(!cp.isPlatformMismatchError(new Error('Process exited with code 127'), 'my-server'));
+        assert.ok(!cp.isPlatformMismatchError(new Error('Process exited with code 127'), 'cs-account-repo'));
+        assert.ok(!cp.isPlatformMismatchError(new Error('Process exited with code 127'), null));
+        assert.ok(!cp.isPlatformMismatchError(new Error('Process exited with code 127')));
+    });
     await ok('switchFallbackCommand: zero/unknown accounts → login, else re-switch (sanitized)', () => {
         assert.match(cp.switchFallbackCommand('not logged in to github.com account bob', 'bob'), /gh auth login .*-s codespace/);
         assert.match(cp.switchFallbackCommand('You are not logged into any GitHub hosts.', 'bob'), /gh auth login/);

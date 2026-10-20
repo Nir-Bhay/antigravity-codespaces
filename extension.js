@@ -435,9 +435,10 @@ async function activate(context) {
                         // exit-255 notification (issues #3, #4 §E).
                         const detail = friendlyTunnelError(e);
                         const rawLine = sniffTunnelStderr(e.stderr) ? '' : ` (${e.message})`;
+                        const exactHost = `cs.${cs.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
                         const act = await vscode.window.showErrorMessage(
                             `SSH test failed for ${cs.displayName || cs.name}: ${detail}${rawLine}`,
-                            ...(isPlatformMismatchError(e) ? ['Fix Remote Platform'] : []),
+                            ...(isPlatformMismatchError(e, exactHost) ? ['Fix Remote Platform'] : []),
                             'Show Logs',
                             'Test Again'
                         );
