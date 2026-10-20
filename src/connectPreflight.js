@@ -7,6 +7,27 @@
 const PLATFORM_SETTING_SECTION = 'remote.SSH';
 const PLATFORM_SETTING_KEY = 'remotePlatform';
 
+let _configLogger = null;
+
+/**
+ * Sets the shared Codespaces output channel for config mutation logging.
+ * Called once from extension.js with the same channel used by sshManager.
+ */
+function setPreflightConfigLogger(logger) {
+    _configLogger = logger;
+}
+
+/**
+ * Logs to the shared Codespaces output channel (if set).
+ */
+function logToChannel(message) {
+    if (!_configLogger) return;
+    try {
+        const timestamp = new Date().toISOString();
+        _configLogger.appendLine(`[${timestamp}] [Remote Platform] ${message}`);
+    } catch {}
+}
+
 /**
  * Ensures `remote.SSH.remotePlatform[hostAlias] === 'linux'` (Codespaces are
  * always Linux). A stale "windows"/"macOS" value makes Remote-SSH run
@@ -31,12 +52,16 @@ async function ensureLinuxRemotePlatform(hostAlias, deps) {
     const next = { ...map, [hostAlias]: 'linux' };
     try {
         await config.update(PLATFORM_SETTING_KEY, next, target);
-        log(previous === undefined
+        const msg = previous === undefined
             ? `remote.SSH.remotePlatform["${hostAlias}"] set to "linux"`
-            : `remote.SSH.remotePlatform["${hostAlias}"] was "${previous}" — overwritten with "linux" (Codespaces are Linux; issue #3)`);
+            : `remote.SSH.remotePlatform["${hostAlias}"] was "${previous}" — overwritten with "linux" (Codespaces are Linux; issue #3)`;
+        log(msg);
+        logToChannel(msg);
         return { changed: true, previous };
     } catch (err) {
-        log(`Could not update remote.SSH.remotePlatform["${hostAlias}"]: ${(err && err.message) || err}`);
+        const errMsg = `Could not update remote.SSH.remotePlatform["${hostAlias}"]: ${(err && err.message) || err}`;
+        log(errMsg);
+        logToChannel(errMsg);
         return { changed: false, previous, error: err };
     }
 }
@@ -80,6 +105,7 @@ module.exports = {
     ensureLinuxRemotePlatform,
     isPlatformMismatchError,
     switchFallbackCommand,
+    setPreflightConfigLogger,
     PLATFORM_SETTING_SECTION,
     PLATFORM_SETTING_KEY
 };

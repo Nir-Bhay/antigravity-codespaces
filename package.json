@@ -98,6 +98,29 @@
           "type": "string",
           "default": "/workspaces/${repo}",
           "description": "Default remote container folder path when connecting via SSH. Supports ${repo} and ${name} placeholders."
+        },
+        "antigravity-codespaces.strictHostKeyChecking": {
+          "type": "string",
+          "enum": ["accept-new", "yes", "no"],
+          "default": "accept-new",
+          "description": "SSH host key verification mode. 'accept-new' (recommended) accepts new keys and rejects changed keys. 'yes' requires manual verification. 'no' disables verification (insecure).",
+          "enumDescriptions": [
+            "Accept new host keys automatically, reject if key changes (recommended)",
+            "Always verify host keys manually",
+            "Disable host key verification (insecure, not recommended)"
+          ]
+        },
+        "antigravity-codespaces.sshLogLevel": {
+          "type": "string",
+          "enum": ["quiet", "error", "info", "verbose"],
+          "default": "error",
+          "description": "SSH logging verbosity. 'error' (default) shows only errors. 'quiet' suppresses all output. 'info' and 'verbose' show more details for debugging.",
+          "enumDescriptions": [
+            "Suppress all SSH diagnostic output",
+            "Show only fatal errors (default, recommended)",
+            "Show informational messages",
+            "Show verbose debugging output"
+          ]
         }
       }
     },

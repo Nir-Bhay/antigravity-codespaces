@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.0.9] - 2026-10-20
+
+### Security
+- **SSH Host Key Verification (issue #5)**: Replaced `StrictHostKeyChecking no` + `UserKnownHostsFile /dev/null` with `StrictHostKeyChecking accept-new` and an extension-managed `~/.antigravity-codespaces/known_hosts` file. Host keys are now stored persistently (TOFU model) and subsequent key changes trigger warnings. Configurable via `antigravity-codespaces.strictHostKeyChecking` (`accept-new`|`yes`|`no`).
+- **SSH Log Level Control (issue #5)**: Changed default SSH `LogLevel` from `quiet` to `ERROR` so fatal conditions are surfaced. Configurable via `antigravity-codespaces.sshLogLevel` (`quiet`|`error`|`info`|`verbose`).
+
+### Added
+- **Shared 'Codespaces' Output Channel**: Every `~/.ssh/config` mutation (block creation, update, removal) is now logged with timestamps to a dedicated "Codespaces" output channel. Also logs `remote.SSH.remotePlatform` changes. No tokens or secrets are logged.
+- **`mapTunnelError(stderr, exitCode, host)` Function**: Pure exported function that maps SSH tunnel/test failures to actionable user guidance:
+  - `gh auth login` / `not logged into any GitHub hosts` → "GitHub CLI is not logged in"
+  - `needs the "codespace" scope` / `Must have admin rights` → missing scope guidance (shown first)
+  - Exit 127 + `powershell: command not found` → remote platform mismatch
+  - `nonexistent pipe` / exit 255 → tunnel died, likely gh auth issue
+  - `REMOTE HOST IDENTIFICATION HAS CHANGED` → offer to remove host from managed known_hosts
+- **`buildSshConfigBlock(opts)` Function**: Pure exported function for generating SSH config blocks, enabling easier testing and customization.
+- **Host Key Removal Action**: When host key verification fails, "Test SSH Connectivity" now offers a "Remove Host Key" button to clear the stale key from the managed known_hosts file.
+- **New Settings**:
+  - `antigravity-codespaces.strictHostKeyChecking`: `accept-new` (default), `yes`, or `no`
+  - `antigravity-codespaces.sshLogLevel`: `quiet`, `error` (default), `info`, or `verbose`
+
+### Changed
+- **Existing SSH blocks are rewritten on next `ensureSSHConfigEntry`** to apply the new security settings (accept-new + managed known_hosts + LogLevel ERROR).
+- **Test SSH Connectivity** now shows stderr details and offers context-specific fix buttons (Fix Remote Platform, Remove Host Key, Run Fix Command).
+
+### Fixed
+- SSH tunnel errors now route through `mapTunnelError` for consistent, actionable messaging instead of raw exit codes.
+
+---
+
 ## [5.0.8] - 2026-09-05
 
 ### Added
