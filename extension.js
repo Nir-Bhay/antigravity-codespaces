@@ -17,6 +17,7 @@ const {
     getGhAuthHealth
 } = require('./src/sshManager');
 const { SystemDoctor } = require('./src/systemDoctor');
+const { ensureLinuxRemotePlatform, isPlatformMismatchError, switchFallbackCommand, PLATFORM_SETTING_SECTION } = require('./src/connectPreflight');
 const { SidebarProvider } = require('./src/sidebarProvider');
 const { DashboardProvider } = require('./src/dashboardProvider');
 const { StatusBarManager } = require('./src/statusBar');
@@ -49,6 +50,95 @@ async function activate(context) {
         logger.error(context || 'operation failed', message);
         const act = await vscode.window.showErrorMessage(message, 'Show Logs');
         if (act === 'Show Logs') logger.show();
+    }
+
+    /**
+     * Shared gh-CLI preflight for Connect, Quick Connect (delegates to Connect)
+     * and Test SSH. Resolves true to proceed, false when the user cancelled or
+     * was handed a fix. Fails open on 'unknown'.
+     */
+    async function ghPreflight(cs, account) {
+        // Preflight: `gh cs ssh` authenticates with the gh CLI's OWN keyring
+        // token — fully separate from the extension's OAuth/PAT session.
+        // Catches the four common first-run failure states BEFORE launching
+        // SSH, each with a one-click fix (issues #3, #4):
+        //   1. gh not installed          → install guidance
+        //   2. gh logged out             → gh auth login -s codespace
+        //   3. token missing 'codespace' → gh auth refresh -s codespace
+        //   4. active-user mismatch      → gh auth switch (existing flow)
+        // Every branch fails open on doubt ('unknown' state proceeds) so a
+        // probe glitch can never hard-block a working connection.
+        const health = await getGhAuthHealth();
+        if (health.state === 'missing') {
+            const act = await vscode.window.showWarningMessage(
+                'GitHub CLI (gh) is not installed — SSH tunnels to Codespaces are powered by it.',
+                'Install Instructions',
+                'Connect Anyway'
+            );
+            if (act === 'Install Instructions') {
+                await SystemDoctor.promptInstallGhCli();
+                resetDashboardView();
+                return false;
+            }
+        } else if (health.state === 'logged_out') {
+            const act = await vscode.window.showWarningMessage(
+                'GitHub CLI is signed out — SSH would fail immediately. Note: this is separate from the extension sign-in that powers the dashboard.',
+                'Run gh auth login',
+                'Connect Anyway'
+            );
+            if (act === 'Run gh auth login') {
+                const t = vscode.window.createTerminal('gh auth login');
+                t.show();
+                t.sendText('gh auth login -s codespace');
+                vscode.window.showInformationMessage('Complete the browser login in the terminal ("codespace" scope included), then retry Connect.');
+            } else if (act !== 'Connect Anyway') {
+                resetDashboardView();
+                return false;
+            }
+        } else if (health.state === 'scope_missing') {
+            const act = await vscode.window.showWarningMessage(
+                `gh CLI is signed in as "${health.user}" but its token is missing the "codespace" scope — SSH would fail with HTTP 403.`,
+                'Fix scope now',
+                'Connect Anyway'
+            );
+            if (act === 'Fix scope now') {
+                const t = vscode.window.createTerminal('gh auth refresh');
+                t.show();
+                t.sendText('gh auth refresh -h github.com -s codespace');
+                vscode.window.showInformationMessage('Complete the device flow in the terminal, then retry Connect.');
+            } else if (act !== 'Connect Anyway') {
+                resetDashboardView();
+                return false;
+            }
+        } else if (health.state === 'ok' && account &&
+                   health.user.toLowerCase() !== String(account).toLowerCase()) {
+            const ghUser = health.user;
+            const act = await vscode.window.showWarningMessage(
+                `gh CLI is signed in as "${ghUser}", but "${cs.displayName || cs.name}" belongs to "${account}". SSH would fail (Codespace not found for ${ghUser}).`,
+                'Switch gh CLI & Retry',
+                'Connect Anyway'
+            );
+            if (act === 'Switch gh CLI & Retry') {
+                try {
+                    const ghExe = findGhExecutable();
+                    await runCommand(ghExe, ['auth', 'switch', '--hostname', 'github.com', '--user', account], 15000);
+                    vscode.window.showInformationMessage(`gh CLI switched to ${account}. Retrying…`);
+                } catch (swErr) {
+                    // gh auth switch can never work when the CLI has zero
+                    // logged-in accounts — steer those users to login instead.
+                    const t = vscode.window.createTerminal('gh auth');
+                    t.show();
+                    t.sendText(switchFallbackCommand(swErr && swErr.message, account));
+                    vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). If the CLI has no logged-in accounts, complete "gh auth login -s codespace" in the terminal, then retry Connect.`);
+                    resetDashboardView();
+                    return false;
+                }
+            } else if (act !== 'Connect Anyway') {
+                resetDashboardView();
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Refresh the dashboard so disabled card buttons never get stuck. */
@@ -312,6 +402,9 @@ async function activate(context) {
                 cs = pick.cs;
             }
 
+            // Same gh-CLI preflight as Connect / Quick Connect (issue #4 §C).
+            if (!(await ghPreflight(cs, cs.account || authManager.getActiveAccount()))) return;
+
             // A stopped machine cannot answer an SSH probe — guide instead of failing.
             if (cs.state && cs.state !== 'Available') {
                 const act = await vscode.window.showInformationMessage(
@@ -344,10 +437,21 @@ async function activate(context) {
                         const rawLine = sniffTunnelStderr(e.stderr) ? '' : ` (${e.message})`;
                         const act = await vscode.window.showErrorMessage(
                             `SSH test failed for ${cs.displayName || cs.name}: ${detail}${rawLine}`,
+                            ...(isPlatformMismatchError(e) ? ['Fix Remote Platform'] : []),
                             'Show Logs',
                             'Test Again'
                         );
-                        if (act === 'Show Logs') logger.show();
+                        if (act === 'Fix Remote Platform') {
+                            const alias = ensureSSHConfigEntry(cs, cs.account || authManager.getActiveAccount());
+                            const r = await ensureLinuxRemotePlatform(alias, {
+                                config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
+                                target: vscode.ConfigurationTarget.Global,
+                                log: (m) => logger.info(m)
+                            });
+                            vscode.window.showInformationMessage(r.error
+                                ? `Couldn't update remote.SSH.remotePlatform — set "${alias}": "linux" in settings manually.`
+                                : `remote.SSH.remotePlatform["${alias}"] is now "linux". Reconnect to apply.`);
+                        } else if (act === 'Show Logs') logger.show();
                         else if (act === 'Test Again') vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
                     }
                 }
@@ -519,88 +623,16 @@ async function activate(context) {
             const account = cs.account || authManager.getActiveAccount();
 
             try {
-                // Preflight: `gh cs ssh` authenticates with the gh CLI's OWN keyring
-                // token — fully separate from the extension's OAuth/PAT session.
-                // Catches the four common first-run failure states BEFORE launching
-                // SSH, each with a one-click fix (issues #3, #4):
-                //   1. gh not installed          → install guidance
-                //   2. gh logged out             → gh auth login -s codespace
-                //   3. token missing 'codespace' → gh auth refresh -s codespace
-                //   4. active-user mismatch      → gh auth switch (existing flow)
-                // Every branch fails open on doubt ('unknown' state proceeds) so a
-                // probe glitch can never hard-block a working connection.
-                const health = await getGhAuthHealth();
-                if (health.state === 'missing') {
-                    const act = await vscode.window.showWarningMessage(
-                        'GitHub CLI (gh) is not installed — SSH tunnels to Codespaces are powered by it.',
-                        'Install Instructions',
-                        'Connect Anyway'
-                    );
-                    if (act === 'Install Instructions') {
-                        await SystemDoctor.promptInstallGhCli();
-                        resetDashboardView();
-                        return;
-                    }
-                } else if (health.state === 'logged_out') {
-                    const act = await vscode.window.showWarningMessage(
-                        'GitHub CLI is signed out — SSH would fail immediately. Note: this is separate from the extension sign-in that powers the dashboard.',
-                        'Run gh auth login',
-                        'Connect Anyway'
-                    );
-                    if (act === 'Run gh auth login') {
-                        const t = vscode.window.createTerminal('gh auth login');
-                        t.show();
-                        t.sendText('gh auth login -s codespace');
-                        vscode.window.showInformationMessage('Complete the browser login in the terminal ("codespace" scope included), then retry Connect.');
-                    } else if (act !== 'Connect Anyway') {
-                        resetDashboardView();
-                        return;
-                    }
-                } else if (health.state === 'scope_missing') {
-                    const act = await vscode.window.showWarningMessage(
-                        `gh CLI is signed in as "${health.user}" but its token is missing the "codespace" scope — SSH would fail with HTTP 403.`,
-                        'Fix scope now',
-                        'Connect Anyway'
-                    );
-                    if (act === 'Fix scope now') {
-                        const t = vscode.window.createTerminal('gh auth refresh');
-                        t.show();
-                        t.sendText('gh auth refresh -h github.com -s codespace');
-                        vscode.window.showInformationMessage('Complete the device flow in the terminal, then retry Connect.');
-                    } else if (act !== 'Connect Anyway') {
-                        resetDashboardView();
-                        return;
-                    }
-                } else if (health.state === 'ok' && account &&
-                           health.user.toLowerCase() !== String(account).toLowerCase()) {
-                    const ghUser = health.user;
-                    const act = await vscode.window.showWarningMessage(
-                        `gh CLI is signed in as "${ghUser}", but "${cs.displayName || cs.name}" belongs to "${account}". SSH would fail (Codespace not found for ${ghUser}).`,
-                        'Switch gh CLI & Retry',
-                        'Connect Anyway'
-                    );
-                    if (act === 'Switch gh CLI & Retry') {
-                        try {
-                            const ghExe = findGhExecutable();
-                            await runCommand(ghExe, ['auth', 'switch', '--hostname', 'github.com', '--user', account], 15000);
-                            vscode.window.showInformationMessage(`gh CLI switched to ${account}. Retrying…`);
-                        } catch (swErr) {
-                            // gh auth switch can never work when the CLI has zero
-                            // logged-in accounts — steer those users to login instead.
-                            const t = vscode.window.createTerminal('gh auth');
-                            t.show();
-                            t.sendText('gh auth login -s codespace');
-                            vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). If the CLI has no logged-in accounts, complete "gh auth login -s codespace" in the terminal, then retry Connect.`);
-                            resetDashboardView();
-                            return;
-                        }
-                    } else if (act !== 'Connect Anyway') {
-                        resetDashboardView();
-                        return;
-                    }
-                }
+                if (!(await ghPreflight(cs, account))) return;
 
                 const hostAlias = ensureSSHConfigEntry(cs, account);
+                // Issue #3 Failure 3: Codespaces are Linux — a stale "windows"
+                // remotePlatform makes Remote-SSH run powershell → exit 127.
+                await ensureLinuxRemotePlatform(hostAlias, {
+                    config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
+                    target: vscode.ConfigurationTarget.Global,
+                    log: (m) => logger.info(m)
+                });
                 const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
                 const config = vscode.workspace.getConfiguration('antigravity-codespaces');
                 const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
