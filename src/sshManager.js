@@ -403,6 +403,34 @@ async function getGhActiveUser() {
 }
 
 /**
+ * Pure parser for `gh auth status` output. Splits it into per-account blocks
+ * ("Logged in to <host> account <user>" / legacy "Logged in to <host> as <user>")
+ * and returns the lowercase scope list of the block whose login EXACTLY equals
+ * `user` (case-insensitive) — so "bob" never picks up "bobby"'s scopes and a
+ * later account's scopes never leak into an earlier one's.
+ * Returns null when no block / no "Token scopes" line exists for that user.
+ */
+function parseGhAuthStatusScopes(text, user) {
+    const raw = String(text || '');
+    const want = String(user || '').toLowerCase();
+    if (!want) return null;
+    const header = /Logged in to \S+ (?:account|as) ([A-Za-z0-9-]+)/g;
+    const marks = [];
+    let m;
+    while ((m = header.exec(raw)) !== null) marks.push({ user: m[1].toLowerCase(), start: m.index });
+    for (let i = 0; i < marks.length; i++) {
+        if (marks[i].user !== want) continue;
+        const block = raw.slice(marks[i].start, i + 1 < marks.length ? marks[i + 1].start : raw.length);
+        const sm = block.match(/Token scopes:\s*(.*)$/im);
+        if (!sm) return null;
+        return (sm[1].match(/[A-Za-z0-9:_-]+/g) || [])
+            .map(x => x.toLowerCase())
+            .filter(x => x !== 'none');
+    }
+    return null;
+}
+
+/**
  * Checks the gh CLI's auth health in one round-trip.
  *
  * `gh cs ssh` authenticates with the CLI's OWN keyring token, which is fully
@@ -465,11 +493,11 @@ async function getGhAuthHealth(deps = {}) {
         // stderr from runCommand errors carries the same text, so mine it too.
         scopes = String((err && err.message) || '');
     }
-    const anchorIdx = scopes.toLowerCase().lastIndexOf(loggedInUser.toLowerCase());
-    const windowText = anchorIdx >= 0 ? scopes.slice(anchorIdx) : scopes;
-    const scopeMatch = windowText.match(/Token scopes:\s*(.+)$/im);
-    const scopeList = scopeMatch ? scopeMatch[1] : '';
-    if (!/\bcodespace\b/i.test(scopeList)) {
+    const scopeList = parseGhAuthStatusScopes(scopes, loggedInUser);
+    // null → no parseable scope line for this account (fine-grained PAT,
+    // GH_TOKEN env var, future gh output change): fail open, never block.
+    if (scopeList === null) return { state: 'ok', user: loggedInUser, scopesUnknown: true };
+    if (!scopeList.includes('codespace')) {
         return { state: 'scope_missing', user: loggedInUser };
     }
     return { state: 'ok', user: loggedInUser };
@@ -486,6 +514,7 @@ module.exports = {
     cleanSshConfigFile,
     getGhActiveUser,
     getGhAuthHealth,
+    parseGhAuthStatusScopes,
     getSshConfigPath,
     SSH_DIR,
     SSH_CONFIG_PATH
