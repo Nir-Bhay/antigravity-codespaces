@@ -14,10 +14,13 @@ const {
     probeSshTunnelVerbose,
     cleanSshConfigFile,
     getGhActiveUser,
-    getGhAuthHealth
+    getGhAuthHealth,
+    mapTunnelError,
+    removeHostFromManagedKnownHosts,
+    setConfigLogger
 } = require('./src/sshManager');
 const { SystemDoctor } = require('./src/systemDoctor');
-const { ensureLinuxRemotePlatform, isPlatformMismatchError, switchFallbackCommand, PLATFORM_SETTING_SECTION } = require('./src/connectPreflight');
+const { ensureLinuxRemotePlatform, isPlatformMismatchError, switchFallbackCommand, setPreflightConfigLogger, PLATFORM_SETTING_SECTION } = require('./src/connectPreflight');
 const { SidebarProvider } = require('./src/sidebarProvider');
 const { DashboardProvider } = require('./src/dashboardProvider');
 const { StatusBarManager } = require('./src/statusBar');
@@ -32,6 +35,12 @@ let globalGithubApi = null;
  */
 async function activate(context) {
     const ANTIGRAVITY_EXE = findAntigravityExecutable(); // Declared and resolved (fixes BUG-02, BUG-04)
+
+    // Create shared 'Codespaces' output channel for SSH config mutation logging
+    const codespacesChannel = vscode.window.createOutputChannel('Codespaces');
+    context.subscriptions.push(codespacesChannel);
+    setConfigLogger(codespacesChannel);
+    setPreflightConfigLogger(codespacesChannel);
 
     const authManager = new AuthManager(context);
     const githubApi = new GithubApi(authManager);
@@ -430,17 +439,31 @@ async function activate(context) {
                         vscode.window.showInformationMessage(`✅ SSH tunnel to "${cs.displayName || cs.name}" is healthy! Latency: ${latencyMs}ms`);
                     } catch (e) {
                         logger.error(`testSSH failed for ${cs.name}`, e.message);
+                        if (e.stderr) {
+                            logger.error(`testSSH stderr`, e.stderr);
+                        }
+                        
                         // Surface the exact tunnel stderr (gh auth state, platform
-                        // mismatch, …) as actionable guidance instead of a bare
-                        // exit-255 notification (issues #3, #4 §E).
+                        // mismatch, host key change, …) as actionable guidance instead of a bare
+                        // exit-255 notification (issues #3, #4, #5 §E).
                         const detail = friendlyTunnelError(e);
                         const rawLine = sniffTunnelStderr(e.stderr) ? '' : ` (${e.message})`;
                         const exactHost = `cs.${cs.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+                        
+                        // Build action buttons based on error type
+                        const mapped = mapTunnelError(e.stderr || e.message, e.exitCode || e.code, exactHost);
+                        const buttons = [];
+                        if (isPlatformMismatchError(e, exactHost)) {
+                            buttons.push('Fix Remote Platform');
+                        }
+                        if (mapped.actionType === 'remove_host_key') {
+                            buttons.push('Remove Host Key');
+                        }
+                        buttons.push('Show Logs', 'Test Again');
+                        
                         const act = await vscode.window.showErrorMessage(
                             `SSH test failed for ${cs.displayName || cs.name}: ${detail}${rawLine}`,
-                            ...(isPlatformMismatchError(e, exactHost) ? ['Fix Remote Platform'] : []),
-                            'Show Logs',
-                            'Test Again'
+                            ...buttons
                         );
                         if (act === 'Fix Remote Platform') {
                             const alias = ensureSSHConfigEntry(cs, cs.account || authManager.getActiveAccount());
@@ -452,8 +475,17 @@ async function activate(context) {
                             vscode.window.showInformationMessage(r.error
                                 ? `Couldn't update remote.SSH.remotePlatform — set "${alias}": "linux" in settings manually.`
                                 : `remote.SSH.remotePlatform["${alias}"] is now "linux". Reconnect to apply.`);
-                        } else if (act === 'Show Logs') logger.show();
-                        else if (act === 'Test Again') vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
+                        } else if (act === 'Remove Host Key') {
+                            if (removeHostFromManagedKnownHosts(exactHost)) {
+                                vscode.window.showInformationMessage(`Removed host key for ${exactHost}. Try connecting again.`);
+                            } else {
+                                vscode.window.showWarningMessage(`Could not find host key for ${exactHost} in managed known_hosts.`);
+                            }
+                        } else if (act === 'Show Logs') {
+                            logger.show();
+                        } else if (act === 'Test Again') {
+                            vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
+                        }
                     }
                 }
             );

@@ -4,10 +4,38 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
-const { runCommand } = require('./utils');
+const { runCommand, runCommandWithDetails } = require('./utils');
 
 const SSH_DIR = path.join(os.homedir(), '.ssh');
 const SSH_CONFIG_PATH = path.join(SSH_DIR, 'config');
+
+const EXTENSION_DATA_DIR = path.join(os.homedir(), '.antigravity-codespaces');
+const MANAGED_KNOWN_HOSTS_PATH = path.join(EXTENSION_DATA_DIR, 'known_hosts');
+
+let _configLogger = null;
+
+/**
+ * Sets the logger used for SSH config mutations. Called once from extension.js
+ * with a shared 'Codespaces' output channel.
+ */
+function setConfigLogger(logger) {
+    _configLogger = logger;
+}
+
+/**
+ * Logs timestamped SSH config mutations to the shared output channel.
+ */
+function logConfigMutation(action, details) {
+    if (!_configLogger) return;
+    const timestamp = new Date().toISOString();
+    try {
+        _configLogger.appendLine(`[${timestamp}] [SSH Config] ${action}`);
+        if (details) {
+            _configLogger.appendLine(details);
+        }
+        _configLogger.appendLine('');
+    } catch {}
+}
 
 /**
  * Allows tests to redirect SSH config writes without touching the real file.
@@ -15,6 +43,35 @@ const SSH_CONFIG_PATH = path.join(SSH_DIR, 'config');
  */
 function getSshConfigPath() {
     return process.env.ANTIGRAVITY_SSH_CONFIG || SSH_CONFIG_PATH;
+}
+
+/**
+ * Returns the path to the extension-managed known_hosts file.
+ * Allows tests to override via environment variable.
+ */
+function getManagedKnownHostsPath() {
+    return process.env.ANTIGRAVITY_KNOWN_HOSTS || MANAGED_KNOWN_HOSTS_PATH;
+}
+
+/**
+ * Ensures the extension data directory and managed known_hosts file exist.
+ * Creates them with appropriate permissions if missing.
+ */
+function ensureManagedKnownHosts() {
+    const knownHostsPath = getManagedKnownHostsPath();
+    const dataDir = path.dirname(knownHostsPath);
+    try {
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+        }
+        if (!fs.existsSync(knownHostsPath)) {
+            fs.writeFileSync(knownHostsPath, '', { mode: 0o600 });
+        }
+        return knownHostsPath;
+    } catch (err) {
+        console.error('Failed to create managed known_hosts:', err);
+        return knownHostsPath;
+    }
 }
 
 /**
@@ -258,10 +315,60 @@ function findAntigravityExecutable() {
 }
 
 /**
+ * Builds an SSH config block for a Codespace. Pure function — no I/O.
+ * @param {Object} opts - Configuration options
+ * @param {string} opts.codespace - Codespace name (validated)
+ * @param {string} opts.hostAliases - Space-separated host aliases
+ * @param {string} opts.ghExePath - Normalized path to gh executable
+ * @param {string} [opts.identityFile] - Optional path to identity file
+ * @param {string} [opts.knownHostsFile] - Path to known_hosts file
+ * @param {string} [opts.strictHostKeyChecking='accept-new'] - accept-new|yes|no
+ * @param {string} [opts.logLevel='ERROR'] - quiet|error|info|verbose
+ * @param {number} [opts.serverAliveInterval=30] - SSH keepalive interval
+ * @param {number} [opts.serverAliveCountMax=10] - Max keepalive probes
+ * @returns {string} The SSH config block text
+ */
+function buildSshConfigBlock(opts) {
+    const {
+        codespace,
+        hostAliases,
+        ghExePath,
+        identityFile,
+        knownHostsFile,
+        strictHostKeyChecking = 'accept-new',
+        logLevel = 'ERROR',
+        serverAliveInterval = 30,
+        serverAliveCountMax = 10
+    } = opts;
+
+    const blockId = `# CS_ENTRY:${codespace}`;
+    const endMarker = `# END_CS_ENTRY:${codespace}`;
+
+    const identityLine = identityFile ? `  IdentityFile "${identityFile}"\n` : '';
+    const knownHostsLine = knownHostsFile ? `  UserKnownHostsFile "${knownHostsFile}"` : '  UserKnownHostsFile /dev/null';
+
+    return `
+${blockId}
+Host ${hostAliases}
+  User codespace
+  ProxyCommand "${ghExePath}" cs ssh -c "${codespace}" --stdio
+${identityLine}${knownHostsLine}
+  StrictHostKeyChecking ${strictHostKeyChecking}
+  LogLevel ${logLevel}
+  ServerAliveInterval ${serverAliveInterval}
+  ServerAliveCountMax ${serverAliveCountMax}
+  TCPKeepAlive yes
+${endMarker}
+`.trim();
+}
+
+/**
  * Ensures ~/.ssh/config contains a clean, deduplicated Host entry for the Codespace.
  * Safety: Codespace names are allowlist-validated (no injection), old blocks are
  * stripped with an escaped regex, writes are atomic (tmp + rename) with a .bak
  * backup, and keepalive values are clamped to sane ranges.
+ * 
+ * Uses extension-managed known_hosts for host key verification (TOFU with accept-new).
  */
 function ensureSSHConfigEntry(cs, account) {
     const safeName = sanitizeCsName(cs && cs.name);
@@ -276,15 +383,13 @@ function ensureSSHConfigEntry(cs, account) {
         const repoParts = repoFull.split('/').filter(Boolean);
         const ownerShort = (repoParts.length >= 2 ? repoParts[0] : '').replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
         const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
-        // Include the owner to avoid alias collisions for same-named repos under
-        // different owners on the same account (e.g. ownerA/app vs ownerB/app).
         const aliasBase = ownerShort ? `cs-${safeAccount}-${ownerShort}-${repoShort}` : `cs-${safeAccount}-${repoShort}`;
         const aliasLower = aliasBase.toLowerCase();
         const aliasExact = aliasBase;
         const exactHost = `cs.${safeName}`;
+        const hostAliases = `${exactHost} ${aliasLower} ${aliasExact} ${safeName}`;
 
         const ghExe = findGhExecutable();
-        // Forward slashes prevent backslash escape issues inside OpenSSH config
         const normalizedGhExe = ghExe.replace(/\\/g, '/');
 
         const sshConfigPath = getSshConfigPath();
@@ -292,37 +397,55 @@ function ensureSSHConfigEntry(cs, account) {
         const blockId = `# CS_ENTRY:${safeName}`;
         const endMarker = `# END_CS_ENTRY:${safeName}`;
 
+        // Extract previous block for logging (before removal)
+        let previousBlock = null;
+        const prevBlockMatch = cfg.match(new RegExp(`${escapeRegExp(blockId)}[\\s\\S]*?${escapeRegExp(endMarker)}`));
+        if (prevBlockMatch) {
+            previousBlock = prevBlockMatch[0];
+        }
+
+        // Read settings with defaults
         let aliveInterval = 30;
         let aliveMax = 10;
+        let strictHostKeyChecking = 'accept-new';
+        let sshLogLevel = 'ERROR';
         try {
             const config = vscode.workspace.getConfiguration('antigravity-codespaces');
             const rawInterval = Number(config.get('serverAliveInterval', 30));
             const rawMax = Number(config.get('serverAliveCountMax', 10));
             if (Number.isFinite(rawInterval)) aliveInterval = Math.min(300, Math.max(5, Math.trunc(rawInterval)));
             if (Number.isFinite(rawMax)) aliveMax = Math.min(100, Math.max(1, Math.trunc(rawMax)));
+            
+            const rawStrictCheck = config.get('strictHostKeyChecking', 'accept-new');
+            if (['accept-new', 'yes', 'no'].includes(rawStrictCheck)) {
+                strictHostKeyChecking = rawStrictCheck;
+            }
+            
+            const rawLogLevel = String(config.get('sshLogLevel', 'error')).toUpperCase();
+            if (['QUIET', 'ERROR', 'INFO', 'VERBOSE'].includes(rawLogLevel)) {
+                sshLogLevel = rawLogLevel;
+            }
         } catch {}
 
+        // Ensure managed known_hosts exists and get its path
+        const knownHostsPath = ensureManagedKnownHosts().replace(/\\/g, '/');
+
         const autoKeyPath = path.join(SSH_DIR, 'codespaces.auto').replace(/\\/g, '/');
-        const identityLine = fs.existsSync(path.join(SSH_DIR, 'codespaces.auto'))
-            ? `  IdentityFile "${autoKeyPath}"\n`
-            : '';
+        const identityFile = fs.existsSync(path.join(SSH_DIR, 'codespaces.auto')) ? autoKeyPath : null;
 
-        const newBlock = `
-${blockId}
-Host ${exactHost} ${aliasLower} ${aliasExact} ${safeName}
-  User codespace
-  ProxyCommand "${normalizedGhExe}" cs ssh -c "${safeName}" --stdio
-${identityLine}  UserKnownHostsFile /dev/null
-  StrictHostKeyChecking no
-  LogLevel quiet
-  ServerAliveInterval ${aliveInterval}
-  ServerAliveCountMax ${aliveMax}
-  TCPKeepAlive yes
-${endMarker}
-`;
+        const newBlock = buildSshConfigBlock({
+            codespace: safeName,
+            hostAliases,
+            ghExePath: normalizedGhExe,
+            identityFile,
+            knownHostsFile: knownHostsPath,
+            strictHostKeyChecking,
+            logLevel: sshLogLevel,
+            serverAliveInterval: aliveInterval,
+            serverAliveCountMax: aliveMax
+        });
 
-        // Strip any previous entry for this Codespace: new end-marker format first,
-        // then the legacy format (ends at the TCPKeepAlive line) for migration.
+        // Strip any previous entry for this Codespace
         const newFormatRegex = new RegExp(`\\n*${escapeRegExp(blockId)}[\\s\\S]*?${escapeRegExp(endMarker)}[^\\n]*`, 'g');
         cfg = cfg.replace(newFormatRegex, '');
         if (cfg.includes(blockId)) {
@@ -330,8 +453,9 @@ ${endMarker}
             cfg = cfg.replace(legacyRegex, '');
         }
 
-        cfg = cfg.trim() + '\n\n' + newBlock.trim() + '\n';
-        // Backup + atomic write: temp file + rename prevents corruption on crash.
+        cfg = cfg.trim() + '\n\n' + newBlock + '\n';
+
+        // Backup + atomic write
         const tmpPath = sshConfigPath + '.tmp';
         try {
             if (fs.existsSync(sshConfigPath)) {
@@ -342,6 +466,13 @@ ${endMarker}
         try { fs.chmodSync(tmpPath, 0o600); } catch {}
         fs.renameSync(tmpPath, sshConfigPath);
 
+        // Log the mutation
+        if (previousBlock) {
+            logConfigMutation(`Updated SSH block for ${safeName}`, `BEFORE:\n${previousBlock}\n\nAFTER:\n${newBlock}`);
+        } else {
+            logConfigMutation(`Created SSH block for ${safeName}`, `NEW BLOCK:\n${newBlock}`);
+        }
+
         return exactHost;
     } catch (err) {
         console.error('SSH config generation error:', err);
@@ -351,14 +482,37 @@ ${endMarker}
 
 /**
  * Performs a non-destructive SSH tunnel probe and measures roundtrip latency.
+ * Returns { latency, stderr, exitCode } on success, or throws with mapped error details.
+ * 
+ * @param {string} csName - The codespace name
+ * @param {string} [token] - Optional GH_TOKEN for authentication
+ * @returns {Promise<{latency: number, stderr?: string, exitCode?: number}>}
  */
 async function testSshTunnel(csName, token) {
     const safeName = sanitizeCsName(csName);
     const ghExe = findGhExecutable();
     const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
     const start = Date.now();
-    await runCommand(ghExe, ['cs', 'ssh', '-c', safeName, '--', 'echo', 'ping_ok'], 20000, envOpts);
-    return Date.now() - start;
+    
+    const result = await runCommandWithDetails(
+        ghExe, 
+        ['cs', 'ssh', '-c', safeName, '--', 'echo', 'ping_ok'], 
+        20000, 
+        envOpts
+    );
+    
+    const latency = Date.now() - start;
+    
+    if (result.exitCode !== 0) {
+        const mapped = mapTunnelError(result.stderr, result.exitCode, `cs.${safeName}`);
+        const err = new Error(mapped.message);
+        err.stderr = result.stderr;
+        err.exitCode = result.exitCode;
+        err.mappedError = mapped;
+        throw err;
+    }
+    
+    return { latency, stderr: result.stderr, exitCode: result.exitCode };
 }
 
 /**
@@ -503,6 +657,146 @@ async function getGhAuthHealth(deps = {}) {
     return { state: 'ok', user: loggedInUser };
 }
 
+/**
+ * Removes a host entry from the extension-managed known_hosts file.
+ * Used when REMOTE HOST IDENTIFICATION HAS CHANGED error is detected.
+ * @param {string} host - The host pattern to remove
+ * @returns {boolean} True if removal was attempted
+ */
+function removeHostFromManagedKnownHosts(host) {
+    try {
+        const knownHostsPath = getManagedKnownHostsPath();
+        if (!fs.existsSync(knownHostsPath)) return false;
+        
+        const content = fs.readFileSync(knownHostsPath, 'utf8');
+        const lines = content.split(/\r?\n/);
+        const filtered = lines.filter(line => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return true;
+            const hostPart = trimmed.split(/\s+/)[0] || '';
+            return !hostPart.includes(host);
+        });
+        
+        const newContent = filtered.join('\n');
+        if (newContent !== content) {
+            fs.writeFileSync(knownHostsPath, newContent, { mode: 0o600 });
+            logConfigMutation(`Removed host key for ${host}`, `Removed from managed known_hosts`);
+            return true;
+        }
+        return false;
+    } catch (err) {
+        console.error('Failed to remove host from known_hosts:', err);
+        return false;
+    }
+}
+
+/**
+ * Maps SSH tunnel/test errors to user-friendly messages with actionable guidance.
+ * Pure function — no I/O or side effects. Uses isPlatformMismatchError from
+ * connectPreflight.js when available.
+ * 
+ * @param {string} stderr - The stderr output from the failed command
+ * @param {number} exitCode - The exit code of the failed command
+ * @param {string} [host] - The host being connected to (for host key errors)
+ * @returns {Object} { message: string, action?: string, actionType?: string }
+ *   - message: User-friendly error description
+ *   - action: Suggested fix command or action
+ *   - actionType: 'terminal_command' | 'remove_host_key' | 'check_platform' | null
+ */
+function mapTunnelError(stderr, exitCode, host) {
+    const stderrLower = (stderr || '').toLowerCase();
+    const stderrRaw = stderr || '';
+
+    // Use isPlatformMismatchError from connectPreflight (reuse teammate's logic)
+    let isPlatformMismatch = false;
+    try {
+        const { isPlatformMismatchError } = require('./connectPreflight');
+        isPlatformMismatch = isPlatformMismatchError({ stderr: stderrRaw, code: exitCode, message: stderrRaw }, host);
+    } catch {
+        // connectPreflight not available, fall back to basic detection
+        isPlatformMismatch = (exitCode === 127 || stderrLower.includes('command not found')) &&
+            (stderrLower.includes('powershell') || stderrLower.includes('bash'));
+    }
+
+    // Order matters: check most specific patterns first
+
+    // 1. gh CLI not logged in
+    if (stderrLower.includes('gh auth login') || 
+        stderrLower.includes('not logged into any github hosts')) {
+        return {
+            message: 'GitHub CLI is not logged in. You need to authenticate before connecting.',
+            action: 'gh auth login -s codespace',
+            actionType: 'terminal_command'
+        };
+    }
+
+    // 2. Missing codespace scope (check BEFORE generic 403/permission errors)
+    if (stderrLower.includes('needs the "codespace" scope') ||
+        stderrLower.includes('must have admin rights')) {
+        return {
+            message: 'GitHub CLI token is missing the "codespace" scope required for SSH tunneling.',
+            action: 'gh auth refresh -h github.com -s codespace',
+            actionType: 'terminal_command'
+        };
+    }
+
+    // 3. Platform mismatch (exit 127 with command not found)
+    if (isPlatformMismatch) {
+        return {
+            message: 'Remote platform mismatch: the IDE is trying to run Windows commands on a Linux codespace (or vice versa). Check remote.SSH.remotePlatform setting.',
+            action: host ? `Check remote.SSH.remotePlatform["${host}"] — codespaces are Linux` : 'Check remote.SSH.remotePlatform setting',
+            actionType: 'check_platform'
+        };
+    }
+
+    // 4. Host key changed (MITM warning)
+    if (stderrRaw.includes('REMOTE HOST IDENTIFICATION HAS CHANGED') ||
+        stderrRaw.includes('HOST IDENTIFICATION HAS CHANGED') ||
+        stderrRaw.includes('host key verification failed')) {
+        return {
+            message: 'The remote host key has changed. This can happen when a codespace is rebuilt. The old key can be removed from the managed known_hosts file.',
+            action: host || 'the codespace host',
+            actionType: 'remove_host_key'
+        };
+    }
+
+    // 5. Tunnel died immediately (exit 255 or nonexistent pipe)
+    if (exitCode === 255 || 
+        stderrLower.includes('nonexistent pipe') ||
+        stderrLower.includes('connection closed')) {
+        return {
+            message: 'SSH tunnel terminated immediately. This usually indicates a gh CLI authentication problem or the codespace is not running.',
+            action: 'Run "Test SSH Connectivity" for details, or check gh auth status',
+            actionType: 'terminal_command'
+        };
+    }
+
+    // 6. Connection timeout
+    if (stderrLower.includes('timed out') || stderrLower.includes('connection timed out')) {
+        return {
+            message: 'Connection timed out. The codespace may be starting up or there may be network issues.',
+            action: null,
+            actionType: null
+        };
+    }
+
+    // 7. Generic connection refused
+    if (stderrLower.includes('connection refused')) {
+        return {
+            message: 'Connection refused. The codespace may not be running or SSH service is not available.',
+            action: null,
+            actionType: null
+        };
+    }
+
+    // Default: return the stderr as-is with generic guidance
+    return {
+        message: stderr ? `SSH error: ${stderr.slice(0, 300)}${stderr.length > 300 ? '...' : ''}` : 'SSH connection failed with no error details.',
+        action: null,
+        actionType: null
+    };
+}
+
 module.exports = {
     findGhExecutable,
     findAntigravityExecutable,
@@ -516,6 +810,14 @@ module.exports = {
     getGhAuthHealth,
     parseGhAuthStatusScopes,
     getSshConfigPath,
+    getManagedKnownHostsPath,
+    ensureManagedKnownHosts,
+    buildSshConfigBlock,
+    mapTunnelError,
+    removeHostFromManagedKnownHosts,
+    setConfigLogger,
     SSH_DIR,
-    SSH_CONFIG_PATH
+    SSH_CONFIG_PATH,
+    EXTENSION_DATA_DIR,
+    MANAGED_KNOWN_HOSTS_PATH
 };

@@ -8,10 +8,11 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const { escapeHtml, generateNonce, formatRelativeTime, friendlyError, runCommand } = require('../src/utils');
+const { escapeHtml, generateNonce, formatRelativeTime, friendlyError, runCommand, runCommandWithDetails } = require('../src/utils');
 const sshManager = require('../src/sshManager');
 const { GithubApi } = require('../src/githubApi');
 const { AuthManager, PAT_SECRET_KEY_PREFIX, PAT_SECRET_ACCOUNTS_KEY } = require('../src/authManager');
+const connectPreflight = require('../src/connectPreflight');
 
 let passed = 0;
 function ok(name, fn) {
@@ -260,6 +261,113 @@ function ok(name, fn) {
         assert.ok(!r.cfg.includes('cs.old-a'), 'END-less legacy block must go');
         assert.ok(r.cfg.includes('# CS_ENTRY:keep-2'), 'complete marked block must survive');
         assert.ok(r.cfg.includes('# END_CS_ENTRY:keep-2'), 'END marker must survive');
+    });
+
+    await ok('buildSshConfigBlock generates correct block with all options', () => {
+        const block = sshManager.buildSshConfigBlock({
+            codespace: 'test-cs-123',
+            hostAliases: 'cs.test-cs-123 cs-octo-app test-cs-123',
+            ghExePath: '/usr/bin/gh',
+            identityFile: '/home/user/.ssh/codespaces.auto',
+            knownHostsFile: '/home/user/.antigravity-codespaces/known_hosts',
+            strictHostKeyChecking: 'accept-new',
+            logLevel: 'ERROR',
+            serverAliveInterval: 30,
+            serverAliveCountMax: 10
+        });
+        assert.match(block, /# CS_ENTRY:test-cs-123/);
+        assert.match(block, /Host cs\.test-cs-123 cs-octo-app test-cs-123/);
+        assert.match(block, /ProxyCommand "\/usr\/bin\/gh" cs ssh -c "test-cs-123" --stdio/);
+        assert.match(block, /IdentityFile "\/home\/user\/\.ssh\/codespaces\.auto"/);
+        assert.match(block, /UserKnownHostsFile "\/home\/user\/\.antigravity-codespaces\/known_hosts"/);
+        assert.match(block, /StrictHostKeyChecking accept-new/);
+        assert.match(block, /LogLevel ERROR/);
+        assert.match(block, /# END_CS_ENTRY:test-cs-123/);
+    });
+
+    await ok('buildSshConfigBlock defaults to /dev/null when no knownHostsFile', () => {
+        const block = sshManager.buildSshConfigBlock({
+            codespace: 'test-cs',
+            hostAliases: 'cs.test-cs',
+            ghExePath: 'gh'
+        });
+        assert.match(block, /UserKnownHostsFile \/dev\/null/);
+        assert.match(block, /StrictHostKeyChecking accept-new/);
+        assert.match(block, /LogLevel ERROR/);
+    });
+
+    await ok('mapTunnelError detects gh CLI not logged in', () => {
+        const result = sshManager.mapTunnelError('To get started with GitHub CLI, please run: gh auth login', 1, 'cs.test');
+        assert.match(result.message, /not logged in/i);
+        assert.strictEqual(result.action, 'gh auth login -s codespace');
+        assert.strictEqual(result.actionType, 'terminal_command');
+    });
+
+    await ok('mapTunnelError detects missing codespace scope', () => {
+        const result = sshManager.mapTunnelError('This API operation needs the "codespace" scope', 1, 'cs.test');
+        assert.match(result.message, /codespace.*scope/i);
+        assert.match(result.action, /gh auth refresh/);
+        assert.strictEqual(result.actionType, 'terminal_command');
+    });
+
+    await ok('mapTunnelError detects host key changed', () => {
+        const result = sshManager.mapTunnelError('REMOTE HOST IDENTIFICATION HAS CHANGED', 255, 'cs.test');
+        assert.match(result.message, /host key has changed/i);
+        assert.strictEqual(result.actionType, 'remove_host_key');
+    });
+
+    await ok('mapTunnelError detects tunnel died (exit 255)', () => {
+        const result = sshManager.mapTunnelError('The process tried to write to a nonexistent pipe', 255, 'cs.test');
+        assert.match(result.message, /tunnel terminated/i);
+    });
+
+    await ok('mapTunnelError uses isPlatformMismatchError from connectPreflight', () => {
+        const result = sshManager.mapTunnelError('bash: powershell: command not found', 127, 'cs.test');
+        assert.match(result.message, /platform mismatch/i);
+        assert.strictEqual(result.actionType, 'check_platform');
+    });
+
+    await ok('removeHostFromManagedKnownHosts removes matching host', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-kh-'));
+        const khPath = path.join(tmp, 'known_hosts');
+        process.env.ANTIGRAVITY_KNOWN_HOSTS = khPath;
+        try {
+            fs.writeFileSync(khPath, 'cs.test-123 ssh-rsa AAAA...\ncs.other ssh-ed25519 BBBB...\n', 'utf8');
+            const removed = sshManager.removeHostFromManagedKnownHosts('cs.test-123');
+            assert.strictEqual(removed, true);
+            const content = fs.readFileSync(khPath, 'utf8');
+            assert.ok(!content.includes('cs.test-123'));
+            assert.ok(content.includes('cs.other'));
+        } finally {
+            delete process.env.ANTIGRAVITY_KNOWN_HOSTS;
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+
+    await ok('ensureManagedKnownHosts creates directory and file', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-kh-'));
+        const newDir = path.join(tmp, 'subdir');
+        const khPath = path.join(newDir, 'known_hosts');
+        process.env.ANTIGRAVITY_KNOWN_HOSTS = khPath;
+        try {
+            const result = sshManager.ensureManagedKnownHosts();
+            assert.strictEqual(result, khPath);
+            assert.ok(fs.existsSync(khPath));
+        } finally {
+            delete process.env.ANTIGRAVITY_KNOWN_HOSTS;
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+
+    await ok('runCommandWithDetails returns stdout, stderr and exitCode', async () => {
+        const result = await runCommandWithDetails(
+            process.execPath, 
+            ['-e', "console.log('out'); console.error('err'); process.exit(42)"],
+            8000
+        );
+        assert.strictEqual(result.stdout, 'out');
+        assert.strictEqual(result.stderr, 'err');
+        assert.strictEqual(result.exitCode, 42);
     });
 
     console.log('githubApi');

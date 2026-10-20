@@ -117,7 +117,9 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
   "antigravity-codespaces.showStatusBarItem": true,
   "antigravity-codespaces.serverAliveInterval": 30,
   "antigravity-codespaces.serverAliveCountMax": 10,
-  "antigravity-codespaces.defaultRemoteFolder": "/workspaces/${repo}"
+  "antigravity-codespaces.defaultRemoteFolder": "/workspaces/${repo}",
+  "antigravity-codespaces.strictHostKeyChecking": "accept-new",
+  "antigravity-codespaces.sshLogLevel": "error"
 }
 ```
 
@@ -128,6 +130,8 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | `serverAliveInterval` | `30` | Interval in seconds for SSH keepalive pings (prevents disconnects) |
 | `serverAliveCountMax` | `10` | Maximum missed keepalive pings before considering connection dropped |
 | `defaultRemoteFolder` | `/workspaces/${repo}` | Default folder to open on remote connection (`${repo}` or `${name}`) |
+| `strictHostKeyChecking` | `accept-new` | SSH host key verification: `accept-new` (recommended), `yes`, or `no` |
+| `sshLogLevel` | `error` | SSH logging verbosity: `quiet`, `error` (default), `info`, or `verbose` |
 
 ---
 
@@ -194,6 +198,9 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 - **Credential Security:** Personal access tokens are stored strictly in the operating system's native keychain using the VS Code `SecretStorage` API. Tokens are never written to plain text files.
 - **Atomic SSH Writes:** Host configuration writes to `~/.ssh/config` use temporary files and atomic renames, preventing corruptions even during sudden system restarts.
 - **Zero Shell Injection:** All external commands use direct argument arrays (`execFile`) without passing through shell interpreters.
+- **Host Key Verification (TOFU):** SSH connections use `StrictHostKeyChecking accept-new` by default, storing host keys in an extension-managed `~/.antigravity-codespaces/known_hosts` file. This provides trust-on-first-use security while blocking subsequent key changes (potential MITM attacks). Configure via `antigravity-codespaces.strictHostKeyChecking`.
+- **SSH Diagnostics Logging:** SSH config mutations are logged to the "Codespaces" output channel with timestamps. Use `antigravity-codespaces.sshLogLevel` to control SSH verbosity for debugging.
+- **Transparent Error Handling:** Connection failures surface actionable guidance (gh auth status, missing scopes, platform mismatches, host key changes) instead of cryptic exit codes.
 
 ---
 

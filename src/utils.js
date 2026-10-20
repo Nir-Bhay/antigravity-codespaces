@@ -176,6 +176,55 @@ function runCommand(cmd, args = [], timeoutMs = 15000, options = {}) {
 }
 
 /**
+ * Executes a CLI command with timeout, returning detailed result including stderr and exit code.
+ * Used for error mapping where stderr content is needed for diagnosis.
+ *
+ * @param {string} cmd - The command to execute
+ * @param {string[]} args - Command arguments
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @param {Object} options - Additional execFile options
+ * @returns {Promise<{stdout: string, stderr: string, exitCode: number}>}
+ */
+function runCommandWithDetails(cmd, args = [], timeoutMs = 15000, options = {}) {
+    return new Promise((resolve, reject) => {
+        const spawnOpts = { windowsHide: true, ...options };
+        let child;
+        try {
+            child = execFile(cmd, args, { ...spawnOpts, timeout: timeoutMs }, (err, stdout, stderr) => {
+                const exitCode = err ? (err.code || 1) : 0;
+                if (!err) {
+                    return resolve({
+                        stdout: (stdout || '').trim(),
+                        stderr: (stderr || '').trim(),
+                        exitCode: 0
+                    });
+                }
+                const killed = err.killed || err.signal === 'SIGTERM';
+                const timedOut = killed || /timed out|ETIMEDOUT/i.test(err.message || '');
+                if (timedOut) {
+                    return reject(new Error(`Timed out (${timeoutMs / 1000}s): ${cmd} ${(args || []).join(' ')}`));
+                }
+                resolve({
+                    stdout: (stdout || '').trim(),
+                    stderr: (stderr || '').trim(),
+                    exitCode: typeof exitCode === 'number' ? exitCode : 1
+                });
+            });
+        } catch (spawnErr) {
+            reject(spawnErr);
+            return;
+        }
+        const guard = setTimeout(() => {
+            try { if (child && !child.killed && child.exitCode === null) child.kill('SIGTERM'); } catch {}
+        }, timeoutMs + 2000);
+        if (guard.unref) guard.unref();
+        const clear = () => clearTimeout(guard);
+        child.on('exit', clear);
+        child.on('error', clear);
+    });
+}
+
+/**
  * Shared SVG icons for sidebar and dashboard webviews.
  */
 const I = {
@@ -289,5 +338,6 @@ module.exports = {
     friendlyTunnelError,
     sniffTunnelStderr,
     runCommand,
+    runCommandWithDetails,
     I
 };
