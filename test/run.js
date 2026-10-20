@@ -55,6 +55,20 @@ function ok(name, fn) {
         assert.match(friendlyError('This API operation needs the "codespace" scope'), /codespace.*permission/i);
         assert.match(friendlyError('Flag shorthand -r has been deprecated\nerror getting machine type: no terminal'), /machine/i);
     });
+    await ok('sniffTunnelStderr maps gh-auth, scope, platform and pipe signatures', () => {
+        const { sniffTunnelStderr, friendlyTunnelError } = require('../src/utils');
+        assert.match(sniffTunnelStderr('To get started with GitHub CLI, please run: gh auth login'), /signed out/);
+        assert.match(sniffTunnelStderr('HTTP 403: Must have admin rights to Repository.\nThis API operation needs the "codespace" scope.'), /gh auth refresh -h github\.com -s codespace/);
+        assert.match(sniffTunnelStderr('bash: line 1: powershell: command not found'), /remote\.SSH\.remotePlatform/i);
+        assert.match(sniffTunnelStderr('The process tried to write to a nonexistent pipe.'), /Test SSH Connectivity/);
+        assert.strictEqual(sniffTunnelStderr(' totally unrelated error '), null);
+        // friendlyTunnelError prefers sniffed stderr; falls back to friendlyError
+        const err = new Error('SSH process exited (code 255)');
+        err.stderr = 'This API operation needs the "codespace" scope.';
+        assert.match(friendlyTunnelError(err), /gh auth refresh -h github\.com -s codespace/);
+        assert.match(friendlyTunnelError(new Error('HTTP 404: Not Found')), /Only the owner can open/i);
+        assert.match(friendlyTunnelError(null), /Unknown error/i);
+    });
     await ok('listCodespaces failure paths stay guided and safe from ReferenceError', async () => {
         // Pure aggregate builder with scope guidance
         const scopeErr = GithubApi.buildListError('abhay', null, new Error('needs the "codespace" scope'));
@@ -103,6 +117,63 @@ function ok(name, fn) {
     });
 
     console.log('sshManager');
+    await ok('getGhAuthHealth detects missing gh (deps-injected)', async () => {
+        const health = await sshManager.getGhAuthHealth({ findGhExecutable: () => null });
+        assert.strictEqual(health.state, 'missing');
+        const threw = await sshManager.getGhAuthHealth({ findGhExecutable: () => { throw new Error('nope'); } });
+        assert.strictEqual(threw.state, 'missing');
+    });
+    await ok('getGhAuthHealth detects logged-out CLI from probe stderr', async () => {
+        const health = await sshManager.getGhAuthHealth({
+            findGhExecutable: () => 'gh.exe',
+            runCommand: async () => { throw new Error('To get started with GitHub CLI, please run: gh auth login -s codespace'); }
+        });
+        assert.strictEqual(health.state, 'logged_out');
+    });
+    await ok('getGhAuthHealth fails open (unknown) on opaque probe errors', async () => {
+        const health = await sshManager.getGhAuthHealth({
+            findGhExecutable: () => 'gh.exe',
+            runCommand: async () => { throw new Error('getaddrinfo EAI_AGAIN api.github.com'); }
+        });
+        assert.strictEqual(health.state, 'unknown');
+    });
+    await ok('getGhAuthHealth detects missing codespace scope for active user', async () => {
+        const ghAuthStatus = [
+            'github.com',
+            '  ✓ Logged in to github.com account other (keyring)',
+            '  - Token scopes: \x27gist\x27, \x27repo\x27, \x27workflow\x27',
+            '',
+            'github.com',
+            '  ✓ Logged in to github.com account manjhss (keyring)',
+            '  - Active account: true',
+            '  - Token scopes: \x27gist\x27, \x27read:org\x27, \x27repo\x27, \x27workflow\x27'
+        ].join('\n');
+        let call = 0;
+        const health = await sshManager.getGhAuthHealth({
+            findGhExecutable: () => 'gh.exe',
+            runCommand: async (cmd, args) => {
+                if (args[0] === 'api') { assert.strictEqual(++call, 1); return 'manjhss'; }
+                if (args[0] === 'auth') { return ghAuthStatus; }
+                throw new Error('unexpected args ' + JSON.stringify(args));
+            }
+        });
+        assert.strictEqual(health.state, 'scope_missing');
+        assert.strictEqual(health.user, 'manjhss');
+    });
+    await ok('getGhAuthHealth returns ok when codespace scope present', async () => {
+        const ghAuthStatus = [
+            'github.com',
+            '  ✓ Logged in to github.com account manjhss (keyring)',
+            '  - Active account: true',
+            '  - Token scopes: \x27codespace\x27, \x27gist\x27, \x27repo\x27'
+        ].join('\n');
+        const health = await sshManager.getGhAuthHealth({
+            findGhExecutable: () => 'gh.exe',
+            runCommand: async (cmd, args) => (args[0] === 'api' ? 'manjhss' : ghAuthStatus)
+        });
+        assert.strictEqual(health.state, 'ok');
+        assert.strictEqual(health.user, 'manjhss');
+    });
     await ok('sanitizeCsName accepts normal names', () => {
         assert.strictEqual(sshManager.sanitizeCsName('musical-xylophone-abc123'), 'musical-xylophone-abc123');
     });

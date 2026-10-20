@@ -362,6 +362,31 @@ async function testSshTunnel(csName, token) {
 }
 
 /**
+ * SSH tunnel probe that returns the proxy tunnel's captured stderr on failure,
+ * so callers can sniff exact causes (gh auth problems, platform mismatch) and
+ * show actionable guidance instead of a bare "exit 255 / nonexistent pipe".
+ *
+ * Resolve shape: { latencyMs }
+ * Reject shape:  Error with .stderr (raw tunnel stderr, may be empty).
+ */
+async function probeSshTunnelVerbose(csName, token) {
+    const safeName = sanitizeCsName(csName);
+    const ghExe = findGhExecutable();
+    const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
+    const start = Date.now();
+    try {
+        await runCommand(ghExe, ['cs', 'ssh', '-c', safeName, '--', 'echo', 'ping_ok'], 20000, envOpts);
+        return { latencyMs: Date.now() - start };
+    } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        // runCommand already embeds stderr at the front of its error message
+        // (detail = stderr || stdout || err.message); expose it separately for sniffing.
+        e.stderr = String((err && err.message) || '');
+        throw e;
+    }
+}
+
+/**
  * Returns the GitHub CLI's currently active username (`gh api user --jq .login`,
  * clean JSON — no fragile `auth status` parsing). Null when gh is missing or
  * the check fails; callers must fail open (never block on this).
@@ -377,15 +402,90 @@ async function getGhActiveUser() {
     }
 }
 
+/**
+ * Checks the gh CLI's auth health in one round-trip.
+ *
+ * `gh cs ssh` authenticates with the CLI's OWN keyring token, which is fully
+ * separate from the extension's OAuth/PAT session. When the CLI is logged out
+ * or its token lacks the `codespace` scope, the tunnel dies instantly with an
+ * opaque exit 255 ("The process tried to write to a nonexistent pipe") that
+ * gives the user no actionable guidance (see issues #3/#4). This probe lets
+ * the Connect preflight detect those states BEFORE launching SSH.
+ *
+ * Returns one of:
+ *   { state: 'missing' }                 – gh CLI not found on PATH
+ *   { state: 'logged_out' }              – no authenticated accounts
+ *   { state: 'scope_missing' }           – logged in, but token lacks `codespace`
+ *   { state: 'ok', user }                – healthy, active login returned
+ *   { state: 'unknown' }                 – probe failed unexpectedly; fail open
+ */
+async function getGhAuthHealth(deps = {}) {
+    const findGh = deps.findGhExecutable || findGhExecutable;
+    const run = deps.runCommand || runCommand;
+    let ghExe;
+    try {
+        ghExe = findGh();
+    } catch {
+        return { state: 'missing' };
+    }
+    if (!ghExe) return { state: 'missing' };
+
+    // Sanity probe: a logged-out CLI fails here with a unmistakable message.
+    let loggedInUser = null;
+    let probeStderr = '';
+    try {
+        const raw = await run(ghExe, ['api', 'user', '--jq', '.login'], 8000);
+        loggedInUser = (raw || '').split(/\s+/)[0].trim() || null;
+    } catch (err) {
+        probeStderr = (err && err.message) || '';
+        if (/not logged into any GitHub hosts|gh auth login/i.test(probeStderr)) {
+            return { state: 'logged_out' };
+        }
+        // gh missing/unreachable surfaces as command-not-found/ENOENT from runCommand
+        if (/not recognized|ENOENT|command not found/i.test(probeStderr)) {
+            return { state: 'missing' };
+        }
+        // Anything else (network flap, etc.) → fail open.
+        return { state: 'unknown' };
+    }
+
+    if (!loggedInUser) return { state: 'unknown' };
+
+    // Scope check: `gh auth status` prints scopes per account. It succeeds even
+    // when another account is active, so anchor it to the active login.
+    // NOTE: gh auth status exits 0 and prints to stdout when healthy; scopes
+    // appear as `Token scopes: 'a', 'b', ...`. Parse permissively (case- and
+    // quote-insensitive) so future gh verbosity changes don't break detection.
+    let scopes = '';
+    try {
+        const status = await run(ghExe, ['auth', 'status'], 8000);
+        scopes = String(status || '');
+    } catch (err) {
+        // gh auth status can exit non-zero yet still print account info on stdout;
+        // stderr from runCommand errors carries the same text, so mine it too.
+        scopes = String((err && err.message) || '');
+    }
+    const anchorIdx = scopes.toLowerCase().lastIndexOf(loggedInUser.toLowerCase());
+    const windowText = anchorIdx >= 0 ? scopes.slice(anchorIdx) : scopes;
+    const scopeMatch = windowText.match(/Token scopes:\s*(.+)$/im);
+    const scopeList = scopeMatch ? scopeMatch[1] : '';
+    if (!/\bcodespace\b/i.test(scopeList)) {
+        return { state: 'scope_missing', user: loggedInUser };
+    }
+    return { state: 'ok', user: loggedInUser };
+}
+
 module.exports = {
     findGhExecutable,
     findAntigravityExecutable,
     ensureSSHConfigEntry,
     testSshTunnel,
+    probeSshTunnelVerbose,
     sanitizeCsName,
     purgeLegacyBlocks,
     cleanSshConfigFile,
     getGhActiveUser,
+    getGhAuthHealth,
     getSshConfigPath,
     SSH_DIR,
     SSH_CONFIG_PATH

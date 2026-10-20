@@ -44,6 +44,43 @@ function formatRelativeTime(dateStr) {
 }
 
 /**
+ * Detects gh-CLI auth/transport failure signatures inside raw SSH tunnel
+ * stderr and returns a short actionable message (or null when nothing known
+ * matched). Called on tunnel probe failures so users get the fix command
+ * directly instead of a bare "exit 255 / nonexistent pipe" (issues #3/#4).
+ */
+function sniffTunnelStderr(stderr) {
+    const raw = String(stderr || '');
+    if (!raw) return null;
+    if (/not logged into any GitHub hosts|gh auth login/i.test(raw)) {
+        return 'GitHub CLI is signed out — SSH tunnels authenticate with the gh CLI, separate from this extension\'s sign-in. Run "gh auth login -s codespace" in the terminal, then retry.';
+    }
+    if (/needs the "codespace" scope|Must have admin rights to Repository|lack the "codespace"/i.test(raw)) {
+        return 'The gh CLI token is missing the "codespace" scope. Run "gh auth refresh -h github.com -s codespace" in the terminal, then retry.';
+    }
+    if (/command not found.*powershell|powershell.*command not found/i.test(raw)) {
+        return 'Remote platform mismatch: the Codespace is Linux but Remote-SSH was told "windows". Remove the "remote.SSH.remotePlatform" entry for this host from settings (or set it to "linux"), then reconnect.';
+    }
+    if (/nonexistent pipe/i.test(raw)) {
+        return 'The SSH tunnel terminated immediately (exit 255). This is almost always a gh CLI auth problem — run "Test SSH Connectivity" for the exact cause.';
+    }
+    return null;
+}
+
+/**
+ * Wraps friendlyError(node) with tunnel-stderr sniffing: if the error carries
+ * a .stderr payload (see probeSshTunnelVerbose), check it first for known
+ * transport signatures, then fall back to the standard mapping.
+ */
+function friendlyTunnelError(err) {
+    if (err && err.stderr) {
+        const sniffed = sniffTunnelStderr(err.stderr);
+        if (sniffed) return sniffed;
+    }
+    return friendlyError(err);
+}
+
+/**
  * Translates low-level network or CLI error messages into actionable, user-friendly guidance.
  */
 function friendlyError(err) {
@@ -249,6 +286,8 @@ module.exports = {
     generateNonce,
     formatRelativeTime,
     friendlyError,
+    friendlyTunnelError,
+    sniffTunnelStderr,
     runCommand,
     I
 };
