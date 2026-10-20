@@ -24,6 +24,7 @@ const { ensureLinuxRemotePlatform, isPlatformMismatchError, switchFallbackComman
 const { SidebarProvider } = require('./src/sidebarProvider');
 const { DashboardProvider } = require('./src/dashboardProvider');
 const { StatusBarManager } = require('./src/statusBar');
+const { SetupDoctorProvider } = require('./src/setupDoctorProvider');
 
 // Concurrency tracker for active connections (fixes BUG-13)
 const connectingSet = new Set();
@@ -50,6 +51,7 @@ async function activate(context) {
     const statusBar = new StatusBarManager(context, authManager, githubApi);
     const sidebarProvider = new SidebarProvider(context.extensionUri, authManager, githubApi);
     const dashboardProvider = new DashboardProvider(context, authManager, githubApi);
+    const setupDoctorProvider = new SetupDoctorProvider(context, authManager);
 
     /**
      * Guided error toast: logs full context to the output channel and offers
@@ -910,6 +912,13 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.loginGitHub', async () => {
             await authManager.login();
+        })
+    );
+
+    // ── Command: Setup Doctor (Issue #4 §A) ───────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('antigravity-codespaces.setupDoctor', async () => {
+            await setupDoctorProvider.openOrReveal();
         })
     );
 

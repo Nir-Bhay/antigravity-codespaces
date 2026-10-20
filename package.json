@@ -227,6 +227,11 @@
         "command": "antigravity-codespaces.loginGitHub",
         "title": "Login to GitHub Account",
         "icon": "$(key)"
+      },
+      {
+        "command": "antigravity-codespaces.setupDoctor",
+        "title": "Codespaces: Setup Doctor",
+        "icon": "$(checklist)"
       }
     ],
     "keybindings": [
