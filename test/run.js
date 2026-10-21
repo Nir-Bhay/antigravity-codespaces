@@ -791,9 +791,9 @@ function ok(name, fn) {
         assert.strictEqual(s.avgPerDay, 10);
         assert.strictEqual(s.daysLeftLabel, 'about 2 days left');
         const slow = us.computeStats({ quota: 120, used: 3, daily: daysOf(5, 0.5), now: NOW, reset: RESET });
-        assert.strictEqual(slow.daysLeftLabel, 'lasts the full cycle');
+        assert.strictEqual(slow.daysLeftLabel, "won't run out before reset");
         const zero = us.computeStats({ quota: 120, used: 0, daily: daysOf(5, 0), now: NOW, reset: RESET });
-        assert.strictEqual(zero.daysLeftLabel, 'lasts the full cycle');
+        assert.strictEqual(zero.daysLeftLabel, "won't run out before reset");
         const q0 = us.computeStats({ quota: 0, used: 0, now: NOW, reset: RESET });
         assert.ok(Number.isFinite(q0.pct));
     });
@@ -1023,7 +1023,7 @@ function ok(name, fn) {
         const src = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
         assert.ok(src.includes('railUsageBtn'));
         assert.ok(src.includes('hubUsageCardHtml(this._usage'));
-        assert.ok(src.includes('hubUsagePageHtml(this._usage)'));
+        assert.ok(src.includes('hubUsagePageHtml(this._usage, this._usageOpts)'));
         assert.ok(!fs.existsSync(path.join(ROOT, 'src', 'usageDashboard.js')));
     });
     await ok('usage service never logs tokens', () => {
@@ -1038,6 +1038,166 @@ function ok(name, fn) {
         assert.ok(props['antigravity-codespaces.usage.monthlyStorageGb']);
         assert.ok(pkg.contributes.commands.some(c => c.command === 'antigravity-codespaces.refreshUsage'));
         assert.ok(!pkg.contributes.commands.some(c => c.command === 'antigravity-codespaces.usageDashboard'));
+    });
+
+    // ── Usage analytics v2 (deeper detail; all from billing data or arithmetic on it) ──
+    console.log('usage analytics v2');
+    const FX = (n) => JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', n), 'utf8'));
+    const OCT_SUM = FX('billing-usage-summary.json'), OCT_DAY = FX('billing-usage-daily.json');
+    const SEP_SUM = FX('billing-usage-summary-2026-09.json'), SEP_DAY = FX('billing-usage-daily-2026-09.json');
+    const FX_NOW2 = Date.UTC(2026, 9, 21, 12);
+    function fxService(extra = {}) {
+        const calls = [];
+        const pick = (url) => /month=9\b/.test(url);
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => FX_NOW2, ...extra, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('octocat', 'pro'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, (url) => fakeResp(200, pick(url) ? SEP_SUM : /month=8\b/.test(url) ? { usageItems: [] } : OCT_SUM)],
+            [/settings\/billing\/usage\?/, (url) => fakeResp(200, pick(url) ? SEP_DAY : OCT_DAY)]
+        ], calls) });
+        return { svc, calls };
+    }
+    await ok('computeStats: avg uses days elapsed in the cycle (bug fix), not days since first usage', () => {
+        const start = Date.UTC(2026, 9, 1), reset = Date.UTC(2026, 10, 1);
+        const daily = { '2026-10-01': 20, '2026-10-02': 20 };
+        const s = us.computeStats({ quota: 120, used: 40, daily, now: Date.UTC(2026, 9, 10, 12), reset, cycleStart: start });
+        assert.strictEqual(s.avgPerDay, 0, 'no usage in the last 7 days');
+        assert.strictEqual(s.daysLeftLabel, "won't run out before reset");
+        const early = us.computeStats({ quota: 120, used: 40, daily, now: Date.UTC(2026, 9, 2, 12), reset, cycleStart: start });
+        assert.strictEqual(early.daysLeftLabel, 'not enough data');
+        const mid = us.computeStats({ quota: 120, used: 40, daily: { '2026-10-09': 7, '2026-10-10': 7 }, now: Date.UTC(2026, 9, 10, 12), reset, cycleStart: start });
+        assert.strictEqual(mid.avgPerDay, 2, '14 core-hrs over 7 days');
+        assert.strictEqual(mid.avgWindowDays, 7);
+    });
+    await ok('buildAnalytics: projection, run-out date, hours left per machine size, peak/active/today', () => {
+        const start = new Date(Date.UTC(2026, 9, 1)), reset = new Date(Date.UTC(2026, 10, 1));
+        const now = new Date(Date.UTC(2026, 9, 21, 0));
+        const daily = {}; for (let i = 15; i <= 21; i++) daily[`2026-10-${i}`] = 10;
+        const stats = us.computeStats({ quota: 120, used: 100, daily, now, reset, cycleStart: start });
+        const a = us.buildAnalytics({ stats, quota: 120, daily, dailyAmount: { '2026-10-18': 1.8 }, cycleStart: start, reset, now, isCurrent: true });
+        assert.strictEqual(a.projectionLabel, 'runs out');
+        assert.strictEqual(a.runOutDate, new Date(now.getTime() + 2 * 86400000).toISOString());
+        assert.strictEqual(a.projectedEnd, 210);
+        assert.deepStrictEqual(a.remainingByMachine.map(m => m.hours), [10, 5, 2.5, 1.3, 0.6]);
+        assert.strictEqual(a.activeDays, 7);
+        assert.strictEqual(a.totalDays, 31);
+        assert.strictEqual(a.today.value, 10);
+        assert.strictEqual(a.series.filter(p => !p.future).pop().cumulative, 70);
+        assert.ok(Math.abs(a.series[30].pace - 120) < 1e-9);
+        const ok2 = us.buildAnalytics({ stats: us.computeStats({ quota: 120, used: 30, daily: { '2026-10-20': 1 }, now, reset, cycleStart: start }), quota: 120, daily: {}, cycleStart: start, reset, now });
+        assert.strictEqual(ok2.projectionLabel, "won't run out before reset");
+        assert.strictEqual(ok2.runOutDate, null);
+        const closed = us.buildAnalytics({ stats, quota: 120, daily, cycleStart: start, reset, now, isCurrent: false });
+        assert.strictEqual(closed.projectionLabel, 'Closed month');
+        assert.strictEqual(closed.today, null);
+    });
+    await ok('parseDaily (fixture): per-repo SKU breakdown, daily maps, storage per day, export rows', () => {
+        const d = us.parseDaily(OCT_DAY, '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z');
+        const a = d.repos.find(r => r.repo === 'repo-a');
+        assert.ok(a.skus.some(k => k.kind === 'compute' && k.cores === 2));
+        assert.ok(a.skus.some(k => k.kind === 'storage'));
+        const skuSum = a.skus.reduce((t, k) => t + k.amount, 0);
+        assert.ok(Math.abs(skuSum - a.amount) < 1e-9);
+        assert.ok(Math.abs(Object.values(a.daily).reduce((t, v) => t + v, 0) - a.coreHours) < 1e-9);
+        const st = Object.values(d.dailyStorage).reduce((t, v) => t + v, 0);
+        assert.ok(Math.abs(st - d.repos.reduce((t, r) => t + r.storageGbMonths, 0)) < 1e-9);
+        assert.strictEqual(d.rows.length, OCT_DAY.usageItems.length);
+        const outside = us.parseDaily(OCT_DAY, '2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z');
+        assert.strictEqual(outside.rows.length, 0, 'rows outside the period are dropped');
+    });
+    await ok('service (fixtures): current month analytics + month-over-month vs previous month', async () => {
+        const { svc } = fxService();
+        const u = await svc.getAccountUsage('octocat');
+        assert.strictEqual(u.mode, 'live');
+        assert.strictEqual(u.isCurrent, true);
+        assert.deepStrictEqual(u.period, { year: 2026, month: 10 });
+        assert.ok(u.analytics && u.analytics.series.length === 31);
+        assert.ok(u.mom, 'previous month compared');
+        assert.ok(Math.abs(u.mom.coreHours.previous - 118.06) < 0.02, String(u.mom.coreHours.previous));
+        assert.ok(Math.abs(u.mom.consumed.previous - 11.70) < 0.02, String(u.mom.consumed.previous));
+        assert.ok(u.mom.coreHours.delta < 0);
+        assert.strictEqual(u.months.length, 6);
+        assert.ok(u.months[0].current && u.months[0].month === 10);
+        assert.strictEqual(u.analytics.remainingByMachine[0].hours, Math.round(((180 - u.stats.used) / 2) * 10) / 10);
+    });
+    await ok('service (fixtures): previous month via period is a closed month with its own numbers and cache entry', async () => {
+        const { svc, calls } = fxService();
+        const sep = await svc.getAccountUsage('octocat', { year: 2026, month: 9 });
+        assert.strictEqual(sep.isCurrent, false);
+        assert.strictEqual(sep.analytics.projectionLabel, 'Closed month');
+        assert.ok(Math.abs(sep.compute.used - 118.1) < 0.05, String(sep.compute.used));
+        assert.ok(Math.abs(sep.storage.used - 15.48) < 0.01);
+        assert.strictEqual(sep.resetDate, '2026-10-01T00:00:00.000Z');
+        assert.ok(calls.some(c => /month=9\b/.test(c.url)));
+        const oct = await svc.getAccountUsage('octocat');
+        assert.notStrictEqual(oct.compute.used, sep.compute.used, 'separate cache entries per month');
+        await assert.rejects(() => svc.getAccountUsage('octocat', { year: 2026, month: 12 }), /Future/);
+    });
+    await ok('toCsv / toJson export the API rows (quoted, no tokens)', async () => {
+        const { svc } = fxService();
+        const u = await svc.getAccountUsage('octocat');
+        const csv = us.toCsv(u);
+        const lines = csv.trim().split('\r\n');
+        assert.strictEqual(lines[0], 'date,repository,sku,unit_type,quantity,core_hours,gb_months,gross_amount_usd,discount_amount_usd,net_amount_usd');
+        assert.strictEqual(lines.length, OCT_DAY.usageItems.length + 1);
+        assert.strictEqual(us.toCsv({ rows: [{ date: 'd', repository: 'a,"b"', sku: 's', unitType: 'u', quantity: 1, coreHours: null, gbMonths: 1, grossAmount: 0, discountAmount: 0, netAmount: 0 }] }).split('\r\n')[1].split(',')[1], '"a');
+        const j = JSON.parse(us.toJson(u));
+        assert.strictEqual(j.account, 'octocat');
+        assert.strictEqual(j.rows.length, OCT_DAY.usageItems.length);
+        assert.ok(!/Bearer|token/i.test(us.toJson(u)));
+        assert.ok(Math.abs(j.repositories.reduce((t, r) => t + r.amount, 0) - 7.42) < 0.02);
+    });
+    await ok('pendingAlerts: configurable thresholds, once per month/quota, not for closed months', () => {
+        const u = { mode: 'live', isCurrent: true, login: 'octocat', period: { year: 2026, month: 10 }, compute: { used: 140, quota: 180 }, storage: { used: 19, quota: 20 } };
+        const a = us.pendingAlerts(u, [75, 90], {});
+        assert.deepStrictEqual(a.map(x => x.kind + x.threshold), ['compute75', 'storage75', 'storage90']);
+        const shown = Object.fromEntries(a.map(x => [x.key, 1]));
+        assert.strictEqual(us.pendingAlerts(u, [75, 90], shown).length, 0);
+        assert.strictEqual(us.pendingAlerts(u, [50], {}).length, 2);
+        assert.strictEqual(us.pendingAlerts({ ...u, isCurrent: false }, [75], {}).length, 0);
+        assert.strictEqual(us.pendingAlerts(u, [], {}).length, 0);
+    });
+    await ok('monthOptions wraps across years', () => {
+        const m = us.monthOptions(new Date(Date.UTC(2026, 1, 10)), 4);
+        assert.deepStrictEqual(m.map(x => `${x.year}-${x.month}`), ['2026-2', '2026-1', '2025-12', '2025-11']);
+    });
+    await ok('Usage page v2: projection, machine sizes, charts with tooltips, MoM, filter/expand, export, links, storage tip', async () => {
+        const { svc } = fxService();
+        const u = await svc.getAccountUsage('octocat');
+        const page = uv.hubUsagePageHtml(u);
+        assert.ok(!/Full cycle/.test(page));
+        assert.match(page, /At this pace: ~[\d.]+ core-hrs by reset/);
+        assert.match(page, /2-core<\/span><b>[\d.]+ h<\/b>/);
+        assert.match(page, /4-core machine uses your quota 2× as fast/);
+        assert.match(page, /<title>Oct \d+: [\d.]+ core-hrs · \$[\d.]+<\/title>/);
+        assert.match(page, /Cumulative vs pace/);
+        assert.match(page, /Storage · GB-month per day/);
+        assert.match(page, /Compared with September 2026/);
+        assert.match(page, /id="usageRepoFilter"/);
+        assert.match(page, /class="usage-expand" aria-expanded="false"/);
+        assert.match(page, /data-usage-export="csv"/);
+        assert.match(page, /data-usage-export="json"/);
+        assert.match(page, /data-usage-url="https:\/\/github\.com\/settings\/billing"/);
+        assert.match(page, /data-usage-url="https:\/\/github\.com\/settings\/codespaces"/);
+        assert.match(page, /Most storage this month: <b>repo-a<\/b>/);
+        assert.match(page, /including stopped ones/);
+        assert.match(page, /id="usageMonth"/);
+        assert.match(page, /usage-derived/);
+        assert.match(page, /AVG \/ DAY.*?<span class="kpi-value">\d+\.\d<\/span>/s, 'avg/day with one decimal');
+        assert.ok(!/<button[^>]*>[^<]*delete/i.test(page), 'no delete action');
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /At this pace/);
+        const dollars = uv.hubUsageCardHtml(u, '', { preferredUnit: 'dollars' });
+        assert.match(dollars, /<b>\$6\.88<\/b> \/ \$16\.20 <small>\(76\.5 \/ 180 core-hrs\)/);
+        assert.strictEqual(uv.sidebarSummaryHtml(u, 'n', { show: false }), '');
+        assert.match(uv.sidebarSummaryHtml(u, 'n', { preferredUnit: 'dollars' }), /\$6\.88 \/ \$16\.20 compute/);
+    });
+    await ok('package.json contributes v2 usage settings', () => {
+        const props = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).contributes.configuration.properties;
+        assert.deepStrictEqual(props['antigravity-codespaces.usage.alertThresholds'].default, [75, 90]);
+        assert.strictEqual(props['antigravity-codespaces.usage.refreshMinutes'].minimum, 5);
+        assert.strictEqual(props['antigravity-codespaces.usage.showSidebarLine'].default, true);
+        assert.deepStrictEqual(props['antigravity-codespaces.usage.preferredUnit'].enum, ['core-hours', 'dollars']);
     });
 
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
