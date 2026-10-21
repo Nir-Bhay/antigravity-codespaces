@@ -20,6 +20,20 @@
 
 ---
 
+## What's new in 5.1.0
+
+**5.1.0** is the first-run and connect release. SSH into a Codespace still goes through the GitHub CLI, and the extension now checks that path before it opens a window.
+
+- **First-run prerequisites.** Install the `gh` CLI, sign in with `gh auth login`, grant the Codespaces permission with `gh auth refresh -h github.com -s codespace`, and install a Remote-SSH extension.
+- **Connect pre-checks.** **Connect**, **Quick Connect to Codespace...**, and **Test SSH Connectivity** stop on four `gh` states — CLI missing, signed out, missing `codespace` scope, wrong account — and offer a one-click fix.
+- **Codespaces: Setup Doctor.** One panel checks the CLI, OpenSSH, Remote-SSH, the `codespace` scope, the active account, and `remote.SSH.remotePlatform`. **Copy Diagnostic Report** redacts tokens before they reach the clipboard.
+- **Sidebar `gh` status and welcome card.** The Codespaces view shows live `gh` status with a Fix action, and a three-step Get Started card until the CLI is ready.
+- **Connect progress and the real folder.** A four-step notification covers the CLI check, SSH config, container wake, and open. The window opens the Codespace's recent folder when GitHub reports one.
+- **Connect Now and Reconnect to Last Codespace.** After **Create New Codespace**, choose **Connect Now**. Later, run **Reconnect to Last Codespace**.
+- **Host keys and SSH logs.** Generated blocks use `StrictHostKeyChecking accept-new`, an extension-managed `~/.antigravity-codespaces/known_hosts` file, and `LogLevel ERROR`. Change them with `antigravity-codespaces.strictHostKeyChecking` (default `accept-new`) and `antigravity-codespaces.sshLogLevel` (default `error`).
+
+---
+
 ## Why Developers Use This Extension
 
 If you code in **Cursor IDE**, **Google Antigravity IDE**, **Windsurf**, or **VSCodium**, you already know the problem: **Microsoft's official GitHub Codespaces extension is closed-source and restricted only to official Microsoft VS Code.** It is completely absent from the Open VSX Registry.
@@ -91,19 +105,91 @@ Inspect forwarded web ports (3000, 5173, 8080, etc.) on running containers direc
 2. Hit **Install**.
 3. Or install manually via CLI:
    ```bash
-   antigravity-ide --install-extension antigravity-codespaces-5.0.7.vsix
+   antigravity-ide --install-extension antigravity-codespaces-5.1.0.vsix
    ```
 
-### Prerequisites
-1. **GitHub CLI (`gh`)** — Used for secure SSH proxying:
+### First-run prerequisites
+
+SSH tunnels use the GitHub CLI. The extension's own sign-in (OAuth or a PAT) powers the dashboard and is not enough on its own. On a new machine, finish these four steps, or open **Codespaces: Setup Doctor** and use the Fix button on any row that fails.
+
+1. **GitHub CLI (`gh`) installed** — Used for secure SSH proxying:
    - **Windows:** `winget install --id GitHub.cli`
    - **macOS:** `brew install gh`
    - **Linux:** `sudo apt install gh`
-2. Authenticate your account:
+2. **Signed in to GitHub CLI:**
    ```bash
-   gh auth login -s codespace
+   gh auth login
    ```
-   *(Or click "Sign In with GitHub" inside the extension dashboard).*
+   The in-editor **Run gh auth login** action sends `gh auth login -s codespace`, so the first login asks for the Codespaces scope. You can also use **Login to GitHub Account** for the extension session that fills the sidebar.
+3. **`codespace` scope on the CLI token.** If `gh` is already signed in and Connect reports a missing scope, refresh that token:
+   ```bash
+   gh auth refresh -h github.com -s codespace
+   ```
+4. **Remote-SSH extension.** Connect opens the Codespace with Remote-SSH (Cursor's Anysphere Remote SSH, Open Remote - SSH, or the VS Code Remote - SSH extension). Setup Doctor searches for one and can open the Extensions view when it is missing.
+
+---
+
+## Connect, Setup Doctor, and the Sidebar
+
+### Connect pre-checks
+
+Before **Connect**, **Quick Connect to Codespace...**, or **Test SSH Connectivity** starts an SSH tunnel, the extension reads `gh auth status`. Each of the four failure states has a one-click fix and a **Connect Anyway** action that continues. Dismissing the signed-out, missing-scope, or wrong-account warning stops the connection.
+
+| `gh` state | What you see | One-click fix |
+|---|---|---|
+| CLI missing | GitHub CLI is not installed | **Install Instructions** — `winget` on Windows, Homebrew on macOS, or [cli.github.com](https://cli.github.com) |
+| Signed out | GitHub CLI is signed out (separate from the extension sign-in) | **Run gh auth login** — opens a terminal with `gh auth login -s codespace` |
+| Missing `codespace` scope | Signed in, but SSH would fail with HTTP 403 | **Fix scope now** — opens a terminal with `gh auth refresh -h github.com -s codespace` |
+| Wrong account | `gh` user is not the Codespace owner | **Switch gh CLI & Retry** — `gh auth switch --hostname github.com --user <account>`. If that account is not logged into the CLI, the terminal falls back to `gh auth login -h github.com -s codespace` |
+
+The same four states appear on the sidebar `gh` status row, each with a **Fix** button.
+
+### Codespaces: Setup Doctor
+
+Run **Codespaces: Setup Doctor** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`). The panel checks:
+
+- GitHub CLI installed, signed in, and granted the `codespace` scope
+- `gh` account matches the extension account
+- OpenSSH client on `PATH`
+- A Remote-SSH extension is installed
+- `remote.SSH.remotePlatform` is not `windows` on Codespace hosts
+- `~/.ssh/config` has no duplicate Codespace host blocks (**Run Sync SSH** calls **Sync SSH Config**)
+
+Failed rows expose the same terminal or Extensions fix as Connect. **Re-run Checks** refreshes the panel.
+
+**Copy Diagnostic Report** copies a shareable report to the clipboard: OS, IDE, extension and `gh` versions, redacted `gh auth status`, the `gh` path, Codespace SSH blocks, the last Doctor results, and the last tunnel error. Tokens are stripped before copy: `gho_`, `ghp_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `Bearer` values, and `token:` fields become `[REDACTED]`. Paste that report when you file an issue.
+
+### Sidebar `gh` status and welcome card
+
+The Codespaces sidebar keeps a `gh` status line under the header:
+
+- `gh CLI: @user` when the CLI is signed in with the `codespace` scope
+- `gh CLI not installed`, `gh signed out`, `gh needs codespace permission`, or `gh: @user (mismatch)` otherwise, with **Fix**
+
+With no extension account, the view is a welcome card: **Sign In with GitHub**, **Use Personal Access Token (PAT)**, and a system checklist for the GitHub CLI, OpenSSH, and Remote-SSH. After you sign in, a **Get Started** card tracks three steps — sign in to GitHub, set up the GitHub CLI, connect to a Codespace — until `gh` is healthy or you dismiss the card. Dismissal is remembered for this editor profile.
+
+### Connect progress and the real Codespace folder
+
+**Connect** shows a notification with the Codespace name and four steps:
+
+1. **Checking gh CLI** — the pre-checks above.
+2. **Configuring SSH** — writes the Golden Block and sets `remote.SSH.remotePlatform` for that host to `linux`.
+3. **Waking container** when the machine is stopped, or **Container running** when it is already available.
+4. **Verifying remote folder**, then **Opening remote folder**.
+
+The folder is the Codespace's real workspace, in this order:
+
+1. The first path in the Codespace `recentFolders` list.
+2. `/workspaces/<repo>` when the Codespace reports a devcontainer path.
+3. `antigravity-codespaces.defaultRemoteFolder` (default `/workspaces/${repo}`; `${repo}` and `${name}` are replaced).
+
+If that path is not on the machine, Connect asks you to pick a folder under `/workspaces`, `/workspaces` itself, or a custom absolute path, then opens that folder in a Remote-SSH window.
+
+### Connect Now and Reconnect to Last Codespace
+
+**Create New Codespace** ends with a confirmation that includes **Connect Now**. That button runs **Connect** on the Codespace that was just created.
+
+**Reconnect to Last Codespace** wakes the Codespace you connected to most recently (if it is stopped) and runs **Connect** again. If you have never connected in this editor, it tells you to connect once first.
 
 ---
 
@@ -130,8 +216,8 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | `serverAliveInterval` | `30` | Interval in seconds for SSH keepalive pings (prevents disconnects) |
 | `serverAliveCountMax` | `10` | Maximum missed keepalive pings before considering connection dropped |
 | `defaultRemoteFolder` | `/workspaces/${repo}` | Default folder to open on remote connection (`${repo}` or `${name}`) |
-| `strictHostKeyChecking` | `accept-new` | SSH host key verification: `accept-new` (recommended), `yes`, or `no` |
-| `sshLogLevel` | `error` | SSH logging verbosity: `quiet`, `error` (default), `info`, or `verbose` |
+| `strictHostKeyChecking` | `accept-new` | Host key mode written as `StrictHostKeyChecking`. `accept-new` stores new keys and rejects changes. `yes` only connects to hosts whose key is already saved. `no` skips verification |
+| `sshLogLevel` | `error` | SSH verbosity written as `LogLevel`. `error` (default) is `LogLevel ERROR`. Also `quiet`, `info`, and `verbose` |
 
 ---
 
@@ -149,6 +235,9 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | **Antigravity Codespaces: Turn ON / Stop** | — | Wake cold container or shut down to save quota |
 | **Antigravity Codespaces: Rebuild Container** | — | Standard cached or full clean container rebuild |
 | **Antigravity Codespaces: Delete Codespace** | — | Safely remove a Codespace with confirmation |
+| **Connect** | — | Open a Codespace. From the palette, with no machine selected, this opens Quick Connect |
+| **Codespaces: Setup Doctor** | — | First-run and SSH checks with one-click fixes. The panel button **Copy Diagnostic Report** redacts tokens |
+| **Reconnect to Last Codespace** | — | Wake and connect to the Codespace you opened last |
 
 ---
 
@@ -165,6 +254,8 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | **Fast Launcher** | ❌ | ❌ | ✅ **`Alt+C` Quick Connect** |
 | **AI Agent KeepAlive** | ❌ | ❌ (Drops on idle) | ✅ **Tuned Ping Engine** |
 | **SSH Key Auto-Injection** | ❌ | ❌ | ✅ **Zero-Password Auto Key** |
+| **First-Run Checks** | ❌ | ❌ | ✅ **Codespaces: Setup Doctor** |
+| **SSH Host Key Checking** | ⚠️ | ⚠️ | ✅ **`accept-new` + managed known_hosts** |
 
 ---
 
@@ -198,9 +289,31 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 - **Credential Security:** Personal access tokens are stored strictly in the operating system's native keychain using the VS Code `SecretStorage` API. Tokens are never written to plain text files.
 - **Atomic SSH Writes:** Host configuration writes to `~/.ssh/config` use temporary files and atomic renames, preventing corruptions even during sudden system restarts.
 - **Zero Shell Injection:** All external commands use direct argument arrays (`execFile`) without passing through shell interpreters.
-- **Host Key Verification (TOFU):** SSH connections use `StrictHostKeyChecking accept-new` by default, storing host keys in an extension-managed `~/.antigravity-codespaces/known_hosts` file. This provides trust-on-first-use security while blocking subsequent key changes (potential MITM attacks). Configure via `antigravity-codespaces.strictHostKeyChecking`.
-- **SSH Diagnostics Logging:** SSH config mutations are logged to the "Codespaces" output channel with timestamps. Use `antigravity-codespaces.sshLogLevel` to control SSH verbosity for debugging.
-- **Transparent Error Handling:** Connection failures surface actionable guidance (gh auth status, missing scopes, platform mismatches, host key changes) instead of cryptic exit codes.
+- **Host Key Verification (TOFU):** Generated `~/.ssh/config` blocks set `StrictHostKeyChecking accept-new` and `UserKnownHostsFile` to the extension-managed `~/.antigravity-codespaces/known_hosts` file. The first connection stores the key. A later key change is rejected and **Test SSH Connectivity** can remove the stale line. `antigravity-codespaces.strictHostKeyChecking` accepts `accept-new` (default), `yes`, or `no`. The next **Connect** or **Sync SSH Config** rewrites existing Codespace blocks to this policy.
+- **SSH Log Level:** Blocks set `LogLevel ERROR` so fatal SSH conditions are visible and routine noise stays quiet. `antigravity-codespaces.sshLogLevel` accepts `quiet`, `error` (default), `info`, or `verbose`. Every `~/.ssh/config` write and every `remote.SSH.remotePlatform` change is also appended, with a timestamp and without tokens, to the **Codespaces** output channel.
+- **Transparent Error Handling:** Connection failures surface actionable guidance (`gh` auth status, missing scopes, platform mismatches, host key changes) instead of a raw exit code. See [Troubleshooting](#troubleshooting).
+
+---
+
+## Troubleshooting
+
+### Exit 255 ("nonexistent pipe")
+
+The SSH tunnel closed before a shell started. That is almost always the GitHub CLI, not a dead container: `gh` is signed out, its token lacks the `codespace` scope, or it is signed into a different account than the Codespace owner. Connect tries to catch this in the pre-checks. If the tunnel still exits 255, read the sidebar `gh` line or run **Codespaces: Setup Doctor** and **Test SSH Connectivity**. Then `gh auth login`, or `gh auth refresh -h github.com -s codespace` when a token already exists. Confirm the machine is running (**Turn ON**) and retry **Connect**.
+
+### Exit 127 / `remotePlatform` windows vs linux
+
+Codespaces are Linux. If `remote.SSH.remotePlatform` for the Codespace host is `windows`, Remote-SSH starts PowerShell on the container and the remote command exits 127 (`powershell: command not found`, or a bare exit 127 on a host whose alias starts with `cs.`). **Connect** sets `remote.SSH.remotePlatform["<host>"]` to `"linux"` before it opens the folder. When a host is still wrong, **Codespaces: Setup Doctor** lists it and **Fix setting** writes `linux`. You can also set that host to `linux` under `remote.SSH.remotePlatform` and reconnect.
+
+### Scope errors
+
+`needs the "codespace" scope`, HTTP 403, or "Must have admin rights to Repository" means the token `gh cs ssh` is using does not include `codespace`. The extension sign-in can be valid at the same time. Run:
+
+```bash
+gh auth refresh -h github.com -s codespace
+```
+
+**Fix scope now** on the Connect warning, **Fix** on the sidebar, and **Grant scope** in Setup Doctor each open a terminal with that command. Finish the device flow, then retry **Connect**. A fine-grained PAT or a `GH_TOKEN` environment variable can hide scope names from `gh auth status`; in that case the pre-check continues and the tunnel error is what tells you to refresh the token.
 
 ---
 
