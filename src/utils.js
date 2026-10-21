@@ -83,9 +83,28 @@ function friendlyTunnelError(err) {
 /**
  * Translates low-level network or CLI error messages into actionable, user-friendly guidance.
  */
+/** HTTP status from a structured field, or gh's exact "HTTP NNN" prefix. Never a bare number anywhere in the text. */
+function httpStatusOf(err, msg) {
+    const f = err && typeof err === 'object' ? (err.status ?? err.statusCode) : undefined;
+    if (Number.isInteger(f)) return f;
+    const m = /\bHTTP (\d{3})\b/.exec(msg || '');
+    return m ? Number(m[1]) : null;
+}
+/** Process exit code from a structured field, or "exit code/status N" wording. */
+function exitCodeOf(err, msg) {
+    if (err && typeof err === 'object') {
+        if (Number.isInteger(err.exitCode)) return err.exitCode;
+        if (Number.isInteger(err.code)) return err.code;
+    }
+    const m = /\bexit(?:ed with)? (?:code|status) (\d+)\b/i.exec(msg || '');
+    return m ? Number(m[1]) : null;
+}
+
 function friendlyError(err) {
     if (!err) return 'Unknown error occurred.';
     let msg = typeof err === 'string' ? err : (err.message || String(err));
+    const status = httpStatusOf(err, msg);
+    const exit = exitCodeOf(err, msg);
     if (msg.includes('Flag shorthand -r has been deprecated')) {
         msg = msg.replace(/Flag shorthand -r has been deprecated[^\n]*\n?/g, '').trim();
     }
@@ -101,10 +120,10 @@ function friendlyError(err) {
     if (msg.includes('not recognized') || msg.includes('ENOENT') || msg.includes('command not found')) {
         return 'GitHub CLI (gh) is not installed or not found in system PATH. Install it or use browser access.';
     }
-    if (msg.includes('authentication') || msg.includes('Bad credentials') || msg.includes('401')) {
+    if (status === 401 || /\bBad credentials\b|authentication (expired|failed|required)|token is invalid/i.test(msg)) {
         return 'GitHub authentication expired or token is invalid. Please sign in again.';
     }
-    if (msg.includes('not found') || msg.includes('404')) {
+    if (status === 404 || /\bcodespaces? not found\b|no codespace (found|exists)/i.test(msg)) {
         return 'Codespace not found for this account. Only the owner can open a Codespace — verify at github.com/codespaces. Multi-account? The gh CLI may be signed into the wrong account (gh auth switch --user <owner>), then retry.';
     }
     if (msg.includes('timed out while waiting for the codespace to start') || msg.includes('timed out while waiting')) {
@@ -113,16 +132,16 @@ function friendlyError(err) {
     if (msg.includes('failed to start SSH server') || msg.includes('SSH server') && msg.includes('check if')) {
         return 'No SSH server inside the container. Add "ghcr.io/devcontainers/features/sshd:1" to devcontainer.json features and rebuild, then connect.';
     }
-    if (msg.includes('255') || msg.includes('closed unexpectedly') || msg.includes('Connection closed')) {
+    if (exit === 255 || /closed unexpectedly|Connection closed\b/i.test(msg)) {
         return 'SSH tunnel dropped unexpectedly. Check the machine is RUNNING (press Start if stopped), verify the gh CLI account owns it, then retry. Details in Antigravity Codespaces logs.';
     }
-    if (msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('abuse')) {
+    if (status === 429 || (err && err.kind === 'rateLimit') || /\brate limit\b|rate_limit|secondary rate|abuse detection/i.test(msg)) {
         return 'GitHub API rate limit reached. Wait a few minutes, then refresh.';
     }
-    if (msg.includes('billing') || msg.includes('quota') || msg.includes('exceeded')) {
+    if (status === 402 || /\b(spending limit|quota)\b[^.]*\b(exceeded|reached)\b|\b(exceeded|reached)\b[^.]*\b(spending limit|quota)\b|billing (is )?(not enabled|disabled|issue)/i.test(msg)) {
         return 'GitHub Codespaces spending or quota limit reached. Check your GitHub account billing settings.';
     }
-    if (msg.includes('403') && (msg.includes('denied') || msg.includes('forbidden') || msg.includes('scope'))) {
+    if (status === 403) {
         return 'GitHub access denied (HTTP 403). Check that your account has Codespaces permissions and billing enabled.';
     }
     if (msg.includes('EAI_AGAIN') || msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.includes('network') || msg.includes('fetch failed')) {
@@ -157,7 +176,7 @@ function runCommand(cmd, args = [], timeoutMs = 15000, options = {}) {
                 if (timedOut) {
                     return reject(new Error(`Timed out (${timeoutMs / 1000}s): ${cmd} ${(args || []).join(' ')}${detail ? ` — ${detail}` : ''}`));
                 }
-                reject(new Error(detail || `Command failed with exit code ${err.code}`));
+                reject(Object.assign(new Error(detail || `Command failed with exit code ${err.code}`), { exitCode: typeof err.code === 'number' ? err.code : undefined }));
             });
         } catch (spawnErr) {
             reject(spawnErr);

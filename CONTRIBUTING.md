@@ -27,12 +27,14 @@ Thank you for your interest in contributing to **Antigravity Codespaces Pro**!
 
 4. **Package VSIX Locally:**
    ```bash
-   npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
+   npm test
+   npx @vscode/vsce package -o antigravity-codespaces-dev.vsix
    ```
 
 5. **Install and Test in IDE:**
    ```bash
-   antigravity-ide --install-extension antigravity-codespaces-4.3.0.vsix --force
+   antigravity-ide --install-extension antigravity-codespaces-dev.vsix --force
+   # or: code / cursor / windsurf --install-extension antigravity-codespaces-dev.vsix --force
    ```
 
 ---

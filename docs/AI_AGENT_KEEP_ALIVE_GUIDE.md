@@ -33,15 +33,17 @@ Each host entry includes explicit OpenSSH keepalive parameters:
 Host cs.automatic-waffle-v666j4p46qxjcpq5p
   User codespace
   ProxyCommand "C:/Program Files/GitHub CLI/gh.exe" cs ssh -c "automatic-waffle-v666j4p46qxjcpq5p" --stdio
-  IdentityFile "C:/Users/lenovo/.ssh/codespaces.auto"
-  UserKnownHostsFile /dev/null
-  StrictHostKeyChecking no
-  LogLevel quiet
+  IdentityFile "C:/Users/<you>/.ssh/codespaces.auto"
+  UserKnownHostsFile "C:/Users/<you>/.antigravity-codespaces/known_hosts"
+  StrictHostKeyChecking accept-new
+  LogLevel ERROR
   ServerAliveInterval 30
   ServerAliveCountMax 10
   TCPKeepAlive yes
 # END_CS_ENTRY:automatic-waffle-v666j4p46qxjcpq5p
 ```
+
+`StrictHostKeyChecking accept-new` stores the host key on first connect and rejects a changed key later. The extension writes this by default; change it with `antigravity-codespaces.strictHostKeyChecking`. Avoid `no`: it turns off host key verification.
 
 ### Key Parameters Explained:
 1. **`ServerAliveInterval 30`**: The local SSH client sends a zero-payload heartbeat packet to the remote container every 30 seconds of inactivity.

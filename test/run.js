@@ -851,10 +851,11 @@ function ok(name, fn) {
         assert.match(u.error, /404/);
         const card = uv.hubUsageCardHtml(u);
         assert.match(card, /Usage unavailable/);
-        assert.match(card, /gh auth refresh -h github\.com -s user/);
+        assert.match(card, /enhanced billing platform/);
+        assert.ok(!/gh auth refresh/.test(card), 'scope is present, so no scope fix is suggested');
         assert.ok(!/core-hrs|Estimated/.test(card));
         assert.ok(!/core-hrs|Estimated/.test(uv.sidebarSummaryHtml(u, 'n')));
-        assert.strictEqual(uv.storageTierText(u), '15 GB Free Tier');
+        assert.strictEqual(uv.storageTierText(u), '15 GB-month · Free', 'plan from the API');
     });
     await ok('org plan with only org-billed codespaces -> "Billed to {org}" with no bar', async () => {
         const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
@@ -1009,7 +1010,7 @@ function ok(name, fn) {
         assert.match(uv.hubUsageCardHtml(mk(95)), /usage-fill amber/);
         assert.match(uv.hubUsageCardHtml(mk(110)), /usage-fill red/);
         assert.strictEqual(uv.storageTierText(u), '2 / 15 GB-month');
-        assert.strictEqual(uv.storageTierText(null), '15 GB Free Tier');
+        assert.strictEqual(uv.storageTierText(null), '', 'unknown plan -> tile hidden, never a hardcoded tier');
         const page = uv.hubUsagePageHtml(u);
         assert.match(page, /id="usagePage"/);
         assert.match(page, /Resets<\/span><b>/);
@@ -1212,6 +1213,317 @@ function ok(name, fn) {
         assert.strictEqual(props['antigravity-codespaces.usage.refreshMinutes'].minimum, 5);
         assert.strictEqual(props['antigravity-codespaces.usage.showSidebarLine'].default, true);
         assert.deepStrictEqual(props['antigravity-codespaces.usage.preferredUnit'].enum, ['core-hours', 'dollars']);
+    });
+
+    // ── Error hardening + error UX (one test per spec row) ──
+    console.log('error hardening');
+    const gapi = require(path.join(ROOT, 'src', 'githubApi.js'));
+    const eux = require(path.join(ROOT, 'src', 'errorUx.js'));
+    const { launchIde } = require(path.join(ROOT, 'src', 'launcher.js'));
+    const hang = (url, opts) => new Promise((_, rej) => { opts.signal.addEventListener('abort', () => rej(opts.signal.reason)); });
+    const resp = (status, body = {}) => ({ status, ok: status >= 200 && status < 300, json: async () => body, headers: { get: () => null } });
+    await ok('ghFetch: hanging request aborts with "GitHub isn\'t responding" (timeout kind)', async () => {
+        await assert.rejects(() => gapi.ghFetch('https://api.github.com/x', {}, { fetchImpl: hang, timeoutMs: 50 }), (e) => e.kind === 'timeout' && /GitHub isn't responding/.test(e.message));
+        assert.strictEqual(gapi.FETCH_TIMEOUT_MS, 15000);
+    });
+    await ok('ghFetch: 503 retried once, then "GitHub is having trouble right now." (server kind)', async () => {
+        let n = 0;
+        await assert.rejects(() => gapi.ghFetch('u', {}, { fetchImpl: async () => { n++; return resp(503); }, retryDelayMs: 0 }), (e) => e.kind === 'server' && e.status === 503 && /having trouble/.test(e.message));
+        assert.strictEqual(n, 2, 'auto-retry once');
+        let m = 0;
+        const r = await gapi.ghFetch('u', {}, { fetchImpl: async () => (++m === 1 ? resp(502) : resp(200)), retryDelayMs: 0 });
+        assert.strictEqual(r.status, 200);
+    });
+    await ok('ghFetch: network failure -> network kind; every fetch in githubApi goes through the timeout wrapper', async () => {
+        await assert.rejects(() => gapi.ghFetch('u', {}, { fetchImpl: async () => { throw new TypeError('fetch failed'); } }), (e) => e.kind === 'network');
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'githubApi.js'), 'utf8');
+        assert.strictEqual((src.match(/await fetch\(/g) || []).length, 0);
+        assert.strictEqual((src.match(/await this\._fetch\(/g) || []).length, 6);
+        assert.ok(src.includes('new AbortController()') && src.includes('clearTimeout(timer)'));
+    });
+    await ok('listCodespaces: a timeout surfaces immediately (no slow CLI fallback)', async () => {
+        const api = new gapi.GithubApi({ getToken: async () => 't', getActiveAccount: () => 'octocat' }, { fetchImpl: hang, timeoutMs: 30 });
+        await assert.rejects(() => api.listCodespaces('octocat'), (e) => e.kind === 'timeout');
+    });
+    await ok('launchIde: spawn error / non-zero exit -> not connected; running process -> connected', async () => {
+        const { EventEmitter } = require('events');
+        const fake = (behave) => () => { const c = new EventEmitter(); c.unref = () => {}; setTimeout(() => behave(c), 5); return c; };
+        const e1 = await launchIde('ide', [], { execFileImpl: fake(c => c.emit('error', new Error('spawn ENOENT'))), settleMs: 200 });
+        assert.strictEqual(e1.ok, false); assert.match(e1.reason, /ENOENT/);
+        const e2 = await launchIde('ide', [], { execFileImpl: fake(c => c.emit('exit', 1)), settleMs: 200 });
+        assert.strictEqual(e2.ok, false); assert.match(e2.reason, /code 1/);
+        const e3 = await launchIde('ide', [], { execFileImpl: fake(() => {}), settleMs: 30 });
+        assert.strictEqual(e3.ok, true);
+        const e4 = await launchIde('ide', [], { execFileImpl: () => { throw new Error('EACCES'); } });
+        assert.strictEqual(e4.ok, false);
+    });
+    await ok('classifyError rows: timeout / 5xx / offline / auth / scope / rate limit / other', () => {
+        const k = (kind, msg = 'x', status) => { const e = new Error(msg); e.kind = kind; e.status = status; return eux.classifyError(e); };
+        const t = k('timeout'); assert.strictEqual(t.title, "GitHub isn't responding (15s)."); assert.deepStrictEqual(t.actions.slice(0, 2), ['retry', 'workOffline']); assert.strictEqual(t.level, 'critical');
+        const s5 = k('server', 'x', 503); assert.strictEqual(s5.title, 'GitHub is having trouble right now.'); assert.deepStrictEqual(s5.actions.slice(0, 2), ['retry', 'githubStatus']);
+        assert.strictEqual(k('network').level, 'warning');
+        assert.deepStrictEqual(eux.classifyError(new Error('GitHub authentication expired or token is invalid.')).actions[0], 'signIn');
+        assert.strictEqual(eux.classifyError(new Error('Account "a" is missing the "codespace" permission.')).level, 'warning');
+        assert.strictEqual(eux.classifyError(new Error('GitHub API rate limit reached.')).kind, 'rateLimit');
+        assert.ok(eux.classifyError(new Error('boom')).actions.includes('details'), 'Details button opens the log');
+    });
+    await ok('messages never show stack traces or "undefined"', () => {
+        const e = new Error('Request failed: undefined'); e.stack = 'Error: Request failed: undefined\n    at foo (x.js:1:1)';
+        assert.strictEqual(eux.cleanReason(e), 'Request failed');
+        assert.strictEqual(eux.cleanReason('TypeError: x is undefined\n    at a (b:1)'), 'x is');
+        assert.strictEqual(eux.cleanReason(undefined), 'Unknown error.');
+        assert.ok(!/undefined/.test(eux.notificationText(eux.classifyError(undefined))));
+    });
+    await ok('connect failure: "Couldn\'t open <repo> in this IDE." [Run Setup Doctor][Copy SSH command]; card reverts', () => {
+        const c = eux.connectFailure('octocat/repo-a', 'The IDE launcher exited with code 1.');
+        assert.strictEqual(c.title, "Couldn't open octocat/repo-a in this IDE.");
+        assert.deepStrictEqual(c.actions.slice(0, 2), ['setupDoctor', 'copySsh']);
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.ok(src.includes('launchIde(ANTIGRAVITY_EXE'), 'launcher awaited before connected=true');
+        assert.ok(!/child\.on\('error', \(\) => \{\}\)/.test(src));
+        const tier4 = src.slice(src.indexOf('errorUx.connectFailure('), src.indexOf('errorUx.connectFailure(') + 400);
+        assert.ok(/dashboardProvider\.refreshHtml\(\)/.test(tier4), 'views refresh so the card shows Available again');
+    });
+    await ok('reconnect: start failure shows the real reason and skips SSH', () => {
+        const nf = new Error('HTTP 404: Not Found');
+        assert.match(eux.startFailure('cs-1', nf).why, /no longer exists/);
+        assert.match(eux.startFailure('cs-1', new Error('HTTP 402 spending limit')).why, /quota or spending limit/);
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const rc = src.slice(src.indexOf("'antigravity-codespaces.reconnectLast'"), src.indexOf("'antigravity-codespaces.reconnectLast'") + 2200);
+        assert.ok(!rc.includes('.catch(() => {})'));
+        assert.ok(rc.indexOf('if (startErr)') > 0 && rc.indexOf('return;', rc.indexOf('if (startErr)')) < rc.indexOf("'antigravity-codespaces.connect'"));
+    });
+    await ok('no empty catch blocks in extension.js / dashboardProvider.js; metadata failure is logged (silent)', () => {
+        const ext = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const dash = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
+        assert.strictEqual((ext.match(/catch\s*(\(\w*\))?\s*\{\s*\}/g) || []).length, 0);
+        assert.strictEqual((dash.match(/catch\s*(\(\w*\))?\s*\{\s*\}/g) || []).length, 0);
+        assert.match(ext, /metadata for \$\{cs\.name\} unavailable/);
+    });
+    await ok('banner: icon + text label (not colour only), dismissible, "as of <time>" over cached data', () => {
+        const h = eux.bannerHtml(eux.classifyError(Object.assign(new Error('x'), { kind: 'timeout' })), { asOf: '10:42' });
+        assert.match(h, /class="ux-icon"[^>]*>⛔/); assert.match(h, /class="ux-label">Error</);
+        assert.match(h, /class="ux-dismiss"/); assert.match(h, /Showing data as of 10:42/);
+        assert.match(h, /role="alert"/);
+        assert.match(eux.bannerHtml({ kind: 'k', level: 'warning', title: 't', actions: [] }), /class="ux-label">Warning</);
+        assert.match(eux.skeletonHtml(2), /aria-busy="true"/);
+        assert.strictEqual((eux.skeletonHtml(2).match(/ux-skel-card/g) || []).length, 2);
+    });
+    await ok('Cloud Hub: account error banner over cached list; empty / signed-out copy; spinner on busy buttons; Windsurf Remote SSH', () => {
+        const Module = require('module');
+        const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const D = require(path.join(ROOT, 'src', 'dashboardProvider.js'));
+            const DP = D.DashboardProvider || D;
+            const warm = DP.accountErrorBanners([{ account: 'octocat', error: "Couldn't reach GitHub.", errorKind: 'network', cachedAt: Date.UTC(2026, 9, 21, 5, 0) }]);
+            assert.match(warm, /ux-warning/); assert.match(warm, /Showing data as of/);
+            const cold = DP.accountErrorBanners([{ account: 'octocat', error: 'x', errorKind: 'server', errorStatus: 503 }]);
+            assert.match(cold, /ux-critical/); assert.match(cold, /GitHub Status/);
+            const near = DP.usageBanner({ mode: 'live', isCurrent: true, compute: { used: 150, quota: 180 }, storage: { used: 2, quota: 20 } });
+            assert.match(near, /ux-warning/); assert.match(near, /compute 83%/);
+            assert.strictEqual(DP.usageBanner({ mode: 'live', isCurrent: true, compute: { used: 10, quota: 180 }, storage: { used: 2, quota: 20 } }), '');
+            assert.match(DP.usageBanner({ mode: 'needsPermission' }), /user/);
+            assert.match(DP.usageBanner({ mode: 'live', offline: true, fetchedAt: Date.now() }), /as of/);
+            const p = Object.create(DP.prototype); p._usage = null; p._initialPage = null; p._context = { extensionUri: {} };
+            const out = p.buildDashboardHtml([], '', []);
+            assert.match(out, /You're signed out\./); assert.match(out, /Sign in with gh/);
+            const empty = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: [] }], 'octocat', ['octocat']);
+            assert.match(empty, /No codespaces yet\./); assert.match(empty, /Create codespace/);
+            const failed = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: [], error: 'x', errorKind: 'timeout' }], 'octocat', ['octocat']);
+            assert.ok(!/No codespaces yet/.test(failed), 'a failed load is not shown as empty');
+            assert.match(failed, /GitHub isn(&#39;|')t responding/);
+            const src = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
+            assert.match(src, /btn-spin.*Connecting…/);
+            assert.ok(src.includes('errorUx.skeletonHtml(3)'));
+        const SD = require(path.join(ROOT, 'src', 'systemDoctor.js'));
+            const w = (SD.SystemDoctor || SD).detectRemoteSsh(['codeium.windsurf-remote-openssh'], 'Windsurf');
+            assert.strictEqual(w.has, true); assert.strictEqual(w.id, 'codeium.windsurf-remote-openssh');
+            assert.deepStrictEqual((SD.SystemDoctor || SD).detectRemoteSsh(['codeium.windsurf-remote-openssh', 'jeanp413.open-remote-ssh'], 'Windsurf').conflicts, ['jeanp413.open-remote-ssh']);
+            assert.strictEqual((SD.SystemDoctor || SD).detectRemoteSsh(['foo.bar'], 'Visual Studio Code').has, false);
+            const SDc = SD.SystemDoctor || SD;
+            assert.strictEqual(SDc.detectRemoteSsh(['codeium.windsurf-remote-openssh'], 'Some Renamed IDE').isWindsurf, true, 'detected by extension, not name');
+            assert.strictEqual(SDc.detectRemoteSsh([], 'Devin Desktop').isWindsurf, true);
+            assert.strictEqual(SDc.detectRemoteSsh(['ms-vscode-remote.remote-ssh'], 'Visual Studio Code').isWindsurf, false);
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+    });
+    await ok('docs: keep-alive guide uses accept-new; SECURITY/CONTRIBUTING no longer 4.3.x', () => {
+        const g = fs.readFileSync(path.join(ROOT, 'docs', 'AI_AGENT_KEEP_ALIVE_GUIDE.md'), 'utf8');
+        assert.ok(!/StrictHostKeyChecking no/.test(g)); assert.match(g, /StrictHostKeyChecking accept-new/);
+        assert.match(fs.readFileSync(path.join(ROOT, 'SECURITY.md'), 'utf8'), /5\.3\.x/);
+        assert.ok(!/4\.3\.0/.test(fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8')));
+    });
+
+    // ── Usage-side gaps (a–g) + design review ──
+    console.log('usage error gaps + design');
+    const SUM_OK = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'billing-usage-summary.json'), 'utf8'));
+    const svcWith = (routes) => new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch(routes) });
+    const userOk = [/\/user$/, () => fakeResp(200, userBody('octocat', 'pro'), 'codespace, user')];
+    const csOk = [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })];
+    const withHeaders = (status, body, h) => ({ status, ok: false, json: async () => body, headers: { get: (k) => h[k.toLowerCase()] ?? null } });
+    await ok('(a) malformed 200 body / non-numeric quantity -> "Usage data unavailable (unexpected response)", never 0 or NaN', async () => {
+        for (const bad of ['<html>', null, {}, { usageItems: 'x' }, { usageItems: [{ product: 'Codespaces', sku: 'codespaces_compute_d2', grossQuantity: 'abc' }] }, { usageItems: [{ product: 'Codespaces', sku: 'codespaces_storage' }] }]) {
+            const u = await svcWith([userOk, csOk, [/usage\/summary/, () => fakeResp(200, bad)]]).getAccountUsage('octocat');
+            assert.strictEqual(u.mode, 'error', JSON.stringify(bad)); assert.strictEqual(u.kind, 'malformed');
+            assert.strictEqual(u.error, 'Usage data unavailable (unexpected response).');
+            const card = uv.hubUsageCardHtml(u); assert.match(card, /Usage data unavailable \(unexpected response\)/);
+            assert.ok(!/NaN|>0 \//.test(card + uv.sidebarSummaryHtml(u, 'n')));
+        }
+        assert.strictEqual(us.billingShapeError({ usageItems: [] }), '', 'empty month is valid');
+        assert.strictEqual(us.billingShapeError(SUM_OK), '');
+    });
+    await ok('(b) 401 from /user -> "GitHub sign-in expired" with [Sign in again]', async () => {
+        const u = await svcWith([[/\/user$/, () => fakeResp(401, { message: 'Bad credentials' })]]).getAccountUsage('octocat');
+        assert.strictEqual(u.kind, 'auth'); assert.match(u.error, /GitHub sign-in expired/);
+        assert.match(uv.hubUsageCardHtml(u), /data-usage-signin="1">Sign in again</);
+        assert.match(uv.sidebarSummaryHtml(u, 'n'), /Sign in again/);
+        assert.ok(!/user" scope/.test(uv.hubUsageCardHtml(u)), 'not mistaken for a missing scope');
+    });
+    await ok('(c) 403 / 404 with the user scope present -> specific messages', async () => {
+        const u404 = await svcWith([userOk, csOk, [/usage\/summary/, () => fakeResp(404, { message: 'Not Found' })]]).getAccountUsage('octocat');
+        assert.match(u404.error, /404.*enhanced billing platform/); assert.strictEqual(u404.fix, null);
+        const u403 = await svcWith([userOk, csOk, [/usage\/summary/, () => fakeResp(403, { message: 'Resource protected by organization SAML enforcement' })]]).getAccountUsage('octocat');
+        assert.match(u403.error, /403.*SAML.*fine-grained token/);
+        assert.notStrictEqual(u403.error, u404.error);
+    });
+    await ok('(d) usage 429 / exhausted 403 shows the reset time from headers', async () => {
+        const reset = Math.floor(Date.UTC(2026, 9, 21, 15, 30) / 1000);
+        const u = await svcWith([userOk, csOk, [/usage\/summary/, () => withHeaders(429, { message: 'rate' }, { 'x-ratelimit-reset': String(reset) })]]).getAccountUsage('octocat');
+        assert.strictEqual(u.kind, 'rateLimit'); assert.strictEqual(u.resetAt, new Date(reset * 1000).toISOString());
+        assert.match(u.why, /Usage can refresh after/);
+        const u2 = await svcWith([userOk, csOk, [/usage\/summary/, () => withHeaders(403, {}, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) })]]).getAccountUsage('octocat');
+        assert.strictEqual(u2.kind, 'rateLimit');
+        assert.ok(us.rateLimitInfo({ status: 429, retryAfter: '60' }).resetAt);
+        assert.strictEqual(us.rateLimitInfo({ status: 403, rateRemaining: '12' }), null);
+    });
+    await ok('(e) offline with no cache -> offline banner, not raw text', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: async () => { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; } });
+        const u = await svc.getAccountUsage('octocat');
+        assert.strictEqual(u.mode, 'offline');
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /ux-banner ux-warning/); assert.match(card, /You're offline|You&#39;re offline/);
+        assert.ok(!/fetch failed|ENOTFOUND|TypeError/.test(card + uv.hubUsagePageHtml(u) + uv.sidebarSummaryHtml(u, 'n')));
+        assert.match(uv.sidebarSummaryHtml(u, 'n'), /Offline/);
+    });
+    await ok('(f) daily-usage and previous-month failures show warning notes in their sections', async () => {
+        const u = await svcWith([userOk, csOk,
+            [/usage\/summary\?product=codespaces&year=2026&month=9\b/, () => fakeResp(500, {})],
+            [/usage\/summary/, () => fakeResp(200, SUM_OK)],
+            [/settings\/billing\/usage\?/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2-core', date: '2026-10-02', quantity: 'x' }] })]
+        ]).getAccountUsage('octocat');
+        assert.strictEqual(u.mode, 'live');
+        assert.match(u.dailyError, /unexpected response/); assert.match(u.prevError, /500/);
+        const page = uv.hubUsagePageHtml(u);
+        assert.match(page, /usage-warn-note[\s\S]*?Daily usage returned an unexpected response/);
+        assert.match(page, /Compared with the previous month[\s\S]*?Previous month returned 500/);
+    });
+    await ok('(g) codespaces-list failure does not misdetect org billing (unknown)', async () => {
+        const u = await svcWith([[/\/user$/, () => fakeResp(200, userBody('octocat', 'business'), 'codespace, user')], [/\/user\/codespaces/, () => fakeResp(500, {})], [/usage\/summary/, () => fakeResp(200, SUM_OK)], [/settings\/billing\/usage\?/, () => fakeResp(200, { usageItems: [] })]]).getAccountUsage('octocat');
+        assert.notStrictEqual(u.mode, 'orgBilled');
+        assert.strictEqual(u.orgBilledUnknown, true); assert.strictEqual(u.codespaceCount, null);
+        if (u.mode === 'live') assert.match(uv.hubUsagePageHtml(u), /unknown whether some are billed to an organization/);
+    });
+    await ok('design: signed-out full page, no Enterprise Edition, real version, cached cards, running-card actions, storage tile', () => {
+        const Module = require('module'); const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const D = require(path.join(ROOT, 'src', 'dashboardProvider.js')); const DP = D.DashboardProvider || D;
+            const p = Object.create(DP.prototype); p._usage = null; p._initialPage = null; p._context = { extensionUri: {} };
+            const out = p.buildDashboardHtml([], '', []);
+            assert.match(out, /class="main-canvas is-signed-out"/);
+            assert.match(out, /\.main-canvas\.is-signed-out > :not\(\.hub-header\):not\(\.workspace-grid\) \{ display: none/);
+            assert.ok(!/Enterprise Edition/.test(out));
+            const ver = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+            assert.match(out, new RegExp('rail-ide-version">v' + ver.replace(/\./g, '\\.') + '<'));
+            assert.match(out, /id="kpiCardStorage" style="cursor:pointer;display:none;"/, 'no hardcoded storage tier');
+            const cs = [{ name: 'cs-a', repository: 'octocat/repo-a', state: 'Available', lastUsedAt: '2026-10-21T08:00:00Z' }];
+            const cached = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: cs, error: 'x', errorKind: 'timeout', cachedAt: Date.now() }], 'octocat', ['octocat']);
+            assert.match(cached, /ws-card is-running is-cached/); assert.match(cached, /class="cached-tag"[^>]*>Cached</);
+            assert.match(cached, /data-cmd="connect"[^>]*disabled aria-disabled="true"/); assert.match(cached, /data-cmd="stop"[^>]*disabled/);
+            const live = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: cs }], 'octocat', ['octocat']);
+            const dock = live.slice(live.indexOf('class="action-utility-group"'), live.indexOf('</article>'));
+            assert.ok(!/data-cmd="openDeleteModal"|data-cmd="openRebuildModal"|data-cmd="openWeb"/.test(dock), 'extra actions live in the ⋮ menu on running cards');
+            assert.ok(!/disabled aria-disabled/.test(live));
+            const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
+            assert.match(SP.skeletonPage(), /ux-skel-card/);
+            const sp = Object.create(SP.prototype); sp._usage = null; sp._context = { globalState: { get: () => true } }; sp.isFirstRunDismissed = () => true;
+            const accs = [{ account: 'octocat', type: 'gh' }];
+            const sc = sp.buildSidebarHtml(accs, 'octocat', cs, "GitHub isn't responding (15s).", {}, false, { errorKind: 'timeout', cachedAt: Date.now() });
+            assert.match(sc, /ux-banner ux-warning/); assert.match(sc, /Showing data as of/); assert.ok(!/id="errorView"/.test(sc));
+            const se = sp.buildSidebarHtml(accs, 'octocat', [], 'boom', {}, false, { errorKind: 'server', errorStatus: 503 });
+            assert.match(se, /id="errorView"/); assert.match(se, /GitHub is having trouble right now/);
+            assert.match(sp.buildSidebarHtml(accs, 'octocat', [], '', {}, false), /No codespaces yet\./);
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+        assert.strictEqual(uv.storageTierText({ mode: 'error', plan: { key: 'free', label: 'Free', storageGb: 15, personal: true, guessed: true } }), '', 'guessed plan hidden');
+    });
+
+    // ── Review fixes on c9f310b ──
+    console.log('review fixes');
+    await ok('githubApi: 403 with x-ratelimit-remaining: 0 (and 429) is a rate limit with reset time', async () => {
+        const gapi2 = require(path.join(ROOT, 'src', 'githubApi.js'));
+        const reset = Math.floor(Date.UTC(2026, 9, 21, 15, 30) / 1000);
+        const hdr = (status, h) => ({ status, ok: false, json: async () => ({}), headers: { get: (k) => h[k.toLowerCase()] ?? null } });
+        const e1 = gapi2.rateLimitError(hdr(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) }));
+        assert.strictEqual(e1.kind, 'rateLimit'); assert.strictEqual(e1.resetAt, new Date(reset * 1000).toISOString()); assert.match(e1.message, /Resets at/);
+        assert.strictEqual(gapi2.rateLimitError(hdr(403, { 'x-ratelimit-remaining': '17' })), null, 'plain 403 is not a rate limit');
+        assert.ok(gapi2.rateLimitError(hdr(429, { 'retry-after': '30' })).resetAt);
+        const mk = (res) => new gapi2.GithubApi({ getToken: async () => 't', getActiveAccount: () => 'octocat' }, { fetchImpl: async () => res, retryDelayMs: 0 });
+        const limited = hdr(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) });
+        await assert.rejects(() => mk(limited).listCodespaces('octocat'), (e) => e.kind === 'rateLimit');
+        await assert.rejects(() => mk(limited).startCodespace('cs-1', 'octocat'), (e) => e.kind === 'rateLimit');
+        await assert.rejects(() => mk(limited).stopCodespace('cs-1', 'octocat'), (e) => e.kind === 'rateLimit');
+        await assert.rejects(() => mk(limited).createCodespace('octocat/repo-a', 'main', 'octocat'), (e) => e.kind === 'rateLimit');
+        const c = eux.classifyError(e1); assert.strictEqual(c.kind, 'rateLimit'); assert.match(c.why, /Try again after/);
+    });
+    await ok('friendlyError matches exact status / exit code fields (true and false positives)', () => {
+        const withS = (msg, f) => Object.assign(new Error(msg), f);
+        assert.match(friendlyError(withS('x', { status: 404 })), /Only the owner can open/);
+        assert.match(friendlyError('HTTP 404: Not Found (https://api.github.com/user/codespaces/x)'), /Only the owner/);
+        assert.ok(!/Only the owner/.test(friendlyError('Created codespace in region 404-west for repo4040')), 'bare 404 in text is not a 404');
+        assert.ok(!/Only the owner/.test(friendlyError('Repository "octocat/repo-a" not found or not accessible.')), 'repo not found is not codespace not found');
+        assert.match(friendlyError(withS('ssh failed', { exitCode: 255 })), /SSH tunnel dropped/);
+        assert.match(friendlyError('Command failed with exit code 255'), /SSH tunnel dropped/);
+        assert.ok(!/SSH tunnel dropped/.test(friendlyError('Port 2552 forwarded; 255 bytes sent')), 'bare 255 is not an exit code');
+        assert.match(friendlyError('You have exceeded your Codespaces spending limit'), /spending or quota limit/);
+        assert.match(friendlyError(withS('x', { status: 402 })), /spending or quota limit/);
+        assert.ok(!/spending or quota/.test(friendlyError('Maximum retries exceeded while connecting')), '"exceeded" alone is not quota');
+        assert.ok(!/spending or quota/.test(friendlyError('Showing billing page')), '"billing" alone is not quota');
+        assert.match(friendlyError(withS('x', { status: 401 })), /sign in again/);
+        assert.ok(!/sign in again/.test(friendlyError('Listening on port 14010')), 'bare 401 in text is not auth');
+        assert.match(friendlyError(withS('Forbidden', { status: 403 })), /HTTP 403/);
+        assert.match(friendlyError(withS('x', { status: 429 })), /rate limit/);
+    });
+    await ok('usage unexpected-response banner: plain copy, [Retry][Details], technical detail only in the log', async () => {
+        const logs = [];
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, log: (m) => logs.push(m), now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch([userOk, csOk, [/usage\/summary/, () => fakeResp(200, { usageItems: 'x' })]]) });
+        const u = await svc.getAccountUsage('octocat');
+        assert.strictEqual(u.why, "GitHub returned usage data in a format this version doesn't recognise.");
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /data-ux-action="retry"/); assert.match(card, /data-ux-action="details"/);
+        assert.ok(!/usageItems/.test(card + uv.hubUsagePageHtml(u)), 'no technical detail in the UI');
+        assert.ok(logs.some(l => /usageItems is missing/.test(l)), 'technical detail is logged');
+    });
+    await ok('sidebar: cached cards tagged, dimmed, Connect/Start/Stop disabled; single signed-out card without hardcoded hours', () => {
+        const Module = require('module'); const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
+            const sp = Object.create(SP.prototype); sp._usage = null; sp.isFirstRunDismissed = () => true;
+            const cs = [{ name: 'cs-a', repository: 'octocat/repo-a', state: 'Available' }, { name: 'cs-b', repository: 'octocat/repo-b', state: 'Shutdown' }];
+            const h = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, 'x', {}, false, { errorKind: 'timeout', cachedAt: Date.now() });
+            assert.strictEqual((h.match(/cs-card is-(running|stopped) is-cached/g) || []).length, 2);
+            assert.strictEqual((h.match(/class="cached-tag"/g) || []).length, 2);
+            for (const a of ['connect', 'stop', 'start']) assert.match(h, new RegExp(`data-act="${a}" disabled aria-disabled="true"`));
+            const live = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, '', {}, false);
+            assert.ok(!/cs-card is-(running|stopped) is-cached|data-act="(connect|stop|start)" disabled/.test(live));
+            const w = sp.buildWelcomeHtml({ ghInstalled: true });
+            assert.match(w, /You're signed out\./); assert.match(w, /Sign in with gh/);
+            assert.ok(!/60 free compute hrs/.test(w)); assert.ok(!/System Health Checklist/.test(w), 'single card when gh is installed');
+            assert.match(sp.buildWelcomeHtml({ ghInstalled: false }), /System Health Checklist/, 'gh missing still shows the checklist');
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
     });
 
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));

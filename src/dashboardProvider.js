@@ -1,6 +1,9 @@
 const vscode = require('vscode');
 const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { testSshTunnel } = require('./sshManager');
+const errorUx = require('./errorUx');
+const EXT_VERSION = (() => { try { return require('../package.json').version; } catch (e) { return ''; } })();
+const logger = require('./logger');
 const { hubUsageCardHtml, hubUsagePageHtml, hubUsageScript, storageTierText, HUB_CSS } = require('./usageView');
 
 class DashboardProvider {
@@ -8,6 +11,7 @@ class DashboardProvider {
         this._context = context;
         this._usageService = usageService;
         this._usage = null;
+        this._lastGood = new Map(); // account -> { codespaces, at } for "as of <time>" when a refresh fails
         this._initialPage = null;
         this._usagePeriod = null;
         if (usageService) usageService.onDidChange(() => { if (this._panel) this.refreshHtml(); });
@@ -127,6 +131,9 @@ class DashboardProvider {
                             if (/^https:\/\/(github\.com|docs\.github\.com)\//.test(url)) await vscode.env.openExternal(vscode.Uri.parse(url));
                             break;
                         }
+                        case 'uxAction':
+                            await this._uxAction(String(msg.action || ''));
+                            break;
                         case 'usageExport':
                             await this._exportUsage(msg.format === 'json' ? 'json' : 'csv');
                             break;
@@ -206,6 +213,17 @@ class DashboardProvider {
         await this.refreshHtml();
     }
 
+    async _uxAction(action) {
+        switch (action) {
+            case 'retry': if (this._githubApi && this._githubApi.clearCache) this._githubApi.clearCache(); await this.refreshHtml(); break;
+            case 'githubStatus': await vscode.env.openExternal(vscode.Uri.parse(errorUx.GITHUB_STATUS_URL)); break;
+            case 'signIn': case 'grantScope': await vscode.commands.executeCommand('antigravity-codespaces.loginGitHub'); break;
+            case 'setupDoctor': await vscode.commands.executeCommand('antigravity-codespaces.setupDoctor'); break;
+            case 'details': logger.show(); break;
+            default: break;
+        }
+    }
+
     async _exportUsage(format) {
         const u = this._usage;
         if (!u || u.mode !== 'live') { vscode.window.showWarningMessage('No usage data to export.'); return; }
@@ -232,10 +250,12 @@ class DashboardProvider {
                 .hub-loading { text-align: center; font-size: 13px; opacity: 0.8; }
                 .hub-spinner { width: 28px; height: 28px; margin: 0 auto 12px; border-radius: 50%; border: 3px solid rgba(127,127,127,0.3); border-top-color: #0b75f0; animation: hubspin 0.9s linear infinite; }
                 @keyframes hubspin { to { transform: rotate(360deg); } }
+                body.skel { display:block; height:auto; padding: 24px; }
+                ${errorUx.UX_CSS}
               </style>
             </head>
-            <body>
-              <div class="hub-loading"><div class="hub-spinner"></div>Loading Cloud Hub…</div>
+            <body class="skel">
+              ${errorUx.skeletonHtml(3)}
             </body>
             </html>`;
 
@@ -251,9 +271,13 @@ class DashboardProvider {
             const all = await Promise.all(accounts.map(async (acc) => {
                 try {
                     const list = await this._githubApi.listCodespaces(acc.account);
+                    this._lastGood.set(acc.account, { codespaces: list || [], at: Date.now() });
                     return { account: acc.account, type: acc.type, codespaces: list || [] };
                 } catch (e) {
-                    return { account: acc.account, type: acc.type, codespaces: [], error: e.message };
+                    logger.warn(`Cloud Hub: list for ${acc.account} failed`, e && e.message);
+                    // Error banner over the last cached data, marked "as of <time>".
+                    const prev = this._lastGood.get(acc.account);
+                    return { account: acc.account, type: acc.type, codespaces: prev ? prev.codespaces : [], error: e.message, errorKind: e.kind, errorStatus: e.status, cachedAt: prev ? prev.at : null };
                 }
             }));
 
@@ -300,14 +324,41 @@ class DashboardProvider {
         }
     }
 
+    /** Banners for accounts whose list failed. Pure (tested). */
+    static accountErrorBanners(accountErrors, multi = false) {
+        return accountErrors.map(({ account, error, errorKind, errorStatus, cachedAt }) => {
+            const e = new Error(error); e.kind = errorKind; e.status = errorStatus;
+            const c = errorUx.classifyError(e);
+            // Offline with cached data is a warning; failures with nothing to show stay critical.
+            if (c.kind === 'network' && !cachedAt) c.level = 'critical';
+            if (multi) c.title = `${account}: ${c.title}`;
+            const asOf = cachedAt ? new Date(cachedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            return errorUx.bannerHtml(c, { asOf, account });
+        }).join('');
+    }
+
+    /** Amber Cloud Hub banner for usage: cached/offline data, missing scope, or near the quota. Pure (tested). */
+    static usageBanner(u, thresholds = [75, 90]) {
+        if (!u) return '';
+        if (u.offline) return errorUx.bannerHtml({ kind: 'usageOffline', level: 'warning', title: 'Usage is from the last successful refresh.', why: "Couldn't reach GitHub billing.", actions: ['retry'] }, { asOf: new Date(u.lastUpdated || u.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+        if (u.mode === 'needsPermission') return errorUx.bannerHtml({ kind: 'scope', level: 'warning', title: 'Usage needs one more GitHub permission.', why: 'The billing API needs the "user" scope.', actions: ['grantScope'] });
+        if (u.mode !== 'live' || u.isCurrent === false) return '';
+        const t = Math.min(...(Array.isArray(thresholds) && thresholds.length ? thresholds : [75]).map(Number).filter(x => x > 0));
+        const parts = [];
+        if (u.compute && u.compute.quota > 0 && (u.compute.used / u.compute.quota) * 100 >= t) parts.push(`compute ${Math.round((u.compute.used / u.compute.quota) * 100)}% (${u.compute.used} / ${u.compute.quota} core-hrs)`);
+        if (u.storage && u.storage.quota > 0 && u.storage.used != null && (u.storage.used / u.storage.quota) * 100 >= t) parts.push(`storage ${Math.round((u.storage.used / u.storage.quota) * 100)}% (${u.storage.used} / ${u.storage.quota} GB-month)`);
+        if (!parts.length) return '';
+        return errorUx.bannerHtml({ kind: 'nearQuota', level: 'warning', title: 'Close to your included Codespaces quota.', why: `Used: ${parts.join(', ')}. Usage beyond the quota is billed.`, actions: ['openUsage'] });
+    }
+
     buildDashboardHtml(accountsData, activeAccount, accountsList) {
         let total = 0, online = 0, offline = 0;
         const flat = [];
         const accountErrors = [];
 
-        accountsData.forEach(({ account, type, codespaces, error }) => {
+        accountsData.forEach(({ account, type, codespaces, error, errorKind, errorStatus, cachedAt }) => {
             if (error) {
-                accountErrors.push({ account, error: String(error).slice(0, 300) });
+                accountErrors.push({ account, error: String(error).slice(0, 300), errorKind, errorStatus, cachedAt });
             }
             (codespaces || []).forEach(cs => {
                 total++;
@@ -329,11 +380,8 @@ class DashboardProvider {
         // Logged-out (or fully undiscoverable) state: no accounts at all.
         const isLoggedOut = !accountsList || accountsList.length === 0;
 
-        const accountErrorsHtml = accountErrors.map(({ account, error }) => `
-          <div class="account-error-banner" role="alert">
-            <span class="account-error-title">Could not load workspaces for ${escapeHtml(account)}</span>
-            <span class="account-error-msg">${escapeHtml(error)}</span>
-          </div>`).join('');
+        const cachedAccounts = new Set(accountErrors.filter(e => e.cachedAt).map(e => e.account));
+        const accountErrorsHtml = DashboardProvider.accountErrorBanners(accountErrors, accountsList && accountsList.length > 1);
 
         const nonce = generateNonce();
 
@@ -380,7 +428,7 @@ class DashboardProvider {
             const accColor = getAccountColor(cs.account);
 
             return `
-            <article class="ws-card ${running ? 'is-running' : 'is-stopped'}" 
+            <article class="ws-card ${running ? 'is-running' : 'is-stopped'}${cachedAccounts.has(cs.account) ? ' is-cached' : ''}" 
                      data-account="${escapeHtml(cs.account)}" 
                      data-name="${escapeHtml(cs.name)}" 
                      data-repo="${escapeHtml(repo)}"
@@ -394,7 +442,7 @@ class DashboardProvider {
                     <span class="status-dot"></span>
                     ${running ? '<span class="status-pulse"></span>' : ''}
                   </span>
-                  <h3 class="ws-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</h3>
+                  <h3 class="ws-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</h3>${cachedAccounts.has(cs.account) ? '<span class="cached-tag" title="Last known state. Actions are disabled until a refresh succeeds.">Cached</span>' : ''}
                 </div>
                 <div class="ws-dropdown-wrap">
                   <button class="btn-more" data-cmd="openMenu" title="More options" aria-label="More options">
@@ -459,14 +507,14 @@ class DashboardProvider {
               <div class="ws-action-dock">
                 <div class="action-primary-group">
                   ${running ? `
-                    <button class="action-btn btn-connect" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}" title="Connect in Antigravity IDE">
+                    <button class="action-btn btn-connect" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Connect in Antigravity IDE"'}>
                       ${I.play} <span>Connect</span>
                     </button>
-                    <button class="action-btn btn-stop" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Stop Codespace (save hours)">
+                    <button class="action-btn btn-stop" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Stop Codespace (save hours)"'}>
                       ${I.stop} <span>Stop</span>
                     </button>
                   ` : `
-                    <button class="action-btn btn-start" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Turn ON Codespace">
+                    <button class="action-btn btn-start" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Turn ON Codespace"'}>
                       ${I.play} <span>Start</span>
                     </button>
                   `}
@@ -476,18 +524,18 @@ class DashboardProvider {
                   <button class="util-btn" data-cmd="testSSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Test SSH Tunnel Latency" aria-label="Test SSH">
                     ${I.zap}
                   </button>
-                  <button class="util-btn" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open in GitHub Web" aria-label="Open Web">
+                  ${running ? '' : `<button class="util-btn" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open in GitHub Web" aria-label="Open Web">
                     ${I.globe}
                   </button>
                   <button class="util-btn" data-cmd="openRebuildModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Rebuild DevContainer" aria-label="Rebuild">
                     ${I.build}
                   </button>
-                  <button class="util-btn" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH Command" aria-label="Copy SSH">
+                  `}<button class="util-btn" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH Command" aria-label="Copy SSH">
                     ${I.term}
                   </button>
-                  <button class="util-btn btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete Codespace" aria-label="Delete">
+                  ${running ? '' : `<button class="util-btn btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete Codespace" aria-label="Delete">
                     ${I.trash}
-                  </button>
+                  </button>`}
                 </div>
               </div>
             </article>`;
@@ -918,7 +966,7 @@ html, body {
 /* ── 3. KPI Metrics Row (4 Cards) ────────────────────────────────── */
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
 }
 
@@ -1390,6 +1438,7 @@ html, body {
 /* Action Dock at bottom of cards */
 .ws-action-dock {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -1536,6 +1585,13 @@ html, body {
   color: var(--hub-text-muted);
   word-break: break-word;
 }
+.main-canvas.is-signed-out > :not(.hub-header):not(.workspace-grid) { display: none !important; }
+.main-canvas.is-signed-out .header-action-dock { display: none; }
+.main-canvas.is-signed-out .workspace-grid { flex: 1; display: flex; align-items: center; justify-content: center; }
+.main-canvas.is-signed-out .empty-state-canvas { max-width: 440px; border-style: solid; box-shadow: var(--shadow-card); }
+.ws-card.is-cached { opacity: .72; }
+.ws-card.is-cached .action-btn[disabled] { cursor: not-allowed; }
+.cached-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #b45309; background: rgba(217,119,6,.12); border: 1px solid rgba(217,119,6,.4); border-radius: 10px; padding: 1px 7px; margin-left: 6px; }
 .empty-state-canvas {
   grid-column: 1 / -1;
   text-align: center;
@@ -1996,6 +2052,7 @@ html, body {
   .search-box { width: 100%; }
 }
 ${HUB_CSS}
+${errorUx.UX_CSS}
 </style>
 </head>
 <body>
@@ -2057,13 +2114,13 @@ ${HUB_CSS}
       <div class="rail-footer-meta">
         <span class="rail-ide-title">Antigravity IDE</span>
         <span class="rail-ide-tagline">Build anywhere.</span>
-        <span class="rail-ide-version">v1.0.0</span>
+        <span class="rail-ide-version">${EXT_VERSION ? 'v' + escapeHtml(EXT_VERSION) : ''}</span>
       </div>
     </div>
   </aside>
 
   <!-- ── 2. Main Content Canvas ───────────────────────────────────── -->
-  <main class="main-canvas">
+  <main class="main-canvas${isLoggedOut ? ' is-signed-out' : ''}">
 
     <!-- Page Header -->
     <header class="hub-header">
@@ -2071,7 +2128,7 @@ ${HUB_CSS}
         <div class="brand-hero-cloud">${I.cloudBrand}</div>
         <div class="header-titles">
           <h1>Antigravity Codespaces Cloud Hub</h1>
-          <p>Multi-Account Cloud Workspace Director &nbsp;·&nbsp; Enterprise Edition</p>
+          <p>Multi-Account Cloud Workspace Director</p>
         </div>
       </div>
 
@@ -2128,7 +2185,7 @@ ${HUB_CSS}
       </div>
 
       <!-- Storage Tier -->
-      <div class="kpi-card kpi-card-storage" id="kpiCardStorage" style="cursor:pointer;" title="Click for storage tier details">
+      <div class="kpi-card kpi-card-storage" id="kpiCardStorage" style="cursor:pointer;${storageTierText(this._usageCard || this._usage) ? '' : 'display:none;'}" title="Included storage for your plan (from GitHub)">
         <div class="kpi-icon-box kpi-icon-storage">${I.shield}</div>
         <div class="kpi-meta">
           <span class="kpi-label">STORAGE TIER</span>
@@ -2165,23 +2222,24 @@ ${HUB_CSS}
 
     <!-- ── 5. Workspace Grid (Cards) ────────────────────────────────── -->
     ${accountErrorsHtml}
+    ${DashboardProvider.usageBanner(this._usageCard || this._usage, (vscode.workspace.getConfiguration('antigravity-codespaces').get('usage.alertThresholds') || [75, 90]))}
     <section class="workspace-grid" id="workspaceGrid">
-      ${cardsHtml.length > 0 ? cardsHtml : (isLoggedOut ? `
+      ${cardsHtml.length > 0 ? cardsHtml : accountErrors.length && !isLoggedOut ? '' : (isLoggedOut ? `
         <div class="empty-state-canvas">
           <div class="empty-hero-box">${I.emptyHero}</div>
-          <h4 class="empty-title">Sign in to view your Codespaces</h4>
-          <p class="empty-sub">Connect a GitHub account to manage cloud workspaces.</p>
+          <h4 class="empty-title">You're signed out.</h4>
+          <p class="empty-sub">Sign in with the GitHub CLI to see and open your codespaces.</p>
           <button class="btn-new-cs" data-cmd="loginGitHub">
-            ${I.key} <span>Sign In with GitHub</span>
+            ${I.key} <span>Sign in with gh</span>
           </button>
         </div>
       ` : `
         <div class="empty-state-canvas">
           <div class="empty-hero-box">${I.emptyHero}</div>
-          <h4 class="empty-title">No Codespaces found</h4>
-          <p class="empty-sub">Click "New Codespace" to provision one.</p>
+          <h4 class="empty-title">No codespaces yet.</h4>
+          <p class="empty-sub">Create one from any repository you can access.</p>
           <button class="btn-new-cs" data-cmd="triggerNewCs">
-            ${I.plus} <span>New Codespace</span>
+            ${I.plus} <span>Create codespace</span>
           </button>
         </div>
       `)}
@@ -2451,7 +2509,7 @@ function persistHubState() {
       filter: activeFilter,
       view: document.getElementById('btnViewList')?.classList.contains('is-active') ? 'list' : 'grid'
     });
-  } catch (e) {}
+  } catch (e) { console.warn('Cloud Hub: could not save view state', e); }
 }
 function setFilter(acc) {
   activeFilter = acc;
@@ -2600,7 +2658,7 @@ try {
   if ((savedHubState.q && String(savedHubState.q).trim()) || (savedHubState.filter && savedHubState.filter !== 'ALL')) {
     filterCards();
   }
-} catch (e) {}
+} catch (e) { console.warn('Cloud Hub: could not restore view state', e); }
 
 // ── Card Action Delegations ───────────────────────────────────────────
 let currentActionTarget = null;
@@ -2608,6 +2666,15 @@ let currentActionTarget = null;
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('button');
   if (!btn) return;
+  if (btn.classList.contains('ux-dismiss')) { const b = btn.closest('.ux-banner'); if (b) b.remove(); return; }
+  if (btn.dataset.uxAction) {
+    const a = btn.dataset.uxAction;
+    if (a === 'openUsage') { const nav = document.getElementById('railUsageBtn'); if (nav) nav.click(); return; }
+    if (a === 'workOffline') { const b = btn.closest('.ux-banner'); if (b) b.remove(); showToast('Working offline with cached data'); return; }
+    if (a === 'retry') { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="btn-spin" aria-hidden="true"></span>Retrying…'; }
+    vscode.postMessage({ command: 'uxAction', action: a, account: btn.dataset.acc || '' });
+    return;
+  }
   const cmd = btn.dataset.cmd;
   if (!cmd) return;
 
@@ -2639,17 +2706,17 @@ document.addEventListener('click', (ev) => {
 
   switch (cmd) {
     case 'connect':
-      btn.innerHTML = '${I.play} <span>Connecting…</span>';
-      btn.disabled = true;
+      btn.innerHTML = '<span class="btn-spin" aria-hidden="true"></span><span>Connecting…</span>';
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true');
       vscode.postMessage({ command: 'connect', name, account, repo });
       break;
     case 'start':
-      btn.innerHTML = '${I.play} <span>Starting…</span>';
+      btn.innerHTML = '<span class="btn-spin" aria-hidden="true"></span><span>Starting…</span>';
       btn.disabled = true;
       vscode.postMessage({ command: 'start', name, account });
       break;
     case 'stop':
-      btn.innerHTML = '${I.stop} <span>Stopping…</span>';
+      btn.innerHTML = '<span class="btn-spin" aria-hidden="true"></span><span>Stopping…</span>';
       btn.disabled = true;
       vscode.postMessage({ command: 'stop', name, account });
       break;
@@ -2911,14 +2978,14 @@ try {
     const iconSpan = document.getElementById('themeIcon');
     if (iconSpan) iconSpan.innerHTML = savedTheme === 'dark' ? '${I.moon}' : '${I.sun}';
   }
-} catch (e) {}
+} catch (e) { console.warn('Cloud Hub: could not restore theme', e); }
 
 function toggleTheme() {
   const root = document.documentElement;
   const current = root.getAttribute('data-theme') || 'light';
   const next = current === 'light' ? 'dark' : 'light';
   root.setAttribute('data-theme', next);
-  try { localStorage.setItem('antigravity_hub_theme', next); } catch (e) {}
+  try { localStorage.setItem('antigravity_hub_theme', next); } catch (e) { console.warn('Cloud Hub: could not save theme', e); }
   const iconSpan = document.getElementById('themeIcon');
   if (iconSpan) {
     iconSpan.innerHTML = next === 'dark' ? '${I.moon}' : '${I.sun}';

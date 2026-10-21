@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.3.1] - 2026-10-21
+
+### Fixed
+- Every GitHub API request now times out after 15s ("GitHub isn't responding (15s)." [Retry] [Work offline]). Server errors (5xx) are retried once after 5s, then reported as "GitHub is having trouble right now." [Retry] [GitHub Status].
+- Connect waits for the IDE launcher to start. If it fails: "Couldn't open <repo> in this IDE." [Run Setup Doctor] [Copy SSH command], and the card goes back to Available.
+- Reconnect shows the real reason when the codespace can't be started (deleted, quota) and skips SSH.
+- Empty `catch {}` blocks replaced with logging; failures in user actions are shown to the user.
+- Setup Doctor recognises Windsurf's built-in Remote SSH (`codeium.windsurf-remote-openssh`) and no longer suggests conflicting extensions there.
+- Keep-alive guide uses `StrictHostKeyChecking accept-new`; SECURITY.md and CONTRIBUTING.md updated from 4.3.x.
+
+- Usage: a malformed billing response (or a non-numeric quantity) shows "Usage data unavailable (unexpected response)" instead of 0 or NaN.
+- Usage: an expired sign-in (401 from `/user`) shows "GitHub sign-in expired" with [Sign in again]. A 403 or 404 when the `user` scope is already present now gets its own message (SSO / fine-grained token, or not on the enhanced billing platform).
+- Usage: a rate limit (429, or 403 with no remaining requests) shows when usage can refresh, read from the rate-limit headers.
+- Usage: offline with nothing cached shows the offline banner instead of raw error text.
+- Usage: if daily usage or the previous month fails to load, a warning note appears in that section instead of the section silently disappearing.
+- Usage: if the codespaces list can't be loaded, the account is no longer treated as org-billed; the page says it's unknown.
+- API rate limits: a 403 with `x-ratelimit-remaining: 0` is treated as a rate limit (like 429) for list/start/stop/create, with the reset time.
+- Error messages match exact HTTP status / exit code fields instead of any "404", "255" or "exceeded" in the text.
+- The sidebar uses the new error UI too: cached cards are tagged, dimmed and have their actions disabled, and the signed-out screen is a single sign-in card (the hardcoded "60 free compute hrs / month" is gone).
+- The unexpected-response usage error has [Retry] and [Details]; technical detail goes only to the log.
+- The storage tile no longer shows a hardcoded "15 GB Free Tier". It shows the plan's included storage from GitHub, or is hidden.
+
+### Changed
+- Sidebar: skeleton on first load, error banner over the last cached list ("as of <time>"), classified error card, "No codespaces yet." copy.
+- Cloud Hub: the signed-out state is a single full-page card (tiles, account chips and search are hidden). Cached cards get a "Cached" tag, are dimmed, and have Connect/Start/Stop disabled until a refresh succeeds. Running cards keep only quick actions in the card; the rest are in the ⋮ menu. The rail shows the real extension version. "Enterprise Edition" subtitle removed.
+- Error levels: Critical (error notification + red banner), Warning (amber Cloud Hub banner: cached/offline data, missing scope, near quota), Info, Silent (log only). Banners have an icon + text label, a Details button that opens the log, and can be dismissed (they come back on the next refresh if the problem remains).
+- Cloud Hub: skeleton cards while loading; "No codespaces yet." [Create codespace]; signed-out card [Sign in with gh]; a failed refresh keeps the last list with "Showing data as of <time>"; busy buttons show a spinner.
+
 ## [5.3.0] - 2026-10-21
 
 ### Added
@@ -23,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CSV export guards against spreadsheet formula injection.
 - The 7-day average now counts days elapsed in the cycle, not days since first usage (overstated burn rate after idle days).
 - "Full cycle" wording replaced with an explicit projection.
+
+### Known issue
+- In 5.3.0 a malformed or unexpected billing response could show 0 core-hours instead of an error, GitHub requests had no timeout, and some billing errors (expired sign-in, 403/404, rate limit, offline) showed unclear messages. Fixed in 5.3.1.
 
 ## [5.2.0] - 2026-10-21
 

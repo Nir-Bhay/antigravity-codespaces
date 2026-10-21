@@ -4,12 +4,12 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 4.3.x   | :white_check_mark: |
-| < 4.3   | :x:                |
+| 5.3.x   | :white_check_mark: |
+| < 5.3   | :x:                |
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within Antigravity Codespaces Pro, please send an email to the maintainer or report it via GitHub Security Advisories.
+If you discover a security vulnerability within Antigravity Codespaces Pro, report it privately via [GitHub Security Advisories](https://github.com/Nir-Bhay/antigravity-codespaces/security/advisories/new).
 
 Please do **NOT** report security vulnerabilities through public GitHub issues.
 

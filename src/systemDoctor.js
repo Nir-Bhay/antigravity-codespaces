@@ -34,17 +34,8 @@ class SystemDoctor {
             });
         }
 
-        const remoteExts = [
-            'jeanp413.open-remote-ssh',
-            'ms-vscode-remote.remote-ssh',
-            'vsx-remote-ssh.vsx-remote-ssh',
-            'anysphere.remote-ssh'
-        ];
-        const hasRemoteSsh = vscode.extensions.all.some(e =>
-            remoteExts.includes(e.id) ||
-            e.id.toLowerCase().includes('remote-ssh') ||
-            e.id.toLowerCase().includes('open-remote-ssh')
-        );
+        const remote = SystemDoctor.detectRemoteSsh(vscode.extensions.all.map(e => e.id), vscode.env && vscode.env.appName);
+        const hasRemoteSsh = remote.has;
 
         let hasOpenSsh = false;
         await new Promise((resolve) => {
@@ -103,6 +94,8 @@ class SystemDoctor {
             activeAccount,
             hasOpenSsh,
             hasRemoteSsh,
+            remoteSshId: remote.id,
+            isWindsurf: remote.isWindsurf,
             remotePlatformIssues,
             sshConfigIssues,
             hasAccounts: accounts.length > 0
@@ -208,9 +201,9 @@ class SystemDoctor {
             ok: info.hasRemoteSsh,
             warn: !info.hasRemoteSsh,
             label: 'Remote SSH extension installed',
-            detail: info.hasRemoteSsh ? 'Extension detected' : 'No Remote SSH extension found',
-            fixLabel: 'Install extension',
-            fixExtension: 'jeanp413.open-remote-ssh'
+            detail: info.hasRemoteSsh ? `Extension detected${info.remoteSshId ? ' (' + info.remoteSshId + ')' : ''}` : (info.isWindsurf ? "Windsurf's built-in Remote SSH (codeium.windsurf-remote-openssh) is not enabled. Don't install Microsoft Remote-SSH or open-remote-ssh on Windsurf; they conflict." : 'No Remote SSH extension found'),
+            fixLabel: info.isWindsurf ? 'Show Windsurf Remote SSH' : 'Install extension',
+            fixExtension: info.isWindsurf ? 'codeium.windsurf-remote-openssh' : 'jeanp413.open-remote-ssh'
         });
         
         if (info.remotePlatformIssues && info.remotePlatformIssues.length > 0) {
@@ -433,6 +426,20 @@ class SystemDoctor {
         } else if (choice && choice.includes('cli.github.com')) {
             vscode.env.openExternal(vscode.Uri.parse('https://cli.github.com'));
         }
+    }
+
+    /**
+     * Which Remote-SSH extension is present. Pure (tested).
+     * Windsurf ships its own (codeium.windsurf-remote-openssh); Microsoft/open-remote-ssh conflict with it.
+     */
+    static detectRemoteSsh(extIds, appName = '') {
+        const ids = (extIds || []).map(x => String(x).toLowerCase());
+        // Windsurf may ship under another name (e.g. Devin Desktop): its bundled Remote SSH extension is the stronger signal.
+        const isWindsurf = /windsurf|devin/i.test(appName || '') || ids.includes('codeium.windsurf-remote-openssh');
+        const known = ['codeium.windsurf-remote-openssh', 'anysphere.remote-ssh', 'jeanp413.open-remote-ssh', 'ms-vscode-remote.remote-ssh', 'vsx-remote-ssh.vsx-remote-ssh'];
+        const id = known.find(k => ids.includes(k)) || ids.find(x => /remote-?(open)?ssh/.test(x)) || '';
+        const conflicts = isWindsurf ? ids.filter(x => x === 'ms-vscode-remote.remote-ssh' || x === 'jeanp413.open-remote-ssh') : [];
+        return { has: !!id, id, isWindsurf, conflicts };
     }
 
     /**

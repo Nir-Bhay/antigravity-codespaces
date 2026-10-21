@@ -31,7 +31,7 @@ STEP 1 - Detect environment
   macOS fallback paths: /Applications/<App>.app/Contents/Resources/app/bin/<cli>.
   Pick the CLI matching the IDE I'm in now; if unsure, ask me. Call it $IDE_CLI.
 - Note the marketplace: VS Code / VS Code Insiders = Microsoft Marketplace (this extension is
-  listed there only at the older v4.3.0, so install the 5.3.0 .vsix); Trae and Void = install the 5.3.0 .vsix; all others = Open VSX or an Open VSX mirror.
+  listed there only at the older v4.3.0, so install the 5.3.1 .vsix); Trae and Void = install the 5.3.1 .vsix; all others = Open VSX or an Open VSX mirror.
 
 STEP 2 - GitHub CLI
 - Run `gh --version`. If missing, install it:

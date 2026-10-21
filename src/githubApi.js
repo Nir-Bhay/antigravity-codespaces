@@ -8,14 +8,78 @@ const API_HEADERS = {
     'User-Agent': 'Antigravity-Codespaces-Pro'
 };
 
+const FETCH_TIMEOUT_MS = 15000;
+const RETRY_5XX_DELAY_MS = 5000;
+const GITHUB_STATUS_URL = 'https://www.githubstatus.com/';
+
+/** Error with a machine-readable kind ('timeout' | 'server' | 'network') for the UI. */
+class GithubRequestError extends Error {
+    constructor(kind, message, status) { super(message); this.name = 'GithubRequestError'; this.kind = kind; this.status = status; }
+}
+
+/**
+ * fetch with a 15s timeout and one automatic retry (after 5s) on 5xx.
+ * Throws GithubRequestError for timeouts, network failures and persistent 5xx.
+ */
+async function ghFetch(url, opts = {}, deps = {}) {
+    const fetchImpl = deps.fetchImpl || fetch;
+    const timeoutMs = deps.timeoutMs || FETCH_TIMEOUT_MS;
+    const retryDelay = deps.retryDelayMs == null ? RETRY_5XX_DELAY_MS : deps.retryDelayMs;
+    const once = async () => {
+        // Own controller + ref'd timer (AbortSignal.timeout's timer is unref'd and can't be cleared).
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(Object.assign(new Error('timeout'), { name: 'TimeoutError' })), timeoutMs);
+        try {
+            return await fetchImpl(url, { ...opts, signal: ctrl.signal });
+        } catch (err) {
+            if (ctrl.signal.aborted) throw new GithubRequestError('timeout', `GitHub isn't responding (${Math.round(timeoutMs / 1000)}s).`);
+            if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+                throw new GithubRequestError('timeout', `GitHub isn't responding (${Math.round(timeoutMs / 1000)}s).`);
+            }
+            throw new GithubRequestError('network', "Couldn't reach GitHub. Check your internet connection.");
+        } finally {
+            clearTimeout(timer);
+        }
+    };
+    let res = await once();
+    if (res.status >= 500) {
+        await new Promise(r => setTimeout(r, retryDelay));
+        res = await once();
+        if (res.status >= 500) throw new GithubRequestError('server', 'GitHub is having trouble right now.', res.status);
+    }
+    return res;
+}
+
+/**
+ * Rate limit: 429, or 403 with x-ratelimit-remaining: 0 (same rule as usageService).
+ * Returns a GithubRequestError(kind 'rateLimit') with resetAt from x-ratelimit-reset / retry-after, else null.
+ */
+function rateLimitError(res, nowMs = Date.now()) {
+    if (!res) return null;
+    const h = (k) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(k) : null);
+    const limited = res.status === 429 || (res.status === 403 && String(h('x-ratelimit-remaining')) === '0');
+    if (!limited) return null;
+    let resetAt = null;
+    const reset = h('x-ratelimit-reset'), ra = h('retry-after');
+    if (reset && Number.isFinite(Number(reset))) resetAt = new Date(Number(reset) * 1000).toISOString();
+    else if (ra && Number.isFinite(Number(ra))) resetAt = new Date(nowMs + Number(ra) * 1000).toISOString();
+    const when = resetAt ? ` Resets at ${new Date(resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ' Wait a few minutes, then retry.';
+    const e = new GithubRequestError('rateLimit', `GitHub API rate limit reached.${when}`, res.status);
+    e.resetAt = resetAt;
+    return e;
+}
+
 class GithubApi {
-    constructor(authManager) {
+    constructor(authManager, deps = {}) {
         this._authManager = authManager;
+        this._fetchDeps = deps;
         // Cache entries are { data, at } so entries expire instead of going stale.
         this._csCache = new Map();
         this._metaCache = new Map();
         this._portsCache = new Map();
     }
+
+    _fetch(url, opts) { return ghFetch(url, opts, this._fetchDeps); }
 
     clearCache() {
         this._csCache.clear();
@@ -67,11 +131,11 @@ class GithubApi {
         const out = [];
         for (let page = 1; page <= maxPages; page++) {
             const sep = baseUrl.includes('?') ? '&' : '?';
-            const res = await fetch(`${baseUrl}${sep}per_page=100&page=${page}`, {
+            const res = await this._fetch(`${baseUrl}${sep}per_page=100&page=${page}`, {
                 headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` }
             });
             if (res.status === 401) throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
-            if (res.status === 429) throw new Error('GitHub API rate limit reached. Wait a few minutes, then refresh.');
+            { const rl = rateLimitError(res); if (rl) throw rl; }
             if (!res.ok) return { items: out, incomplete: true, status: res.status };
             const data = await res.json();
             const items = Array.isArray(data) ? data : (data.codespaces || []);
@@ -129,7 +193,7 @@ class GithubApi {
                     : `GitHub REST API returned HTTP ${status}`);
             } catch (err) {
                 // Auth/rate-limit errors must surface, not silently fall back.
-                if (/authentication expired|rate limit/i.test(err.message || '')) throw err;
+                if (err && err.kind || /authentication expired|rate limit/i.test(err.message || '')) throw err;
                 restErr = err;
                 console.warn(`REST listCodespaces(${account}) failed, trying CLI fallback:`, err.message);
             }
@@ -189,7 +253,7 @@ class GithubApi {
         const token = await this._authManager.getToken(account);
         if (token) {
             try {
-                const res = await fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}/start`, {
+                const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}/start`, {
                     method: 'POST',
                     headers: {
                         ...API_HEADERS,
@@ -200,11 +264,12 @@ class GithubApi {
                     this._invalidateCs(account);
                     return true;
                 }
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
             } catch (err) {
-                if (/authentication expired/i.test(err.message || '')) throw err;
+                if (err && err.kind || /authentication expired/i.test(err.message || '')) throw err;
                 console.warn('REST start failed, attempting CLI fallback:', err.message);
             }
         }
@@ -224,7 +289,7 @@ class GithubApi {
                 await runCommand(ghExe, ['cs', 'ssh', '-c', name, '--', 'echo', 'started'], 45000, envOpts);
                 this._invalidateCs(account);
                 return true;
-            } catch {}
+            } catch (e) { console.warn(`start ${name}: SSH wake fallback failed:`, e && e.message); }
             console.warn('CLI start fallback failed:', cliErr.message);
             throw cliErr;
         }
@@ -237,7 +302,7 @@ class GithubApi {
         const token = await this._authManager.getToken(account);
         if (token) {
             try {
-                const res = await fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}/stop`, {
+                const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}/stop`, {
                     method: 'POST',
                     headers: {
                         ...API_HEADERS,
@@ -248,11 +313,12 @@ class GithubApi {
                     this._invalidateCs(account);
                     return true;
                 }
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
             } catch (err) {
-                if (/authentication expired/i.test(err.message || '')) throw err;
+                if (err && err.kind || /authentication expired/i.test(err.message || '')) throw err;
             }
         }
 
@@ -276,7 +342,7 @@ class GithubApi {
         const token = await this._authManager.getToken(account);
         if (token) {
             try {
-                const res = await fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}`, {
+                const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}`, {
                     method: 'DELETE',
                     headers: {
                         ...API_HEADERS,
@@ -287,11 +353,12 @@ class GithubApi {
                     this._invalidateCs(account);
                     return true;
                 }
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
             } catch (err) {
-                if (/authentication expired/i.test(err.message || '')) throw err;
+                if (err && err.kind || /authentication expired/i.test(err.message || '')) throw err;
             }
         }
 
@@ -394,7 +461,7 @@ class GithubApi {
         const token = await this._authManager.getToken(account);
         if (token) {
             try {
-                const res = await fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}`, {
+                const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}`, {
                     headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` }
                 });
                 if (res.ok) {
@@ -415,7 +482,7 @@ class GithubApi {
                     this._setFresh(this._metaCache, cacheKey, m);
                     return m;
                 }
-            } catch {}
+            } catch (err) { console.warn(`fetchMeta(${name}) failed:`, err && err.message); }
         }
 
         try {
@@ -483,7 +550,7 @@ class GithubApi {
                     }));
                 }
             } catch (err) {
-                if (/authentication expired|rate limit/i.test(err.message || '')) throw err;
+                if (err && err.kind || /authentication expired|rate limit/i.test(err.message || '')) throw err;
             }
         }
 
@@ -539,7 +606,7 @@ class GithubApi {
                 const body = {};
                 if (cleanBranch) body.ref = cleanBranch;
                 if (chosenMachine) body.machine = chosenMachine;
-                const res = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repoName}/codespaces`, {
+                const res = await this._fetch(`${GITHUB_API_BASE}/repos/${owner}/${repoName}/codespaces`, {
                     method: 'POST',
                     headers: {
                         ...API_HEADERS,
@@ -555,6 +622,7 @@ class GithubApi {
                 }
                 const errJson = await res.json().catch(() => ({}));
                 const apiMsg = errJson.message || `HTTP ${res.status}`;
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
@@ -568,7 +636,7 @@ class GithubApi {
                     throw new Error(`Invalid parameters for "${cleanRepo}": ${apiMsg}`);
                 }
             } catch (err) {
-                if (/authentication expired|owner\/repo format|creation denied|not found|Invalid parameters/i.test(err.message || '')) throw err;
+                if (err && err.kind || /authentication expired|owner\/repo format|creation denied|not found|Invalid parameters/i.test(err.message || '')) throw err;
                 console.warn('REST createCodespace failed, attempting CLI fallback:', err.message);
             }
         }
@@ -597,4 +665,5 @@ class GithubApi {
     }
 }
 
-module.exports = { GithubApi };
+module.exports = {
+    rateLimitError, ghFetch, GithubRequestError, FETCH_TIMEOUT_MS, GITHUB_STATUS_URL, GithubApi };

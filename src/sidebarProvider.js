@@ -3,6 +3,8 @@ const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { SystemDoctor } = require('./systemDoctor');
 const { getGhAuthHealth } = require('./sshManager');
 const { sidebarSummaryHtml, buildSidebarUsageScript } = require('./usageView');
+const errorUx = require('./errorUx');
+const logger = require('./logger');
 
 const FIRST_RUN_DISMISSED_KEY = 'antigravity.firstRunCardDismissed';
 
@@ -101,6 +103,9 @@ class SidebarProvider {
                 case 'openDashboard':
                     await vscode.commands.executeCommand('antigravity-codespaces.openDashboard');
                     break;
+                case 'showLogs':
+                    logger.show();
+                    break;
                 case 'refresh':
                     await this.refresh();
                     break;
@@ -188,6 +193,11 @@ class SidebarProvider {
 
     async render() {
         if (!this._view) return;
+        if (!this._rendered) {
+            // Loading: skeleton cards on first render.
+            this._rendered = true;
+            this._view.webview.html = SidebarProvider.skeletonPage();
+        }
         try {
             const accounts = await this._authManager.getAccounts();
             const diag = await SystemDoctor.diagnose(this._authManager);
@@ -214,9 +224,14 @@ class SidebarProvider {
             }
             try {
                 const codespaces = await this._githubApi.listCodespaces(activeAccount);
+                this._lastGood = { account: activeAccount, codespaces, at: Date.now() };
                 this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, codespaces, '', diag, showFirstRunCard);
             } catch (fetchErr) {
-                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, [], fetchErr.message, diag, showFirstRunCard);
+                logger.warn(`sidebar: list for ${activeAccount} failed`, fetchErr && fetchErr.message);
+                const prev = this._lastGood && this._lastGood.account === activeAccount ? this._lastGood : null;
+                // Error banner over the last cached list ("as of <time>"), or the error card when nothing is cached.
+                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, prev ? prev.codespaces : [], fetchErr.message, diag, showFirstRunCard,
+                    { errorKind: fetchErr.kind, errorStatus: fetchErr.status, cachedAt: prev ? prev.at : null });
             }
         } catch (err) {
             const diag = await SystemDoctor.diagnose(this._authManager).catch(() => ({}));
@@ -409,6 +424,7 @@ body {
 .status-warn {
     color: #d29922;
 }
+.signin-card { background: var(--vscode-editorWidget-background, rgba(127,127,127,.06)); border: 1px solid var(--vscode-widget-border, rgba(127,127,127,.25)); border-radius: 12px; padding: 22px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; width: 100%; }
 .diag-install-link {
     margin-top: 8px;
     padding-left: 22px;
@@ -417,30 +433,18 @@ body {
 </head>
 <body>
     <div class="welcome-wrap">
-        <div class="hero-illustration">
-            ${I.cloudHero}
+        <div class="signin-card" role="region" aria-label="Sign in">
+            <div class="hero-illustration">${I.cloudHero}</div>
+            <h1 class="welcome-title">You're signed out.</h1>
+            <p class="welcome-desc">Sign in with the GitHub CLI to see and open your codespaces.</p>
+            <button class="btn-primary-auth" id="loginBtn" aria-label="Sign in with gh">
+                ${I.github}
+                <span>Sign in with gh</span>
+            </button>
+            <a class="signup-link" id="patBtn" role="button" tabindex="0">Use a personal access token instead</a>
         </div>
 
-        <h1 class="welcome-title">Antigravity Codespaces</h1>
-        <div class="quota-pill">60 free compute hrs / month</div>
-        <p class="welcome-desc">
-            Connect, launch, and manage full cloud developer containers directly inside Antigravity IDE.
-        </p>
-
-        <button class="btn-primary-auth" id="loginBtn" aria-label="Sign In with GitHub">
-            ${I.github}
-            <span>Sign In with GitHub</span>
-        </button>
-
-        <button class="btn-secondary-auth" id="patBtn" aria-label="Use Personal Access Token">
-            ${I.shield}
-            <span>Use Personal Access Token (PAT)</span>
-        </button>
-
-        <div class="signup-link-wrap">
-            <a class="signup-link" id="signupLink">Don't have an account? Create one free &rarr;</a>
-        </div>
-
+        ${diag.ghInstalled ? '' : `
         <div class="diag-card">
             <div class="diag-card-title">System Health Checklist</div>
 
@@ -479,13 +483,13 @@ body {
                 <a class="signup-link" id="installGhLink">Install GitHub CLI &rarr;</a>
             </div>` : ''}
         </div>
+        `}
     </div>
 
     <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
         document.getElementById('loginBtn').addEventListener('click', () => vscode.postMessage({ command: 'loginGitHub' }));
         document.getElementById('patBtn').addEventListener('click', () => vscode.postMessage({ command: 'loginPat' }));
-        document.getElementById('signupLink').addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url: 'https://github.com/signup' }));
         const ghLink = document.getElementById('installGhLink');
         if (ghLink) ghLink.addEventListener('click', () => vscode.postMessage({ command: 'promptInstallGh' }));
     </script>
@@ -497,7 +501,18 @@ body {
      * Screens 2, 3, 4, 5, 6, 7, 8: Authenticated Sidebar UI
      * Handles List, Card expansion, Empty, Error, Search, and In-Webview Modals.
      */
-    buildSidebarHtml(accounts, activeAccount, codespaces, errorMsg = '', diag = {}, showFirstRunCard = false) {
+    /** Skeleton page shown while the first load runs. Pure. */
+    static skeletonPage() {
+        const nonce = generateNonce();
+        return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}';"><style nonce="${nonce}">body{padding:10px;font-family:var(--vscode-font-family,sans-serif);color:var(--vscode-foreground)}${errorUx.UX_CSS}.ux-skel-grid{grid-template-columns:1fr}</style></head><body>${errorUx.skeletonHtml(3)}</body></html>`;
+    }
+
+    buildSidebarHtml(accounts, activeAccount, codespaces, errorMsg = '', diag = {}, showFirstRunCard = false, errOpts = {}) {
+        const errC = errorMsg ? errorUx.classifyError(Object.assign(new Error(errorMsg), { kind: errOpts.errorKind, status: errOpts.errorStatus })) : null;
+        const cachedBanner = errC && errOpts.cachedAt
+            ? errorUx.bannerHtml({ ...errC, level: errC.level === 'critical' && errC.kind !== 'auth' ? 'warning' : errC.level, actions: errC.actions.filter(a => a === 'retry' || a === 'signIn' || a === 'details') }, { asOf: new Date(errOpts.cachedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })
+            : '';
+        if (cachedBanner) errorMsg = '';
         const nonce = generateNonce();
         const ghHealth = diag.ghAuthHealth || {};
         
@@ -579,6 +594,8 @@ body {
             </div>
         </div>` : '';
 
+        const isCached = !!cachedBanner;
+        const dis = isCached ? ' disabled aria-disabled="true"' : '';
         const csListHtml = codespaces.map(cs => {
             const isRunning = cs.state === 'Available';
             const branch = cs.gitStatus?.ref || '—';
@@ -587,7 +604,7 @@ body {
             const name = cs.displayName || cs.name;
 
             return `
-            <article class="cs-card ${isRunning ? 'is-running' : 'is-stopped'}" id="card-${escapeHtml(cs.name)}" data-name="${escapeHtml(cs.name.toLowerCase())}" data-repo="${escapeHtml((cs.repository || '').toLowerCase())}" data-branch="${escapeHtml(branch.toLowerCase())}">
+            <article class="cs-card ${isRunning ? 'is-running' : 'is-stopped'}${isCached ? ' is-cached' : ''}" id="card-${escapeHtml(cs.name)}" data-name="${escapeHtml(cs.name.toLowerCase())}" data-repo="${escapeHtml((cs.repository || '').toLowerCase())}" data-branch="${escapeHtml(branch.toLowerCase())}">
                 <!-- Card Header: Status + Title + Action Controls -->
                 <header class="cs-card-header">
                     <div class="cs-header-left" data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" title="Click to toggle details">
@@ -595,18 +612,18 @@ body {
                             <span class="status-dot ${isRunning ? 'is-online' : 'is-offline'}"></span>
                             <span class="status-text ${isRunning ? 'text-running' : 'text-stopped'}">${isRunning ? 'Running' : 'Stopped'}</span>
                         </div>
-                        <h2 class="cs-name" title="${escapeHtml(name)}">${escapeHtml(name)}</h2>
+                        <h2 class="cs-name" title="${escapeHtml(name)}">${escapeHtml(name)}</h2>${isCached ? '<span class="cached-tag" title="Last known state. Actions are disabled until a refresh succeeds.">Cached</span>' : ''}
                     </div>
 
                     <div class="cs-actions-group">
-                        <button class="act-btn btn-connect" data-act="connect" data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" data-repo="${escapeHtml(cs.repository)}" title="Connect in Antigravity IDE" aria-label="Connect">
+                        <button class="act-btn btn-connect" data-act="connect"${dis} data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" data-repo="${escapeHtml(cs.repository)}" title="Connect in Antigravity IDE" aria-label="Connect">
                             ${I.play}
                         </button>
                         ${isRunning ? `
-                        <button class="act-btn btn-stop" data-act="stop" data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" title="Stop Codespace (save hours)" aria-label="Stop Codespace">
+                        <button class="act-btn btn-stop" data-act="stop"${dis} data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" title="Stop Codespace (save hours)" aria-label="Stop Codespace">
                             ${I.stop}
                         </button>` : `
-                        <button class="act-btn btn-start" data-act="start" data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" title="Turn ON Codespace" aria-label="Turn ON Codespace">
+                        <button class="act-btn btn-start" data-act="start"${dis} data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" title="Turn ON Codespace" aria-label="Turn ON Codespace">
                             ${I.power}
                         </button>`}
                         <button class="act-btn btn-globe" data-act="openWeb" data-cs="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account || activeAccount)}" title="Open in GitHub Web" aria-label="Open in Web">
@@ -671,6 +688,9 @@ body {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GitHub Codespaces</title>
 <style nonce="${nonce}">
+${errorUx.UX_CSS}
+.cs-card.is-cached{opacity:.72}.cs-card.is-cached .act-btn[disabled]{cursor:not-allowed;opacity:.5}.cached-tag{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#b45309;background:rgba(217,119,6,.12);border:1px solid rgba(217,119,6,.4);border-radius:10px;padding:0 6px;margin-left:6px;align-self:flex-start;width:fit-content}
+.ux-banner{margin:0 0 10px;font-size:12px}.ux-banner .ux-actions{margin-top:4px}
 *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
@@ -1603,12 +1623,13 @@ body {
     </div>
 
     <!-- Main Content: Error / Empty / Cards List -->
+    ${cachedBanner}
     ${errorMsg ? `
     <!-- Screen 5: Error State -->
     <div class="error-state-card" id="errorView">
         <span class="error-icon-circle">${I.alertCircle}</span>
-        <div class="error-headline">Failed to load Codespaces:</div>
-        <div class="error-subtext">${escapeHtml(errorMsg)}</div>
+        <div class="error-headline"><span class="ux-label">${escapeHtml(errorUx.LEVELS[errC.level].label)}</span> ${escapeHtml(errC.title)}</div>
+        <div class="error-subtext">${escapeHtml(errC.why && errC.why !== errC.title ? errC.why : '')}</div>
         <div style="display:flex; gap:8px; width:100%; justify-content:center; margin-top:10px; flex-wrap:wrap;">
             <button class="btn-retry" id="retryBtn">
                 ${I.refresh}
@@ -1625,13 +1646,13 @@ body {
     <!-- Screen 4: Empty State -->
     <div class="empty-state-view" id="emptyView">
         <div class="empty-hero-icon">${I.emptyHero}</div>
-        <div class="empty-title">No Codespaces found.</div>
+        <div class="empty-title">No codespaces yet.</div>
         <div class="empty-desc">
-            <a class="empty-link-inline" id="emptyCreateLink">Create</a> a new Codespace to get started with cloud development.
+            Create one from any repository you can access.
         </div>
         <button class="btn-primary-create" id="emptyCreateBtn">
             ${I.plus}
-            <span>Create New Codespace</span>
+            <span>Create codespace</span>
         </button>
     </div>
     ` : `
@@ -1802,6 +1823,18 @@ body {
             vscode.postMessage({ command: 'createCodespace' });
         });
     }
+
+    // ── Error banners: dismiss (comes back on next refresh if still failing) + actions ──
+    document.addEventListener('click', (ev) => {
+        const b = ev.target.closest && ev.target.closest('button');
+        if (!b) return;
+        if (b.classList.contains('ux-dismiss')) { const x = b.closest('.ux-banner'); if (x) x.remove(); return; }
+        const a = b.dataset && b.dataset.uxAction;
+        if (!a) return;
+        if (a === 'retry') { b.disabled = true; b.innerHTML = '<span class="btn-spin" aria-hidden="true"></span>Retrying…'; vscode.postMessage({ command: 'refresh' }); }
+        else if (a === 'signIn' || a === 'grantScope') vscode.postMessage({ command: 'loginGitHub' });
+        else if (a === 'details') vscode.postMessage({ command: 'showLogs' });
+    });
 
     // ── Retry & Auth Actions (Error state) ──
     const retryBtn = document.getElementById('retryBtn');
