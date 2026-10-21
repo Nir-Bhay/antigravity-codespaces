@@ -1012,7 +1012,7 @@ function ok(name, fn) {
         assert.strictEqual(uv.storageTierText(null), '15 GB Free Tier');
         const page = uv.hubUsagePageHtml(u);
         assert.match(page, /id="usagePage"/);
-        assert.match(page, /RESETS/);
+        assert.match(page, /Resets<\/span><b>/);
         assert.match(page, /<svg/);
         assert.match(page, /stroke-dasharray/);
         assert.match(page, /class="usage-table sortable"/);
@@ -1180,7 +1180,12 @@ function ok(name, fn) {
         assert.match(page, /4-core machine uses your quota 2× as fast/);
         assert.match(page, /<title>Oct \d+: [\d.]+ core-hrs · \$[\d.]+<\/title>/);
         assert.match(page, /Cumulative vs pace/);
-        assert.match(page, /Storage · GB-month per day/);
+        assert.match(page, /Daily storage GB-month sparkline/);
+        assert.match(page, /FORECAST.*?~[\d.]+ \/ 180.*?by Nov 1 · (won't run out|runs out)/s);
+        assert.ok(!/DAYS LEFT|PROJECTED BY RESET/.test(page), 'merged into Forecast');
+        assert.strictEqual((page.match(/class="usage-tile"/g) || []).length, 4, '4 tiles, no orphan row');
+        assert.match(page, /usage-qfacts.*?Billable.*?Resets/s);
+        assert.match(page, /class="usage-scroll"><table class="usage-table sortable" id="usageRepoTable"/);
         assert.match(page, /Compared with September 2026/);
         assert.match(page, /id="usageRepoFilter"/);
         assert.match(page, /class="usage-expand" aria-expanded="false"/);

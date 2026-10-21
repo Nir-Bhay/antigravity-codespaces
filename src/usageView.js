@@ -137,7 +137,14 @@ const HUB_CSS = `
 .usage-panel{background:var(--hub-bg-card);border:1px solid var(--hub-border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-card)}
 .usage-panel h3{font-size:12px;font-weight:600;color:var(--hub-text-muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 10px;display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
 .usage-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.usage-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.usage-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.usage-qfacts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--hub-border-subtle)}
+.usage-qfacts>div{display:flex;flex-direction:column;gap:2px}
+.usage-qfacts b{font-size:16px}
+.usage-spark{display:flex;flex-direction:column;gap:2px;margin:4px 0 8px}
+.usage-spark svg{width:100%;height:44px}
+.usage-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.usage-scroll .usage-table{min-width:560px}
 .usage-tile{background:var(--hub-bg-card);border:1px solid var(--hub-border);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:3px;cursor:help}
 .usage-tile .kpi-value{font-size:20px}
 .usage-tile .usage-sub{font-size:11px;color:var(--hub-text-muted)}
@@ -149,7 +156,9 @@ const HUB_CSS = `
 .usage-table td.num,.usage-table th.num{text-align:right}
 .usage-table tfoot td{font-weight:600;border-bottom:none}
 .usage-table tr.usage-detail td{background:var(--hub-bg-page);padding:10px 12px}
-.usage-expand{background:none;border:1px solid var(--hub-border);color:var(--hub-text-muted);border-radius:4px;width:20px;height:20px;cursor:pointer;line-height:1;padding:0;margin-right:6px;font-size:10px}
+.usage-expand{background:none;border:1px solid var(--hub-border);color:var(--hub-text-muted);border-radius:6px;min-width:28px;height:28px;cursor:pointer;line-height:1;padding:0;margin:-4px 8px -4px 0;font-size:13px;vertical-align:middle}
+.usage-expand:hover,.usage-expand:focus-visible{border-color:var(--hub-accent);color:var(--hub-accent);outline:none}
+.usage-repo-row td:first-child{white-space:nowrap}
 .usage-expand[aria-expanded="true"]{background:var(--hub-accent-soft);color:var(--hub-accent);border-color:var(--hub-accent)}
 .usage-page-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .usage-page-head h2{font-size:16px;margin:0;color:var(--hub-text-main)}
@@ -172,6 +181,7 @@ const HUB_CSS = `
 .usage-legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:4px;border-radius:2px}
 .usage-hidden{display:none !important}
 @media (max-width: 900px){.usage-grid2{grid-template-columns:1fr}.usage-hero{flex-wrap:wrap}}
+@media (max-width: 600px){.usage-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.usage-mom{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 `;
 
 function levelOf(used, quota) { const p = quota > 0 ? (used / quota) * 100 : 0; return p >= 90 ? 'red' : p >= 75 ? 'amber' : 'ok'; }
@@ -244,7 +254,7 @@ function storageTierText(u) {
  * @param {{unit:string, idealPerDay?:number, color?:string, label:string, digits?:number}} o
  */
 function barChartSvg(series, o) {
-    const W = 600, H = 140, n = Math.max(1, series.length), bw = W / n;
+    const W = 600, H = o.height || 140, n = Math.max(1, series.length), bw = W / n;
     const ideal = o.idealPerDay || 0;
     const max = Math.max(1e-6, ideal * 1.3, ...series.map(x => x.value || 0));
     const dg = o.digits == null ? 2 : o.digits;
@@ -328,16 +338,14 @@ function hubUsagePageHtml(u, opts = {}) {
     }
     const s = u.stats, a = u.analytics, d = u.dollars;
     const proj = projectionText(u);
+    const forecastSub = a ? (a.projectionLabel === 'runs out' && a.runOutDate ? `by ${escapeHtml(fmtDate(u.resetDate))} · runs out ~${escapeHtml(fmtDate(a.runOutDate))}` : a.projectionLabel === "won't run out before reset" ? `by ${escapeHtml(fmtDate(u.resetDate))} · won't run out` : escapeHtml(a.projectionLabel)) : escapeHtml(s.daysLeftLabel);
     const tiles = [
-        tile('CORE-HOURS USED', `${n1(s.used)} / ${s.quota}`, 'From the billing summary API: compute grossQuantity (machine-hours) × cores of the SKU', u.compute ? money(u.compute.amount) + ' of ' + money(u.compute.quotaValue) + ' included' : ''),
-        tile('REMAINING', n1(s.remaining), 'Derived: plan quota − core-hrs used (never below 0)', `${Math.round(100 - s.pct)}% of quota`, true),
+        tile('CORE-HOURS USED', `${n1(s.used)} / ${s.quota}`, 'From the billing summary API: compute grossQuantity (machine-hours) × cores of the SKU. Remaining = quota − used (derived)', `${n1(s.remaining)} left${u.compute ? ' · ' + money(u.compute.amount) + ' of ' + money(u.compute.quotaValue) : ''}`),
         tile('AVG / DAY', d1(s.avgPerDay), `Derived: core-hrs in the last ${s.avgWindowDays || 7} day(s) ÷ ${s.avgWindowDays || 7}`, a ? `cycle avg ${d1(a.avgCycle)}` : 'last 7 days', true),
-        tile('DAYS LEFT', escapeHtml(daysLeftValue(s)), 'Derived: remaining ÷ last-7-day average', escapeHtml(s.daysLeftLabel), true),
-        a ? tile('PROJECTED BY RESET', `~${n1(a.projectedEnd)}`, PROJECTION_TIP, a.runOutDate ? 'runs out ~' + escapeHtml(fmtDate(a.runOutDate)) : escapeHtml(a.projectionLabel), true) : '',
-        tile('STORAGE', u.storage && u.storage.used != null ? `${n1(u.storage.used)} / ${u.storage.quota}` : '—', 'From the billing summary API: storage grossQuantity (GB-month)', u.storage && u.storage.amount != null ? money(u.storage.amount) + ' of ' + money(u.storage.quotaValue) : ''),
-        d ? tile('BILLABLE', money(d.billable), 'From the billing summary API: netAmount (what you pay after the included discount)', `${money(d.consumed)} consumed`) : '',
-        tile('RESETS', escapeHtml(fmtDate(u.resetDate)), 'Personal accounts: quotas reset at the start of each calendar month (UTC)', a ? `${n1(a.daysRemaining)} days away` : '')
+        tile('FORECAST', a && a.projectedEnd != null && a.projectionLabel !== 'Closed month' ? `~${n1(a.projectedEnd)} / ${s.quota}` : escapeHtml(daysLeftValue(s)), PROJECTION_TIP + ' Days left = remaining ÷ last-7-day average.', forecastSub, true),
+        tile('STORAGE', u.storage && u.storage.used != null ? `${n1(u.storage.used)} / ${u.storage.quota}` : '—', 'From the billing summary API: storage grossQuantity (GB-month)', u.storage && u.storage.amount != null ? 'GB-month · ' + money(u.storage.amount) + ' of ' + money(u.storage.quotaValue) : 'GB-month')
     ].join('');
+    const quotaExtra = `<div class="usage-qfacts">${d ? `<div title="From the billing summary API: netAmount (what you pay after the included discount)"><span class="usage-muted">Billable</span><b>${money(d.billable)}</b><span class="usage-muted">${money(d.consumed)} consumed</span></div>` : ''}<div title="Personal accounts: quotas reset at the start of each calendar month (UTC)"><span class="usage-muted">Resets</span><b>${escapeHtml(fmtDate(u.resetDate))}</b><span class="usage-muted">${a ? n1(a.daysRemaining) + ' days away' : ''}</span></div></div>`;
 
     // Remaining clock hours per machine size
     const machines = a ? `<div class="usage-panel"><h3>Hours left by machine size <span class="usage-derived">derived</span></h3>
@@ -352,6 +360,14 @@ function hubUsagePageHtml(u, opts = {}) {
 <div><div class="usage-muted">Consumed</div><b>${money(u.mom.consumed.current)}</b> vs ${money(u.mom.consumed.previous)}<br>${deltaHtml(u.mom.consumed, '', true)}</div>
 <div><div class="usage-muted">Billable</div><b>${money(u.mom.billable.current)}</b> vs ${money(u.mom.billable.previous)}<br>${deltaHtml(u.mom.billable, '', true)}</div>
 </div></div>` : '';
+
+    // Storage panel with tip (no delete action)
+    const topSt = (u.storageRows || [])[0];
+    const storagePanel = `<div class="usage-panel"><h3>Storage · ${u.storage && u.storage.used != null ? `${n1(u.storage.used)} / ${u.storage.quota} GB-month (from GitHub billing)` : 'Not available — GitHub billing API did not return storage'}</h3>
+${a && (u.storageSeries || []).length ? `<div class="usage-spark" title="GB-month accrued per day (hover a bar for the day and $)">${barChartSvg(u.storageSeries, { unit: 'GB-month', color: 'var(--hub-purple-icon)', label: 'Daily storage GB-month sparkline', digits: 3, height: 44 })}<span class="usage-muted">GB-month per day</span></div>` : ''}
+${topSt ? `<div class="usage-proj">Most storage this month: <b>${escapeHtml(topSt.repo)}</b> — ${n2(topSt.storageGbMonths)} GB-month (${money(topSt.amount)}).</div>` : ''}
+<div class="usage-muted" style="margin-top:6px;">Storage is billed for every codespace that exists, including stopped ones, until it is deleted (<button class="usage-link" data-usage-url="${LINKS.storageDocs}">GitHub docs ↗</button>). Stopping a codespace only stops compute charges.</div>
+${u.orgBilled && u.orgBilled.length ? `<div class="usage-muted" style="margin-top:6px;">Some codespaces are billed to ${escapeHtml(u.orgBilled.join(', '))} and are not counted.</div>` : ''}</div>`;
 
     // Charts
     let charts = '';
@@ -376,14 +392,11 @@ ${a.today ? `<span title="Today (UTC). Daily rows can lag a few hours">Today: <b
 <div class="usage-panel"><h3>Cumulative vs pace</h3>${cumulativeSvg(series, s.quota)}
 <div class="usage-legend"><span><i style="background:var(--hub-accent)"></i>cumulative core-hrs</span><span><i style="background:var(--hub-warning)"></i>ideal pace</span><span><i style="background:var(--hub-danger)"></i>quota</span></div>
 ${proj ? `<div class="usage-proj" style="margin-top:6px;" title="${escapeHtml(PROJECTION_TIP)}">${escapeHtml(proj)}<span class="usage-derived">derived</span></div>` : ''}</div>
-<div class="usage-panel usage-chart-wrap"><h3>Storage · GB-month per day ${seg('s')}</h3>
-<div data-chart="s" data-r="30">${barChartSvg(st, { unit: 'GB-month', color: 'var(--hub-purple-icon)', label: 'Daily storage GB-month for the month', digits: 3 })}</div>
-<div data-chart="s" data-r="7" class="usage-hidden">${barChartSvg(stLast7, { unit: 'GB-month', color: 'var(--hub-purple-icon)', label: 'Daily storage GB-month, last 7 days', digits: 3 })}</div>
-<div class="usage-legend"><span><i style="background:var(--hub-purple-icon)"></i>GB-month accrued per day (hover for $)</span></div></div>
-<div class="usage-panel"><h3>Included quotas</h3><div style="display:flex;flex-direction:column;gap:10px;">${quotaBarsHtml(u, opts)}</div><div style="margin-top:8px;">${billingLineHtml(u)}</div></div>
+<div class="usage-panel"><h3>Included quotas</h3><div style="display:flex;flex-direction:column;gap:10px;">${quotaBarsHtml(u, opts)}</div>${quotaExtra}<div style="margin-top:8px;">${billingLineHtml(u)}</div></div>
+${storagePanel}
 </div>`;
     } else {
-        charts = `<div class="usage-panel"><h3>Included quotas</h3><div style="display:flex;flex-direction:column;gap:10px;">${quotaBarsHtml(u, opts)}</div><div style="margin-top:8px;">${billingLineHtml(u)}</div></div>
+        charts = `<div class="usage-panel"><h3>Included quotas</h3><div style="display:flex;flex-direction:column;gap:10px;">${quotaBarsHtml(u, opts)}</div>${quotaExtra}<div style="margin-top:8px;">${billingLineHtml(u)}</div></div>
 <div class="usage-panel"><h3>Daily usage</h3>${chartSvg(u)}<div class="usage-muted">Bars: core-hours per day · dashed line: pace that uses the quota exactly at reset</div></div>`;
     }
 
@@ -402,23 +415,17 @@ ${(r.skus || []).map(k => `<tr><td>${escapeHtml(k.sku)}${k.cores ? ` <span class
     const total = u.dollars ? u.dollars.consumed : repos.reduce((t, r) => t + (Number(r.amount) || 0), 0);
     const foot = repos.length ? `<tfoot><tr><td>Total</td><td class="num">${n1(repos.reduce((t, r) => t + r.coreHours, 0))}</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">${money(total)}</td></tr></tfoot>` : '';
     const repoPanel = `<div class="usage-panel"><h3>Per repository <span class="usage-actions"><input class="usage-filter" id="usageRepoFilter" type="search" placeholder="Filter repositories…" aria-label="Filter repositories"><button class="btn-header-secondary" data-usage-export="csv">Export CSV</button><button class="btn-header-secondary" data-usage-export="json">Export JSON</button></span></h3>
-<table class="usage-table sortable" id="usageRepoTable"><thead><tr><th scope="col">Repository</th><th scope="col" class="num">Core-hours</th><th scope="col" class="num">Storage GB-mo</th><th scope="col" class="num">Share of $</th><th scope="col" class="num">Compute / storage $</th><th scope="col" class="num">Amount</th></tr></thead><tbody>${rows}</tbody>${foot}</table>
+<div class="usage-scroll"><table class="usage-table sortable" id="usageRepoTable"><thead><tr><th scope="col">Repository</th><th scope="col" class="num">Core-hours</th><th scope="col" class="num">Storage GB-mo</th><th scope="col" class="num">Share of $</th><th scope="col" class="num">Compute / storage $</th><th scope="col" class="num">Amount</th></tr></thead><tbody>${rows}</tbody>${foot}</table></div>
 ${u.dailyGapCoreHours > 0.05 ? `<div class="usage-muted" style="margin-top:6px;">Daily rows currently add up to ${n1(s.used - u.dailyGapCoreHours)} core-hrs; the summary reports ${n1(s.used)}. GitHub's daily rows can trail the summary by a few hours.</div>` : ''}</div>`;
 
-    // Storage panel with tip (no delete action)
-    const topSt = (u.storageRows || [])[0];
-    const storagePanel = `<div class="usage-panel"><h3>Storage · ${u.storage && u.storage.used != null ? `${n1(u.storage.used)} / ${u.storage.quota} GB-month (from GitHub billing)` : 'Not available — GitHub billing API did not return storage'}</h3>
-${topSt ? `<div class="usage-proj">Most storage this month: <b>${escapeHtml(topSt.repo)}</b> — ${n2(topSt.storageGbMonths)} GB-month (${money(topSt.amount)}).</div>` : ''}
-<div class="usage-muted" style="margin-top:6px;">Storage is billed for every codespace that exists, including stopped ones, until it is deleted (<button class="usage-link" data-usage-url="${LINKS.storageDocs}">GitHub docs ↗</button>). Stopping a codespace only stops compute charges.</div>
-${u.orgBilled && u.orgBilled.length ? `<div class="usage-muted" style="margin-top:6px;">Some codespaces are billed to ${escapeHtml(u.orgBilled.join(', '))} and are not counted.</div>` : ''}</div>`;
-
+    const storageTail = a ? '' : storagePanel;
     return `<section class="usage-page" id="usagePage">${head(title)}
 <div class="usage-tiles">${tiles}</div>
 ${machines}
 ${charts}
 ${mom}
 ${repoPanel}
-${storagePanel}
+${storageTail}
 <div class="usage-panel" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">${links}<span class="usage-muted">Source: GitHub billing API · dates in UTC · values marked <span class="usage-derived">derived</span> are arithmetic on that data</span></div>
 </section>`;
 }
