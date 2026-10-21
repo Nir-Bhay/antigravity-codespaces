@@ -1,3 +1,5 @@
+const { UsageService } = require('./src/usageService');
+const { UsageDashboard } = require('./src/usageDashboard');
 const vscode = require('vscode');
 const fs = require('fs');
 const { execFile } = require('child_process');
@@ -54,7 +56,21 @@ async function activate(context) {
     globalGithubApi = githubApi;
 
     const statusBar = new StatusBarManager(context, authManager, githubApi);
-    const sidebarProvider = new SidebarProvider(context, authManager, githubApi);
+    const usageService = new UsageService({
+        authManager,
+        state: context.globalState,
+        getConfig: () => {
+            const c = vscode.workspace.getConfiguration('antigravity-codespaces');
+            return {
+                plan: c.get('usage.plan', 'auto'),
+                monthlyCoreHours: c.get('usage.monthlyCoreHours', 120),
+                monthlyStorageGb: c.get('usage.monthlyStorageGb', 15)
+            };
+        }
+    });
+    const usageDashboard = new UsageDashboard(context, authManager, usageService);
+    const sidebarProvider = new SidebarProvider(context, authManager, githubApi, usageService);
+    usageService.onDidChange(() => sidebarProvider.render());
     const dashboardProvider = new DashboardProvider(context, authManager, githubApi);
     const setupDoctorProvider = new SetupDoctorProvider(context, authManager);
 
@@ -242,6 +258,28 @@ async function activate(context) {
                 e.affectsConfiguration('antigravity-codespaces.serverAliveCountMax')) {
                 sidebarProvider.refresh();
             }
+        })
+    );
+
+    // ── Usage analytics commands ─────────────────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('antigravity-codespaces.usageDashboard', async () => {
+            await usageDashboard.open();
+        }),
+        vscode.commands.registerCommand('antigravity-codespaces.refreshUsage', async () => {
+            await usageService.refresh();
+        }),
+        vscode.commands.registerCommand('antigravity-codespaces.usageGrantAccess', async (account) => {
+            // Adds the `user` scope for the billing API. Never switches the active gh account.
+            const t = vscode.window.createTerminal('gh auth refresh (usage)');
+            t.show();
+            t.sendText('gh auth refresh -h github.com -s user');
+            if (account) {
+                vscode.window.showInformationMessage(`If gh asks, approve the "user" scope for ${account} in the browser, then run "Codespaces: Refresh Usage".`);
+            }
+        }),
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('antigravity-codespaces.usage')) usageService.refresh();
         })
     );
 
@@ -857,6 +895,7 @@ async function activate(context) {
                 async () => {
                     try {
                         await githubApi.startCodespace(cs.name, cs.account);
+                        usageService.observe(cs.account, [{ ...cs, state: 'Available' }]).catch(() => {});
                         vscode.window.showInformationMessage(`${cs.displayName || cs.name} is starting!`);
                         sidebarProvider.refresh();
                         dashboardProvider.refreshHtml();
@@ -877,6 +916,7 @@ async function activate(context) {
             if (!cs) return;
             try {
                 await githubApi.stopCodespace(cs.name, cs.account);
+                usageService.observe(cs.account, [{ ...cs, state: 'Shutdown' }]).catch(() => {});
                 vscode.window.showInformationMessage(`Stopped ${cs.displayName || cs.name}.`);
                 sidebarProvider.refresh();
                 dashboardProvider.refreshHtml();

@@ -735,5 +735,196 @@ function ok(name, fn) {
         assert.ok(src.includes("Folder \"${remoteFolder}\" not found"), 'offers alternative when folder missing');
     });
 
+    // ── Usage analytics ─────────────────────────────────────────────────
+    console.log('usage analytics');
+    const us = require('../src/usageService');
+    const uv = require('../src/usageView');
+    const NOW = Date.UTC(2026, 9, 21, 12, 0, 0); // 21 Oct 2026
+    const RESET = Date.UTC(2026, 10, 1);
+    function fakeResp(status, body, scopes = '') {
+        return { status, ok: status >= 200 && status < 300, json: async () => body, headers: { get: (k) => (k.toLowerCase() === 'x-oauth-scopes' ? scopes : null) } };
+    }
+    function makeFetch(routes, calls = []) {
+        return async (url, opts) => {
+            calls.push({ url, auth: opts.headers.Authorization });
+            for (const [re, fn] of routes) if (re.test(url)) return fn(url, opts);
+            return fakeResp(404, { message: 'Not Found' });
+        };
+    }
+    function daysOf(n, perDay, endMs = NOW) {
+        const d = {};
+        for (let i = 0; i < n; i++) d[new Date(endMs - i * 86400000).toISOString().slice(0, 10)] = perDay;
+        return d;
+    }
+    await ok('quota math: Free 120, Pro 180, custom, org plan has no personal quota', () => {
+        assert.strictEqual(us.resolvePlan('free').coreHours, 120);
+        assert.strictEqual(us.resolvePlan('free').storageGb, 15);
+        assert.strictEqual(us.resolvePlan('pro').coreHours, 180);
+        assert.strictEqual(us.resolvePlan('pro').storageGb, 20);
+        assert.strictEqual(us.resolvePlan('', {}).coreHours, 120);
+        assert.strictEqual(us.resolvePlan('free', { plan: 'pro' }).coreHours, 180);
+        assert.strictEqual(us.resolvePlan('pro', { plan: 'custom', monthlyCoreHours: 60, monthlyStorageGb: 5 }).coreHours, 60);
+        const team = us.resolvePlan('team');
+        assert.strictEqual(team.personal, false);
+        assert.strictEqual(team.coreHours, 0);
+    });
+    await ok('core-hours = cores x hours (4-core x 10h = 40) and prices', () => {
+        assert.strictEqual(us.coreHoursFor(4, 10), 40);
+        assert.strictEqual(us.coreHoursFor(2, -5), 0);
+        assert.strictEqual(us.pricePerHour(2), 0.18);
+        assert.strictEqual(us.pricePerHour(32), 2.88);
+        assert.strictEqual(us.coresFromSku('Codespaces compute 8 core'), 8);
+    });
+    await ok('remaining = quota - used, never below 0; pct levels amber/red', () => {
+        const a = us.computeStats({ quota: 120, used: 40, now: NOW, reset: RESET });
+        assert.strictEqual(a.remaining, 80);
+        assert.strictEqual(a.level, 'ok');
+        assert.strictEqual(us.computeStats({ quota: 120, used: 90, now: NOW, reset: RESET }).level, 'amber');
+        assert.strictEqual(us.computeStats({ quota: 120, used: 110, now: NOW, reset: RESET }).level, 'red');
+        const over = us.computeStats({ quota: 120, used: 500, now: NOW, reset: RESET });
+        assert.strictEqual(over.remaining, 0);
+        assert.strictEqual(over.daysLeftLabel, 'quota used up');
+    });
+    await ok('days left: <3 days -> not enough data, uses last-7-day avg, full cycle, no divide by zero', () => {
+        assert.strictEqual(us.computeStats({ quota: 120, used: 4, daily: daysOf(2, 2), now: NOW, reset: RESET }).daysLeftLabel, 'not enough data');
+        const s = us.computeStats({ quota: 120, used: 100, daily: daysOf(10, 10), now: NOW, reset: RESET });
+        assert.strictEqual(s.avgPerDay, 10);
+        assert.strictEqual(s.daysLeftLabel, 'about 2 days left');
+        const slow = us.computeStats({ quota: 120, used: 3, daily: daysOf(5, 0.5), now: NOW, reset: RESET });
+        assert.strictEqual(slow.daysLeftLabel, 'lasts the full cycle');
+        const zero = us.computeStats({ quota: 120, used: 0, daily: daysOf(5, 0), now: NOW, reset: RESET });
+        assert.strictEqual(zero.daysLeftLabel, 'lasts the full cycle');
+        const q0 = us.computeStats({ quota: 0, used: 0, now: NOW, reset: RESET });
+        assert.ok(Number.isFinite(q0.pct));
+    });
+    await ok('parseSummary converts per-core SKUs to core-hours and uses discountQuantity', () => {
+        const p = us.parseSummary({ usageItems: [
+            { product: 'codespaces', sku: 'Codespaces compute 4 core', unitType: 'Hours', grossQuantity: 10, discountQuantity: 10, netAmount: 0 },
+            { product: 'codespaces', sku: 'Codespaces storage', unitType: 'GigabyteMonths', grossQuantity: 3.5, discountQuantity: 3.5, netAmount: 0 },
+            { product: 'actions', sku: 'Actions Linux', grossQuantity: 999 }
+        ] });
+        assert.strictEqual(p.computeCoreHours, 40);
+        assert.strictEqual(p.includedCoreHours, 40);
+        assert.strictEqual(p.storageGbMonths, 3.5);
+    });
+    const userBody = (login, plan) => ({ login, plan: plan ? { name: plan } : undefined });
+    const csList = (login) => ({ codespaces: [
+        { name: 'cs-mine', state: 'Available', machine: { cpus: 4, name: 'standardLinux32gb' }, repository: { full_name: login + '/app' }, billable_owner: { login } },
+        { name: 'cs-org', state: 'Available', machine: { cpus: 8 }, repository: { full_name: 'acme/api' }, billable_owner: { login: 'acme' } }
+    ] });
+    await ok('live mode: summary API -> used/remaining from discountQuantity', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 'tok-a' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('alice', 'pro'), 'repo, codespace, user')],
+            [/\/user\/codespaces/, () => fakeResp(200, csList('alice'))],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2 core', unitType: 'Hours', grossQuantity: 30, discountQuantity: 30, netAmount: 0 }] })]
+        ]) });
+        const u = await svc.getAccountUsage('alice');
+        assert.strictEqual(u.mode, 'live');
+        assert.strictEqual(u.plan.coreHours, 180);
+        assert.strictEqual(u.stats.used, 60);
+        assert.strictEqual(u.stats.remaining, 120);
+        assert.deepStrictEqual(u.orgBilled, ['acme']);
+    });
+    await ok('403 and 404 without user scope -> needsPermission', async () => {
+        for (const code of [403, 404]) {
+            const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+                [/\/user$/, () => fakeResp(200, userBody('bob'), 'repo, codespace')],
+                [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+                [/usage\/summary/, () => fakeResp(code, { message: 'x' })]
+            ]) });
+            const u = await svc.getAccountUsage('bob');
+            assert.strictEqual(u.mode, 'needsPermission', 'status ' + code);
+            assert.match(uv.sidebarCardHtml(u), /Usage needs permission/);
+            assert.match(uv.sidebarCardHtml(u), /Grant access/);
+        }
+    });
+    await ok('404 with user scope -> Estimated from tracked sessions; org-billed excluded', async () => {
+        const state = { m: {}, get(k, d) { return k in this.m ? this.m[k] : d; }, update(k, v) { this.m[k] = v; return Promise.resolve(); } };
+        let now = NOW - 10 * 3600000;
+        const fetchImpl = makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('carol', 'free'), 'repo, codespace, user')],
+            [/\/user\/codespaces/, () => fakeResp(200, csList('carol'))],
+            [/usage\/summary/, () => fakeResp(404, { message: 'Not Found' })]
+        ]);
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl, state });
+        await svc.getAccountUsage('carol'); // records session start for both codespaces
+        now = NOW; svc.clearCache();
+        const u = await svc.getAccountUsage('carol');
+        assert.strictEqual(u.mode, 'estimated');
+        assert.strictEqual(Math.round(u.stats.used), 40, '4-core x 10h, org 8-core excluded');
+        assert.strictEqual(u.machines.length, 1);
+        assert.match(uv.sidebarCardHtml(u), /Estimated/);
+        assert.match(uv.sidebarCardHtml(u), /Some codespaces billed to acme/);
+    });
+    await ok('org plan with only org-billed codespaces -> "Billed to {org}" with no bar', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('dan', 'enterprise'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [csList('dan').codespaces[1]] })]
+        ]) });
+        const u = await svc.getAccountUsage('dan');
+        assert.strictEqual(u.mode, 'orgBilled');
+        const html = uv.sidebarCardHtml(u);
+        assert.match(html, /Billed to acme/);
+        assert.ok(!/usage-bar/.test(html));
+    });
+    await ok('10-minute cache: second call does not refetch; refresh() clears', async () => {
+        const calls = []; let now = NOW;
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('eve', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [] })]
+        ], calls) });
+        await svc.getAccountUsage('eve');
+        const n = calls.length;
+        now += 9 * 60000; await svc.getAccountUsage('eve');
+        assert.strictEqual(calls.length, n, 'cached within 10 min');
+        now += 2 * 60000; await svc.getAccountUsage('eve');
+        assert.ok(calls.length > n, 'refetched after 10 min');
+        const m = calls.length; await svc.refresh(); await svc.getAccountUsage('eve');
+        assert.ok(calls.length > m, 'refresh clears cache');
+    });
+    await ok('multiple accounts: each uses its own token and gets its own card', async () => {
+        const calls = [];
+        const tokens = { alice: 'tok-alice', bob: 'tok-bob' };
+        const svc = new us.UsageService({ authManager: { getToken: async (a) => tokens[a] }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, (url, o) => fakeResp(200, o.headers.Authorization.endsWith('alice') ? userBody('alice', 'pro') : userBody('bob', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, (url) => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2 core', grossQuantity: url.includes('/alice/') ? 10 : 5, discountQuantity: url.includes('/alice/') ? 10 : 5 }] })]
+        ], calls) });
+        const list = await svc.getAllUsage([{ account: 'alice' }, { account: 'bob' }]);
+        assert.strictEqual(list.length, 2);
+        assert.strictEqual(list[0].stats.used, 20);
+        assert.strictEqual(list[1].stats.used, 10);
+        assert.strictEqual(list[1].plan.coreHours, 120);
+        assert.ok(calls.filter(c => c.url.includes('/users/bob/')).every(c => c.auth === 'Bearer tok-bob'));
+        const html = uv.buildSidebarUsageHtml(list, 'n');
+        assert.strictEqual((html.match(/class="usage-card"/g) || []).length, 2);
+    });
+    await ok('dashboard html: tiles, sortable table, svg chart, CSP nonce, last fetched', () => {
+        const u = { account: 'a', login: 'a', plan: { label: 'Free' }, mode: 'live', fetchedAt: NOW, cycleStart: new Date(Date.UTC(2026, 9, 1)).toISOString(), resetDate: new Date(RESET).toISOString(),
+            stats: us.computeStats({ quota: 120, used: 30, daily: daysOf(5, 6), now: NOW, reset: RESET }), daily: daysOf(5, 6), storage: { used: 2, quota: 15 }, billed: 0,
+            machines: us.machineRows([{ name: 'cs1', repo: 'a/x', cores: 2, coreHours: 30 }]), storageRows: [] };
+        const html = uv.buildDashboardHtml([u], 'NONCE123');
+        assert.match(html, /script-src 'nonce-NONCE123'/);
+        assert.match(html, /<svg/);
+        assert.match(html, /stroke-dasharray/);
+        assert.match(html, /class="sortable"/);
+        assert.match(html, /Updated hourly · last fetched/);
+        assert.strictEqual(u.machines[0].estCost, 2.7);
+        assert.strictEqual(u.machines[0].share, 100);
+    });
+    await ok('usage service never logs tokens', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'usageService.js'), 'utf8');
+        assert.ok(!/console\.(log|warn|error)\([^)]*token/i.test(src));
+    });
+    await ok('package.json contributes usage settings and dashboard command', () => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+        const props = pkg.contributes.configuration.properties;
+        assert.deepStrictEqual(props['antigravity-codespaces.usage.plan'].enum, ['auto', 'free', 'pro', 'custom']);
+        assert.ok(props['antigravity-codespaces.usage.monthlyCoreHours']);
+        assert.ok(props['antigravity-codespaces.usage.monthlyStorageGb']);
+        assert.ok(pkg.contributes.commands.some(c => c.command === 'antigravity-codespaces.usageDashboard' && c.title === 'Codespaces: Usage Dashboard'));
+    });
+
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
 })();

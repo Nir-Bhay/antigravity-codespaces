@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Codespaces usage analytics**: one card per signed-in GitHub account at the top of the sidebar, showing core-hours used of the plan quota (Free 120 / Pro 180), what's left, days left at the current pace, and storage and $ billed. The progress bar turns amber at 75% and red at 90%.
+- **Codespaces: Usage Dashboard** command: stat tiles (used, remaining, avg/day, days left), the cycle reset date, a sortable per-machine table with share % and estimated $, a daily chart with an ideal-pace line, and storage rows.
+- Each account uses its own token (`gh auth token -u <login>`); the active gh account is never switched.
+- "Usage needs permission" + **Grant access** (`gh auth refresh -h github.com -s user`) when the billing API returns 403/404 without the `user` scope.
+- **Estimated** mode from extension-tracked sessions when GitHub's billing API isn't available for the account. Org-billed codespaces show as "Billed to {org}".
+- Settings: `usage.plan` (auto/free/pro/custom), `usage.monthlyCoreHours`, `usage.monthlyStorageGb`. Commands: Refresh Usage and Grant Usage Access.
+- Research notes in `docs/USAGE_ANALYTICS_RESEARCH.md`, plus 14 new offline tests.
+
 ## [5.1.0] - 2026-10-21
 
 ### Added

@@ -121,6 +121,30 @@
             "Show informational messages",
             "Show verbose debugging output"
           ]
+        },
+        "antigravity-codespaces.usage.plan": {
+          "type": "string",
+          "enum": ["auto", "free", "pro", "custom"],
+          "default": "auto",
+          "description": "Plan used for the Codespaces usage quota. 'auto' reads plan.name from GitHub (needs the 'user' scope; falls back to Free).",
+          "enumDescriptions": [
+            "Detect from your GitHub account",
+            "GitHub Free: 120 core-hours and 15 GB-month per month",
+            "GitHub Pro: 180 core-hours and 20 GB-month per month",
+            "Use usage.monthlyCoreHours and usage.monthlyStorageGb"
+          ]
+        },
+        "antigravity-codespaces.usage.monthlyCoreHours": {
+          "type": "number",
+          "default": 120,
+          "minimum": 0,
+          "description": "Monthly included core-hours when usage.plan is 'custom'."
+        },
+        "antigravity-codespaces.usage.monthlyStorageGb": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "description": "Monthly included storage (GB-month) when usage.plan is 'custom'."
         }
       }
     },
@@ -237,6 +261,21 @@
         "command": "antigravity-codespaces.reconnectLast",
         "title": "Reconnect to Last Codespace",
         "icon": "$(history)"
+      },
+      {
+        "command": "antigravity-codespaces.usageDashboard",
+        "title": "Codespaces: Usage Dashboard",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "antigravity-codespaces.refreshUsage",
+        "title": "Codespaces: Refresh Usage",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "antigravity-codespaces.usageGrantAccess",
+        "title": "Codespaces: Grant Usage Access (gh user scope)",
+        "icon": "$(key)"
       }
     ],
     "keybindings": [
