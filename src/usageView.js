@@ -45,7 +45,8 @@ function sidebarCardHtml(u) {
     }
     const s = u.stats;
     const pace = s.daysLeftLabel.startsWith('about') ? `${s.daysLeftLabel} at ${n1(s.avgPerDay)} h/day` : s.daysLeftLabel;
-    const orgLine = (u.orgBilled && u.orgBilled.length) ? `<div class="usage-sub">Some codespaces billed to ${escapeHtml(u.orgBilled.join(', '))}</div>` : '';
+    const offline = u.offline ? `<div class="usage-sub">offline · last updated ${fmtTime(u.lastUpdated || u.fetchedAt)}</div>` : '';
+    const orgLine = offline + ((u.orgBilled && u.orgBilled.length) ? `<div class="usage-sub">Some codespaces billed to ${escapeHtml(u.orgBilled.join(', '))}</div>` : '');
     return `<div class="usage-card" data-usage-account="${acc}" title="Open usage dashboard">${head}
 <div class="usage-bar"><div class="usage-fill ${s.level}" style="width:${Math.min(100, s.pct)}%"></div></div>
 <div class="usage-line">${n1(s.used)} of ${s.quota} core-hours used · ${n1(s.remaining)} left · ${escapeHtml(pace)}</div>
@@ -102,7 +103,7 @@ function accountSection(u) {
     const storage = (u.storageRows || []).map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.repo || '')}</td><td>${r.storageGb != null ? n1(r.storageGb) + ' GB' : '—'}</td></tr>`).join('') || '<tr><td colspan="3">No codespaces.</td></tr>';
     return `<section>${head}
 <div class="tiles">${tiles}</div>
-<p class="muted">Cycle resets ${escapeHtml(fmtDate(u.resetDate))} · Storage ${n1(u.storage && u.storage.used)} of ${u.storage ? u.storage.quota : 0} GB-month · ${money(u.billed)} billed${u.orgBilled && u.orgBilled.length ? ' · Some codespaces billed to ' + escapeHtml(u.orgBilled.join(', ')) : ''}</p>
+${u.offline ? `<p class="muted">offline · last updated ${fmtTime(u.lastUpdated || u.fetchedAt)}</p>` : ''}<p class="muted">Cycle resets ${escapeHtml(fmtDate(u.resetDate))} · Storage ${n1(u.storage && u.storage.used)} of ${u.storage ? u.storage.quota : 0} GB-month · ${money(u.billed)} billed${u.orgBilled && u.orgBilled.length ? ' · Some codespaces billed to ' + escapeHtml(u.orgBilled.join(', ')) : ''}</p>
 <h3>Daily usage</h3>${chartSvg(u)}<p class="muted">Bars: core-hours per day · dashed line: pace that uses the quota exactly at reset</p>
 <h3>Per machine</h3><table class="sortable"><thead><tr><th>Codespace</th><th>Repo</th><th>Machine</th><th>Core-hours</th><th>Share</th><th>Est. $</th></tr></thead><tbody>${rows}</tbody></table>
 <h3>Storage</h3><table><thead><tr><th>Codespace</th><th>Repo</th><th>Size</th></tr></thead><tbody>${storage}</tbody></table></section>`;

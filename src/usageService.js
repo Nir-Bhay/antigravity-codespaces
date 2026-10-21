@@ -99,10 +99,11 @@ function coresFromSku(sku) {
     return m ? Number(m[1]) : null;
 }
 
-/** Quantity -> core-hours. Compute SKUs bill clock hours per machine size. */
+/** Quantity -> core-hours. Compute SKUs bill clock hours per machine size.
+ *  Returns null when the SKU has no parseable core count (caller must not guess). */
 function itemCoreHours(item, qty) {
     const cores = coresFromSku(item.sku);
-    return cores ? qty * cores : qty;
+    return cores ? qty * cores : null;
 }
 
 /**
@@ -111,7 +112,7 @@ function itemCoreHours(item, qty) {
  */
 function parseSummary(json) {
     const items = (json && (json.usageItems || json.usage_items)) || [];
-    const out = { computeCoreHours: 0, includedCoreHours: 0, computeNet: 0, storageGbMonths: 0, includedStorage: 0, storageNet: 0, gross: 0, bySku: [] };
+    const out = { computeCoreHours: 0, includedCoreHours: 0, computeNet: 0, storageGbMonths: 0, includedStorage: 0, storageNet: 0, gross: 0, bySku: [], unknownSkus: [] };
     for (const it of items) {
         if (!isCodespacesItem(it)) continue;
         const gross = Number(it.grossQuantity ?? it.quantity ?? 0);
@@ -125,6 +126,10 @@ function parseSummary(json) {
             out.includedStorage += disc * toMonths;
             out.storageNet += net;
         } else {
+            if (itemCoreHours(it, gross) == null) {
+                if (!out.unknownSkus.includes(String(it.sku))) out.unknownSkus.push(String(it.sku));
+                continue;
+            }
             out.computeCoreHours += itemCoreHours(it, gross);
             out.includedCoreHours += itemCoreHours(it, disc);
             out.computeNet += net;
@@ -144,6 +149,7 @@ function parseDaily(json, cycleStart) {
         const date = String(it.date || '').slice(0, 10);
         if (!date || new Date(date + 'T00:00:00Z').getTime() < startMs) continue;
         const ch = itemCoreHours(it, Number(it.quantity ?? it.grossQuantity ?? 0));
+        if (ch == null) continue;
         daily[date] = (daily[date] || 0) + ch;
         const repo = it.repositoryName || '(unknown)';
         byRepo[repo] = (byRepo[repo] || 0) + ch;
@@ -272,7 +278,8 @@ class UsageService {
      * @param {() => object} [opts.getConfig] returns { plan, monthlyCoreHours, monthlyStorageGb }
      * @param {() => number} [opts.now]
      */
-    constructor({ authManager, fetchImpl, state, getConfig, now } = {}) {
+    constructor({ authManager, fetchImpl, state, getConfig, now, log } = {}) {
+        this._log = typeof log === 'function' ? log : () => {};
         this._auth = authManager;
         this._fetch = fetchImpl || ((...a) => fetch(...a));
         this._state = state || { _m: {}, get(k, d) { return k in this._m ? this._m[k] : d; }, update(k, v) { this._m[k] = v; return Promise.resolve(); } };
@@ -286,7 +293,8 @@ class UsageService {
     _emit() { for (const fn of this._listeners) { try { fn(); } catch {} } }
 
     clearCache() { this._cache.clear(); }
-    async refresh() { this.clearCache(); this._emit(); }
+    /** Mark cached results stale; they are only replaced after a successful refetch. */
+    async refresh() { for (const e of this._cache.values()) e.at = -Infinity; this._emit(); }
 
     async _get(url, token) {
         const res = await this._fetch(url, { headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` } });
@@ -312,7 +320,14 @@ class UsageService {
         const hit = this._cache.get(account);
         const nowMs = this._now();
         if (hit && nowMs - hit.at < CACHE_TTL_MS) return hit.data;
-        const data = await this._load(account, nowMs);
+        let data;
+        try {
+            data = await this._load(account, nowMs);
+        } catch (err) {
+            // Network failure: keep the last good result instead of blanking the card.
+            if (hit && hit.data) return { ...hit.data, offline: true, lastUpdated: hit.data.fetchedAt };
+            throw err;
+        }
         this._cache.set(account, { at: nowMs, data });
         return data;
     }
@@ -348,10 +363,16 @@ class UsageService {
         }
 
         const u = encodeURIComponent(login);
-        const summary = await this._get(`${GITHUB_API_BASE}/users/${u}/settings/billing/usage/summary?product=codespaces&year=${now.getUTCFullYear()}&month=${now.getUTCMonth() + 1}`, token).catch(e => ({ status: 0, error: e }));
+        // Network errors propagate (offline handling in getAccountUsage).
+        const summary = await this._get(`${GITHUB_API_BASE}/users/${u}/settings/billing/usage/summary?product=codespaces&year=${now.getUTCFullYear()}&month=${now.getUTCMonth() + 1}`, token);
 
-        if (summary.ok) {
-            const s = parseSummary(summary.body);
+        let parsed = summary.ok ? parseSummary(summary.body) : null;
+        if (parsed && parsed.unknownSkus.length) {
+            this._log(`Usage: unrecognised Codespaces compute SKU(s) for ${login}: ${parsed.unknownSkus.join(', ')}; showing estimated usage.`);
+            parsed = null;
+        }
+        if (parsed) {
+            const s = parsed;
             let daily = {}, byRepo = {};
             try {
                 const d = await this._get(`${GITHUB_API_BASE}/users/${u}/settings/billing/usage?year=${now.getUTCFullYear()}&month=${now.getUTCMonth() + 1}`, token);
@@ -373,7 +394,7 @@ class UsageService {
             };
         }
 
-        const status = summary.status;
+        const status = summary.ok ? 'unknown-sku' : summary.status;
         if ((status === 403 || status === 404 || status === 401) && !hasUserScope) {
             return { ...base, mode: 'needsPermission', status, reason: 'The billing API needs the "user" scope.' };
         }
@@ -387,7 +408,9 @@ class UsageService {
             ...base, mode: 'estimated', status,
             estimatedReason: status === 404 || status === 403
                 ? 'This account is not on GitHub\'s enhanced billing platform, so the billing API returned ' + status + '. Numbers are estimated from codespace sessions this extension has seen (browser-only sessions are missed).'
-                : 'GitHub\'s billing API was unavailable. Numbers are estimated from codespace sessions this extension has seen.',
+                : status === 'unknown-sku'
+                    ? 'GitHub reported a Codespaces machine type this extension does not recognise yet, so numbers are estimated from tracked sessions.'
+                    : 'GitHub\'s billing API was unavailable. Numbers are estimated from codespace sessions this extension has seen.',
             stats, daily: est.daily,
             storage: { used: round(storageGb, 2), quota: plan.storageGb },
             billed: round(estBilled, 2),

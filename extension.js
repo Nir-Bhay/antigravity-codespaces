@@ -59,6 +59,7 @@ async function activate(context) {
     const usageService = new UsageService({
         authManager,
         state: context.globalState,
+        log: (msg) => codespacesChannel.appendLine(`[usage] ${msg}`),
         getConfig: () => {
             const c = vscode.workspace.getConfiguration('antigravity-codespaces');
             return {

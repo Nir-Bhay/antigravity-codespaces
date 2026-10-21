@@ -900,6 +900,38 @@ function ok(name, fn) {
         const html = uv.buildSidebarUsageHtml(list, 'n');
         assert.strictEqual((html.match(/class="usage-card"/g) || []).length, 2);
     });
+    await ok('unknown compute SKU core count -> Estimated (no 1-core guess) and SKU logged', async () => {
+        assert.strictEqual(us.parseSummary({ usageItems: [{ product: 'codespaces', sku: 'Codespaces compute premium', grossQuantity: 10 }] }).computeCoreHours, 0);
+        const logs = [];
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, log: (m) => logs.push(m), fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('gus', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute premium', grossQuantity: 10, discountQuantity: 10 }] })]
+        ]) });
+        const u = await svc.getAccountUsage('gus');
+        assert.strictEqual(u.mode, 'estimated');
+        assert.ok(logs.some(l => l.includes('Codespaces compute premium')));
+    });
+    await ok('offline: network failure keeps last good result with offline note', async () => {
+        let down = false, now = NOW;
+        const net = makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('hal', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2 core', grossQuantity: 5, discountQuantity: 5 }] })]
+        ]);
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: async (u, o) => { if (down) throw new Error('getaddrinfo ENOTFOUND api.github.com'); return net(u, o); } });
+        const first = await svc.getAccountUsage('hal');
+        down = true; await svc.refresh(); now += 60000;
+        const u = await svc.getAccountUsage('hal');
+        assert.strictEqual(u.offline, true);
+        assert.strictEqual(u.stats.used, first.stats.used);
+        assert.match(uv.sidebarCardHtml(u), /offline · last updated \d\d:\d\d/);
+        now += 11 * 60000;
+        assert.strictEqual((await svc.getAccountUsage('hal')).offline, true, 'still served after TTL');
+        const fresh = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: async () => { throw new Error('offline'); } });
+        const [e] = await fresh.getAllUsage(['nobody']);
+        assert.strictEqual(e.mode, 'error');
+    });
     await ok('dashboard html: tiles, sortable table, svg chart, CSP nonce, last fetched', () => {
         const u = { account: 'a', login: 'a', plan: { label: 'Free' }, mode: 'live', fetchedAt: NOW, cycleStart: new Date(Date.UTC(2026, 9, 1)).toISOString(), resetDate: new Date(RESET).toISOString(),
             stats: us.computeStats({ quota: 120, used: 30, daily: daysOf(5, 6), now: NOW, reset: RESET }), daily: daysOf(5, 6), storage: { used: 2, quota: 15 }, billed: 0,
