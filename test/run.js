@@ -1214,5 +1214,141 @@ function ok(name, fn) {
         assert.deepStrictEqual(props['antigravity-codespaces.usage.preferredUnit'].enum, ['core-hours', 'dollars']);
     });
 
+    // ── Error hardening + error UX (one test per spec row) ──
+    console.log('error hardening');
+    const gapi = require(path.join(ROOT, 'src', 'githubApi.js'));
+    const eux = require(path.join(ROOT, 'src', 'errorUx.js'));
+    const { launchIde } = require(path.join(ROOT, 'src', 'launcher.js'));
+    const hang = (url, opts) => new Promise((_, rej) => { opts.signal.addEventListener('abort', () => rej(opts.signal.reason)); });
+    const resp = (status, body = {}) => ({ status, ok: status >= 200 && status < 300, json: async () => body, headers: { get: () => null } });
+    await ok('ghFetch: hanging request aborts with "GitHub isn\'t responding" (timeout kind)', async () => {
+        await assert.rejects(() => gapi.ghFetch('https://api.github.com/x', {}, { fetchImpl: hang, timeoutMs: 50 }), (e) => e.kind === 'timeout' && /GitHub isn't responding/.test(e.message));
+        assert.strictEqual(gapi.FETCH_TIMEOUT_MS, 15000);
+    });
+    await ok('ghFetch: 503 retried once, then "GitHub is having trouble right now." (server kind)', async () => {
+        let n = 0;
+        await assert.rejects(() => gapi.ghFetch('u', {}, { fetchImpl: async () => { n++; return resp(503); }, retryDelayMs: 0 }), (e) => e.kind === 'server' && e.status === 503 && /having trouble/.test(e.message));
+        assert.strictEqual(n, 2, 'auto-retry once');
+        let m = 0;
+        const r = await gapi.ghFetch('u', {}, { fetchImpl: async () => (++m === 1 ? resp(502) : resp(200)), retryDelayMs: 0 });
+        assert.strictEqual(r.status, 200);
+    });
+    await ok('ghFetch: network failure -> network kind; every fetch in githubApi goes through the timeout wrapper', async () => {
+        await assert.rejects(() => gapi.ghFetch('u', {}, { fetchImpl: async () => { throw new TypeError('fetch failed'); } }), (e) => e.kind === 'network');
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'githubApi.js'), 'utf8');
+        assert.strictEqual((src.match(/await fetch\(/g) || []).length, 0);
+        assert.strictEqual((src.match(/await this\._fetch\(/g) || []).length, 6);
+        assert.ok(src.includes('new AbortController()') && src.includes('clearTimeout(timer)'));
+    });
+    await ok('listCodespaces: a timeout surfaces immediately (no slow CLI fallback)', async () => {
+        const api = new gapi.GithubApi({ getToken: async () => 't', getActiveAccount: () => 'octocat' }, { fetchImpl: hang, timeoutMs: 30 });
+        await assert.rejects(() => api.listCodespaces('octocat'), (e) => e.kind === 'timeout');
+    });
+    await ok('launchIde: spawn error / non-zero exit -> not connected; running process -> connected', async () => {
+        const { EventEmitter } = require('events');
+        const fake = (behave) => () => { const c = new EventEmitter(); c.unref = () => {}; setTimeout(() => behave(c), 5); return c; };
+        const e1 = await launchIde('ide', [], { execFileImpl: fake(c => c.emit('error', new Error('spawn ENOENT'))), settleMs: 200 });
+        assert.strictEqual(e1.ok, false); assert.match(e1.reason, /ENOENT/);
+        const e2 = await launchIde('ide', [], { execFileImpl: fake(c => c.emit('exit', 1)), settleMs: 200 });
+        assert.strictEqual(e2.ok, false); assert.match(e2.reason, /code 1/);
+        const e3 = await launchIde('ide', [], { execFileImpl: fake(() => {}), settleMs: 30 });
+        assert.strictEqual(e3.ok, true);
+        const e4 = await launchIde('ide', [], { execFileImpl: () => { throw new Error('EACCES'); } });
+        assert.strictEqual(e4.ok, false);
+    });
+    await ok('classifyError rows: timeout / 5xx / offline / auth / scope / rate limit / other', () => {
+        const k = (kind, msg = 'x', status) => { const e = new Error(msg); e.kind = kind; e.status = status; return eux.classifyError(e); };
+        const t = k('timeout'); assert.strictEqual(t.title, "GitHub isn't responding (15s)."); assert.deepStrictEqual(t.actions.slice(0, 2), ['retry', 'workOffline']); assert.strictEqual(t.level, 'critical');
+        const s5 = k('server', 'x', 503); assert.strictEqual(s5.title, 'GitHub is having trouble right now.'); assert.deepStrictEqual(s5.actions.slice(0, 2), ['retry', 'githubStatus']);
+        assert.strictEqual(k('network').level, 'warning');
+        assert.deepStrictEqual(eux.classifyError(new Error('GitHub authentication expired or token is invalid.')).actions[0], 'signIn');
+        assert.strictEqual(eux.classifyError(new Error('Account "a" is missing the "codespace" permission.')).level, 'warning');
+        assert.strictEqual(eux.classifyError(new Error('GitHub API rate limit reached.')).kind, 'rateLimit');
+        assert.ok(eux.classifyError(new Error('boom')).actions.includes('details'), 'Details button opens the log');
+    });
+    await ok('messages never show stack traces or "undefined"', () => {
+        const e = new Error('Request failed: undefined'); e.stack = 'Error: Request failed: undefined\n    at foo (x.js:1:1)';
+        assert.strictEqual(eux.cleanReason(e), 'Request failed');
+        assert.strictEqual(eux.cleanReason('TypeError: x is undefined\n    at a (b:1)'), 'x is');
+        assert.strictEqual(eux.cleanReason(undefined), 'Unknown error.');
+        assert.ok(!/undefined/.test(eux.notificationText(eux.classifyError(undefined))));
+    });
+    await ok('connect failure: "Couldn\'t open <repo> in this IDE." [Run Setup Doctor][Copy SSH command]; card reverts', () => {
+        const c = eux.connectFailure('octocat/repo-a', 'The IDE launcher exited with code 1.');
+        assert.strictEqual(c.title, "Couldn't open octocat/repo-a in this IDE.");
+        assert.deepStrictEqual(c.actions.slice(0, 2), ['setupDoctor', 'copySsh']);
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.ok(src.includes('launchIde(ANTIGRAVITY_EXE'), 'launcher awaited before connected=true');
+        assert.ok(!/child\.on\('error', \(\) => \{\}\)/.test(src));
+        const tier4 = src.slice(src.indexOf('errorUx.connectFailure('), src.indexOf('errorUx.connectFailure(') + 400);
+        assert.ok(/dashboardProvider\.refreshHtml\(\)/.test(tier4), 'views refresh so the card shows Available again');
+    });
+    await ok('reconnect: start failure shows the real reason and skips SSH', () => {
+        const nf = new Error('HTTP 404: Not Found');
+        assert.match(eux.startFailure('cs-1', nf).why, /no longer exists/);
+        assert.match(eux.startFailure('cs-1', new Error('HTTP 402 spending limit')).why, /quota or spending limit/);
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const rc = src.slice(src.indexOf("'antigravity-codespaces.reconnectLast'"), src.indexOf("'antigravity-codespaces.reconnectLast'") + 2200);
+        assert.ok(!rc.includes('.catch(() => {})'));
+        assert.ok(rc.indexOf('if (startErr)') > 0 && rc.indexOf('return;', rc.indexOf('if (startErr)')) < rc.indexOf("'antigravity-codespaces.connect'"));
+    });
+    await ok('no empty catch blocks in extension.js / dashboardProvider.js; metadata failure is logged (silent)', () => {
+        const ext = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const dash = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
+        assert.strictEqual((ext.match(/catch\s*(\(\w*\))?\s*\{\s*\}/g) || []).length, 0);
+        assert.strictEqual((dash.match(/catch\s*(\(\w*\))?\s*\{\s*\}/g) || []).length, 0);
+        assert.match(ext, /metadata for \$\{cs\.name\} unavailable/);
+    });
+    await ok('banner: icon + text label (not colour only), dismissible, "as of <time>" over cached data', () => {
+        const h = eux.bannerHtml(eux.classifyError(Object.assign(new Error('x'), { kind: 'timeout' })), { asOf: '10:42' });
+        assert.match(h, /class="ux-icon"[^>]*>⛔/); assert.match(h, /class="ux-label">Error</);
+        assert.match(h, /class="ux-dismiss"/); assert.match(h, /Showing data as of 10:42/);
+        assert.match(h, /role="alert"/);
+        assert.match(eux.bannerHtml({ kind: 'k', level: 'warning', title: 't', actions: [] }), /class="ux-label">Warning</);
+        assert.match(eux.skeletonHtml(2), /aria-busy="true"/);
+        assert.strictEqual((eux.skeletonHtml(2).match(/ux-skel-card/g) || []).length, 2);
+    });
+    await ok('Cloud Hub: account error banner over cached list; empty / signed-out copy; spinner on busy buttons; Windsurf Remote SSH', () => {
+        const Module = require('module');
+        const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const D = require(path.join(ROOT, 'src', 'dashboardProvider.js'));
+            const DP = D.DashboardProvider || D;
+            const warm = DP.accountErrorBanners([{ account: 'octocat', error: "Couldn't reach GitHub.", errorKind: 'network', cachedAt: Date.UTC(2026, 9, 21, 5, 0) }]);
+            assert.match(warm, /ux-warning/); assert.match(warm, /Showing data as of/);
+            const cold = DP.accountErrorBanners([{ account: 'octocat', error: 'x', errorKind: 'server', errorStatus: 503 }]);
+            assert.match(cold, /ux-critical/); assert.match(cold, /GitHub Status/);
+            const near = DP.usageBanner({ mode: 'live', isCurrent: true, compute: { used: 150, quota: 180 }, storage: { used: 2, quota: 20 } });
+            assert.match(near, /ux-warning/); assert.match(near, /compute 83%/);
+            assert.strictEqual(DP.usageBanner({ mode: 'live', isCurrent: true, compute: { used: 10, quota: 180 }, storage: { used: 2, quota: 20 } }), '');
+            assert.match(DP.usageBanner({ mode: 'needsPermission' }), /user/);
+            assert.match(DP.usageBanner({ mode: 'live', offline: true, fetchedAt: Date.now() }), /as of/);
+            const p = Object.create(DP.prototype); p._usage = null; p._initialPage = null; p._context = { extensionUri: {} };
+            const out = p.buildDashboardHtml([], '', []);
+            assert.match(out, /You're signed out\./); assert.match(out, /Sign in with gh/);
+            const empty = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: [] }], 'octocat', ['octocat']);
+            assert.match(empty, /No codespaces yet\./); assert.match(empty, /Create codespace/);
+            const failed = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: [], error: 'x', errorKind: 'timeout' }], 'octocat', ['octocat']);
+            assert.ok(!/No codespaces yet/.test(failed), 'a failed load is not shown as empty');
+            assert.match(failed, /GitHub isn(&#39;|')t responding/);
+            const src = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
+            assert.match(src, /btn-spin.*Connecting…/);
+            assert.ok(src.includes('errorUx.skeletonHtml(3)'));
+        const SD = require(path.join(ROOT, 'src', 'systemDoctor.js'));
+            const w = (SD.SystemDoctor || SD).detectRemoteSsh(['codeium.windsurf-remote-openssh'], 'Windsurf');
+            assert.strictEqual(w.has, true); assert.strictEqual(w.id, 'codeium.windsurf-remote-openssh');
+            assert.deepStrictEqual((SD.SystemDoctor || SD).detectRemoteSsh(['codeium.windsurf-remote-openssh', 'jeanp413.open-remote-ssh'], 'Windsurf').conflicts, ['jeanp413.open-remote-ssh']);
+            assert.strictEqual((SD.SystemDoctor || SD).detectRemoteSsh(['foo.bar'], 'Visual Studio Code').has, false);
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+    });
+    await ok('docs: keep-alive guide uses accept-new; SECURITY/CONTRIBUTING no longer 4.3.x', () => {
+        const g = fs.readFileSync(path.join(ROOT, 'docs', 'AI_AGENT_KEEP_ALIVE_GUIDE.md'), 'utf8');
+        assert.ok(!/StrictHostKeyChecking no/.test(g)); assert.match(g, /StrictHostKeyChecking accept-new/);
+        assert.match(fs.readFileSync(path.join(ROOT, 'SECURITY.md'), 'utf8'), /5\.3\.x/);
+        assert.ok(!/4\.3\.0/.test(fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8')));
+    });
+
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
 })();

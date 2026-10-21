@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Every GitHub API request now times out after 15s ("GitHub isn't responding (15s)." [Retry] [Work offline]). Server errors (5xx) are retried once after 5s, then reported as "GitHub is having trouble right now." [Retry] [GitHub Status].
+- Connect waits for the IDE launcher to start. If it fails: "Couldn't open <repo> in this IDE." [Run Setup Doctor] [Copy SSH command], and the card goes back to Available.
+- Reconnect shows the real reason when the codespace can't be started (deleted, quota) and skips SSH.
+- Empty `catch {}` blocks replaced with logging; failures in user actions are shown to the user.
+- Setup Doctor recognises Windsurf's built-in Remote SSH (`codeium.windsurf-remote-openssh`) and no longer suggests conflicting extensions there.
+- Keep-alive guide uses `StrictHostKeyChecking accept-new`; SECURITY.md and CONTRIBUTING.md updated from 4.3.x.
+
+### Changed
+- Error levels: Critical (error notification + red banner), Warning (amber Cloud Hub banner: cached/offline data, missing scope, near quota), Info, Silent (log only). Banners have an icon + text label, a Details button that opens the log, and can be dismissed (they come back on the next refresh if the problem remains).
+- Cloud Hub: skeleton cards while loading; "No codespaces yet." [Create codespace]; signed-out card [Sign in with gh]; a failed refresh keeps the last list with "Showing data as of <time>"; busy buttons show a spinner.
+
 ## [5.3.0] - 2026-10-21
 
 ### Added

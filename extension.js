@@ -5,6 +5,8 @@ const { execFile } = require('child_process');
 
 const { friendlyError, friendlyTunnelError, sniffTunnelStderr, formatRelativeTime, runCommand } = require('./src/utils');
 const logger = require('./src/logger');
+const errorUx = require('./src/errorUx');
+const { launchIde } = require('./src/launcher');
 const { AuthManager } = require('./src/authManager');
 const { GithubApi } = require('./src/githubApi');
 const {
@@ -60,7 +62,7 @@ async function activate(context) {
         log: (msg) => codespacesChannel.appendLine(`[usage] ${msg}`),
         // Usage follows the active gh CLI account (re-read on every refresh).
         getActiveAccount: async () => {
-            try { await authManager.getAccounts(); } catch {}
+            try { await authManager.getAccounts(); } catch (e) { logger.warn('usage: account refresh failed', e && e.message); }
             return authManager.getGhCliActiveAccount() || authManager.getActiveAccount();
         },
         getConfig: () => {
@@ -111,10 +113,34 @@ async function activate(context) {
      * Guided error toast: logs full context to the output channel and offers
      * "Show Logs", so a normal user always sees WHAT failed and where to look.
      */
-    async function showOpError(message, context) {
-        logger.error(context || 'operation failed', message);
-        const act = await vscode.window.showErrorMessage(message, 'Show Logs');
-        if (act === 'Show Logs') logger.show();
+    /**
+     * Critical errors: VS Code error notification with the real reason, one main fix button and Details (opens the log).
+     * Pass the original error to classify it (timeout / 5xx / auth / scope) and opts.retry to offer Retry.
+     */
+    async function showOpError(message, context, err, opts = {}) {
+        logger.error(context || 'operation failed', `${message}${err && err.stack ? ' | ' + err.stack : ''}`);
+        const c = opts.ux || (err && (err.kind || /authentication expired|Bad credentials/i.test(err.message || '')) ? errorUx.classifyError(err) : null);
+        const text = c ? errorUx.notificationText(c) : errorUx.cleanReason(message);
+        const actions = c ? c.actions.filter(a => a !== 'retry' || typeof opts.retry === 'function') : ['details'];
+        const labels = actions.map(a => errorUx.ACTION_LABELS[a]);
+        const pick = await vscode.window.showErrorMessage(text, ...labels);
+        const action = actions[labels.indexOf(pick)];
+        await runUxAction(action, opts);
+    }
+
+    async function runUxAction(action, opts = {}) {
+        switch (action) {
+            case 'retry': if (typeof opts.retry === 'function') await opts.retry(); break;
+            case 'workOffline': vscode.window.setStatusBarMessage('Codespaces: working offline with cached data', 5000); break;
+            case 'githubStatus': await vscode.env.openExternal(vscode.Uri.parse(errorUx.GITHUB_STATUS_URL)); break;
+            case 'signIn': case 'grantScope': await vscode.commands.executeCommand('antigravity-codespaces.loginGitHub'); break;
+            case 'setupDoctor': await vscode.commands.executeCommand('antigravity-codespaces.setupDoctor'); break;
+            case 'copySsh':
+                if (opts.sshCommand) { await vscode.env.clipboard.writeText(opts.sshCommand); vscode.window.setStatusBarMessage(`Copied: ${opts.sshCommand}`, 4000); }
+                break;
+            case 'details': logger.show(); break;
+            default: break;
+        }
     }
 
     /**
@@ -208,7 +234,7 @@ async function activate(context) {
 
     /** Refresh the dashboard so disabled card buttons never get stuck. */
     function resetDashboardView() {
-        try { dashboardProvider.refreshHtml(); } catch {}
+        try { dashboardProvider.refreshHtml(); } catch (e) { logger.warn('dashboard refresh failed', e && e.message); }
     }
 
     /**
@@ -276,8 +302,8 @@ async function activate(context) {
     // without this the dashboard and status bar stay stale after login/logout.
     context.subscriptions.push(
         authManager.onAuthChanged(async () => {
-            try { await dashboardProvider.refreshHtml(); } catch {}
-            try { await statusBar.update(); } catch {}
+            try { await dashboardProvider.refreshHtml(); } catch (e) { logger.warn('auth change: dashboard refresh failed', e && e.message); }
+            try { await statusBar.update(); } catch (e) { logger.warn('auth change: status bar update failed', e && e.message); }
         })
     );
 
@@ -660,7 +686,7 @@ async function activate(context) {
                         if (go !== 'Continue Anyway') return;
                     }
                 }
-            } catch {}
+            } catch (e) { logger.warn('create: account/token preflight check failed', e && e.message); }
 
             vscode.window.showInformationMessage(`Loading repositories for ${accPick.acc}...`);
             const repos = await githubApi.fetchUserRepos(accPick.acc);
@@ -777,7 +803,10 @@ async function activate(context) {
                         let meta = {};
                         try {
                             meta = await githubApi.fetchMeta(cs.name, account);
-                        } catch {}
+                        } catch (e) {
+                            // Silent level: metadata only picks the folder; fall back to the template.
+                            logger.warn(`connect: metadata for ${cs.name} unavailable, using default folder`, e && e.message);
+                        }
                         
                         let remoteFolder = GithubApi.getBestFolder(meta, cs.repository, cs.name, folderTemplate);
 
@@ -841,7 +870,7 @@ async function activate(context) {
                                 { forceNewWindow: true }
                             );
                             connected = true;
-                        } catch {}
+                        } catch (e) { logger.warn('connect Tier-1 vscode.openFolder failed', e && e.message); }
 
                         // Tier 2: Remote SSH extension commands
                         if (!connected) {
@@ -869,17 +898,13 @@ async function activate(context) {
 
                         // Tier 3: Binary CLI launcher
                         let launcherExists = false;
-                        try { launcherExists = !!ANTIGRAVITY_EXE && fs.existsSync(ANTIGRAVITY_EXE); } catch {}
+                        try { launcherExists = !!ANTIGRAVITY_EXE && fs.existsSync(ANTIGRAVITY_EXE); } catch (e) { logger.warn('connect: launcher lookup failed', e && e.message); }
+                        let launchFailReason = '';
                         if (!connected && launcherExists) {
-                            try {
-                                const child = execFile(ANTIGRAVITY_EXE,
-                                    ['--folder-uri', `vscode-remote://ssh-remote+${hostAlias}${remoteFolder}`],
-                                    { windowsHide: true },
-                                    () => {});
-                                child.on('error', () => {});
-                                child.unref?.();
-                                connected = true;
-                            } catch {}
+                            // Only count it as connected once the launcher process has actually started without error.
+                            const res = await launchIde(ANTIGRAVITY_EXE, ['--folder-uri', `vscode-remote://ssh-remote+${hostAlias}${remoteFolder}`]);
+                            if (res.ok) connected = true;
+                            else { launchFailReason = res.reason; logger.warn('connect Tier-3 launcher failed', res.reason); }
                         }
 
                         // Tier 4: Terminal fallback
@@ -888,12 +913,11 @@ async function activate(context) {
                             if (!diag.ghInstalled) {
                                 await SystemDoctor.promptInstallGhCli();
                             } else {
-                                const t = vscode.window.createTerminal(`SSH: ${cs.displayName || cs.name}`);
-                                t.show();
-                                t.sendText(`gh cs ssh -c ${cs.name}`);
-                                vscode.window.showInformationMessage(
-                                    `Opened a terminal fallback for "${cs.displayName || cs.name}". Run Test SSH Connectivity for detailed diagnostics.`
-                                );
+                                // Critical: say what failed and offer the fix. The card reverts to Available on refresh.
+                                const ux = errorUx.connectFailure(cs.repository || cs.displayName || cs.name, launchFailReason);
+                                sidebarProvider.refresh();
+                                dashboardProvider.refreshHtml();
+                                showOpError(ux.title, `connect ${cs.name}`, null, { ux, sshCommand: `gh cs ssh -c ${cs.name}` });
                             }
                         }
 
@@ -903,7 +927,9 @@ async function activate(context) {
                     }
                 );
             } catch (err) {
-                await showOpError(`Connection error: ${friendlyError(err)}`, `connect ${cs.name}`);
+                await showOpError(`Connection error: ${friendlyError(err)}`, `connect ${cs.name}`, err, { sshCommand: `gh cs ssh -c ${cs.name}` });
+                sidebarProvider.refresh();
+                dashboardProvider.refreshHtml();
             } finally {
                 connectingSet.delete(cs.name);
             }
@@ -1069,16 +1095,21 @@ async function activate(context) {
                 return;
             }
             
-            // Wake and connect in one step
+            // Wake and connect in one step. If waking fails, show the real reason and skip SSH.
+            let startErr = null;
             await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Reconnecting to ${lastCs.displayName || lastCs.name}...`, cancellable: false },
                 async () => {
-                    try {
-                        // Wake the codespace if needed
-                        await githubApi.startCodespace(lastCs.name, lastCs.account).catch(() => {});
-                    } catch {}
+                    try { await githubApi.startCodespace(lastCs.name, lastCs.account); }
+                    catch (e) { startErr = e; }
                 }
             );
+            if (startErr) {
+                const ux = errorUx.startFailure(lastCs.displayName || lastCs.name, startErr);
+                logger.error(`reconnect ${lastCs.name}`, startErr && startErr.message);
+                await showOpError(ux.title, `reconnect ${lastCs.name}`, startErr, { ux, retry: () => vscode.commands.executeCommand('antigravity-codespaces.reconnectLast') });
+                return;
+            }
             
             // Delegate to connect command
             await vscode.commands.executeCommand('antigravity-codespaces.connect', {
@@ -1141,10 +1172,10 @@ async function activate(context) {
                     try {
                         const list = await githubApi.listCodespaces(acc.account);
                         list.forEach(cs => ensureSSHConfigEntry(cs, acc.account));
-                    } catch {}
+                    } catch (e) { logger.warn(`startup SSH sync: ${acc.account} skipped`, e && e.message); }
                 }));
                 await statusBar.update();
-            } catch {}
+            } catch (e) { logger.warn('startup SSH sync failed', e && e.message); }
         }, 2000);
     } else {
         statusBar.update();
