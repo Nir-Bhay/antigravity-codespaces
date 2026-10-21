@@ -39,10 +39,10 @@ Five distinct failure modes and architectural traps were identified and resolved
 - **Status:** PASS
 - **Flow:**
   1. User previously authenticated `gh auth login` with default scopes (`gist`, `read:org`, `repo`).
-  2. `authManager.getAccounts()` detects account `abhayhiwse-hub` and flags `hasCodespaceScope: false`.
+  2. `authManager.getAccounts()` detects account `octocat` and flags `hasCodespaceScope: false`.
   3. REST returns 403; CLI returns 403.
   4. `buildListError` catches the scope rejection and renders clear guidance:
-     `Account "@abhayhiwse-hub" is missing the "codespace" permission. Run "gh auth refresh -h github.com -s codespace" or click Sign In.`
+     `Account "@octocat" is missing the "codespace" permission. Run "gh auth refresh -h github.com -s codespace" or click Sign In.`
   5. The Sidebar Error Card displays both **Retry** and a direct **Sign In with GitHub** button, enabling 1-click resolution without opening a terminal.
 
 ### Scenario C: Codespace Creation via Dashboard Wizard / Command Palette

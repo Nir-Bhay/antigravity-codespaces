@@ -231,7 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.2.4] - 2026-08-25
 
 ### Added
-- Multi-account simultaneous discovery (`baythe19`, `Nir-Bhay`, `abhayhiwse-hub`, `teamwebstarts-cmyk`).
+- Multi-account simultaneous discovery (`baythe19`, `Nir-Bhay`, `octocat`, `octocat2`).
 - OpenSSH `~/.ssh/config` block generator with auto-deduplication.
 - Live Forwarded Port detection with 1-click external browser links.
 

@@ -11,3 +11,5 @@ docs/**
 design.skill
 Antigravity_Codespaces_Cloud_Hub_Pixel_Perfect_UI_UX_Spec.md
 scripts/**
+.github/**
+.gitignore

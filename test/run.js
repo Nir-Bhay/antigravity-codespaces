@@ -934,24 +934,24 @@ function ok(name, fn) {
         assert.strictEqual(p.netAmount, 0);
         const d = us.parseDaily(dayFx, '2026-10-01T00:00:00Z');
         const amt = Object.fromEntries(d.repos.map(r => [r.repo, Math.round(r.amount * 100) / 100]));
-        assert.strictEqual(amt.Samyoj, 6.92);
-        assert.strictEqual(amt.RACE, 0.35);
-        assert.strictEqual(amt['AI-Companion'], 0.16);
+        assert.strictEqual(amt['repo-a'], 6.92);
+        assert.strictEqual(amt['repo-b'], 0.35);
+        assert.strictEqual(amt['repo-c'], 0.16);
         assert.ok(Object.keys(d.daily).length >= 3);
 
         const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch([
-            [/\/user$/, () => fakeResp(200, userBody('abhayhiwse-hub', 'pro'), 'user, codespace')],
-            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [{ name: 'x', state: 'Shutdown', machine: { cpus: 2, storage_in_bytes: 103e9 }, billable_owner: { login: 'abhayhiwse-hub' } }] })],
+            [/\/user$/, () => fakeResp(200, userBody('octocat', 'pro'), 'user, codespace')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [{ name: 'x', state: 'Shutdown', machine: { cpus: 2, storage_in_bytes: 103e9 }, billable_owner: { login: 'octocat' } }] })],
             [/usage\/summary/, () => fakeResp(200, sumFx)],
             [/settings\/billing\/usage\?/, () => fakeResp(200, dayFx)]
         ]) });
-        const u = await svc.getAccountUsage('abhayhiwse-hub');
+        const u = await svc.getAccountUsage('octocat');
         assert.strictEqual(u.mode, 'live');
         assert.deepStrictEqual(u.compute, { used: 76.5, quota: 180, amount: 6.88, quotaValue: 16.2 });
         assert.deepStrictEqual(u.storage, { used: 7.64, quota: 20, amount: 0.53, quotaValue: 1.4 });
         assert.deepStrictEqual(u.dollars, { consumed: 7.42, discount: 7.42, billable: 0 });
         assert.strictEqual(Math.round(us.resolvePlan('free').coreHours * us.CORE_HOUR_PRICE * 100) / 100, 10.8);
-        assert.strictEqual(u.repos[0].repo, 'Samyoj');
+        assert.strictEqual(u.repos[0].repo, 'repo-a');
         const card = uv.hubUsageCardHtml(u);
         assert.ok(!/Estimated/.test(card));
         assert.match(card, /76\.5<\/b> \/ 180 core-hrs <small>\(\$6\.88 of \$16\.20\)/);
@@ -960,7 +960,7 @@ function ok(name, fn) {
         assert.ok(!/of \$17\.60/.test(card), 'no combined quota');
         const page = uv.hubUsagePageHtml(u);
         assert.match(page, /Per repository/);
-        assert.match(page, /Samyoj/);
+        assert.match(page, /repo-a/);
         assert.match(page, /\$6\.92/);
         assert.strictEqual(uv.storageTierText(u), '7.6 / 20 GB-month');
     });

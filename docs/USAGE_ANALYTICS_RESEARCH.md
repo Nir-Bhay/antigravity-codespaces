@@ -66,19 +66,19 @@ Sources: [Codespaces pricing](https://docs.github.com/en/billing/managing-billin
 
 ## POC: API output compared with the GitHub billing page
 
-Account `abhayhiwse-hub` (Pro), October 2026. Run `node scripts/usage-poc.js`:
+Account `octocat` (Pro), October 2026. Run `node scripts/usage-poc.js`:
 
 ```
 Compute  76.5 / 180 core-hrs ($6.88 of $16.20)
 Storage  7.64 / 20 GB-month ($0.53 of $1.40)
 Billing  $7.42 consumed · -$7.42 discount · $0.00 billable
 Repositories:
-  Samyoj                 73.9 core-hrs  $6.92
-  RACE                    2.6 core-hrs  $0.35
-  AI-Companion            0.0 core-hrs  $0.16
+  repo-a                 73.9 core-hrs  $6.92
+  repo-b                    2.6 core-hrs  $0.35
+  repo-c            0.0 core-hrs  $0.16
 ```
 
-GitHub billing page: $6.88 compute + $0.53 storage = **$7.42**. By repo: Samyoj $6.92, RACE $0.35, AI-Companion $0.16. All of it is covered by the included quota, so $0 is billable. **The figures match.**
+GitHub billing page: $6.88 compute + $0.53 storage = **$7.42**. By repo: repo-a $6.92, repo-b $0.35, repo-c $0.16. All of it is covered by the included quota, so $0 is billable. **The figures match.**
 
 ## How the extension uses this
 
