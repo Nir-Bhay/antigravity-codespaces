@@ -1592,6 +1592,8 @@ function ok(name, fn) {
             await sp.refresh();
             const h = sp._view.webview.html;
             assert.match(h, /GitHub CLI isn't installed\./); assert.match(h, /Install GitHub CLI/); assert.match(h, /id="recheckBtn"/);
+            assert.match(h, /id="patBtn"[^>]*>Use a personal access token instead</); assert.ok(!/Sign in with gh/.test(h), 'no gh sign-in when gh is missing');
+            assert.match(h, /getElementById\('installGhBtn'\)[\s\S]{0,160}command: 'openExternal', url: 'https:\/\/cli\.github\.com'/);
             assert.ok(!/cs-card|search|You're signed out/i.test(h.replace(/<style[\s\S]*?<\/style>/g, '')), 'nothing else in the view');
             assert.strictEqual(listed, false, 'no list call without gh');
             SDC.diagnose = async () => ({ ghInstalled: true, ghAuthHealth: { state: 'ok' } });

@@ -443,6 +443,7 @@ body {
                 ${I.github}
                 <span>Install GitHub CLI</span>
             </button>
+            <a class="signup-link" id="patBtn" role="button" tabindex="0">Use a personal access token instead</a>
             <a class="signup-link" id="recheckBtn" role="button" tabindex="0">I've installed it, check again</a>
         </div>` : `
         <div class="signin-card" role="region" aria-label="Sign in">
@@ -462,7 +463,8 @@ body {
         const on = (id, command) => { const el = document.getElementById(id); if (el) el.addEventListener('click', () => vscode.postMessage({ command })); };
         on('loginBtn', 'loginGitHub');
         on('patBtn', 'loginPat');
-        on('installGhBtn', 'promptInstallGh');
+        const gh = document.getElementById('installGhBtn');
+        if (gh) gh.addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url: 'https://cli.github.com' }));
         on('recheckBtn', 'refresh');
     </script>
 </body>
