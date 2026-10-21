@@ -9,6 +9,7 @@ class DashboardProvider {
         this._usageService = usageService;
         this._usage = null;
         this._initialPage = null;
+        this._usagePeriod = null;
         if (usageService) usageService.onDidChange(() => { if (this._panel) this.refreshHtml(); });
         this._authManager = authManager;
         this._githubApi = githubApi;
@@ -113,6 +114,22 @@ class DashboardProvider {
                         case 'usageGrant':
                             await vscode.commands.executeCommand('antigravity-codespaces.usageGrantAccess', msg.account);
                             break;
+                        case 'usageMonth': {
+                            const y = Number(msg.year), m = Number(msg.month);
+                            this._usagePeriod = (y > 2000 && m >= 1 && m <= 12) ? { year: y, month: m } : null;
+                            this._initialPage = 'usage';
+                            await this.refreshHtml();
+                            break;
+                        }
+                        case 'usageOpenUrl': {
+                            // Only GitHub-owned destinations.
+                            const url = String(msg.url || '');
+                            if (/^https:\/\/(github\.com|docs\.github\.com)\//.test(url)) await vscode.env.openExternal(vscode.Uri.parse(url));
+                            break;
+                        }
+                        case 'usageExport':
+                            await this._exportUsage(msg.format === 'json' ? 'json' : 'csv');
+                            break;
                         case 'usageRefresh':
                             if (this._usageService) await this._usageService.refresh();
                             else await this.refreshHtml();
@@ -189,6 +206,17 @@ class DashboardProvider {
         await this.refreshHtml();
     }
 
+    async _exportUsage(format) {
+        const u = this._usage;
+        if (!u || u.mode !== 'live') { vscode.window.showWarningMessage('No usage data to export.'); return; }
+        const { toCsv, toJson } = require('./usageService');
+        const name = `codespaces-usage-${u.login}-${u.period.year}-${String(u.period.month).padStart(2, '0')}.${format}`;
+        const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(require('path').join(require('os').homedir(), name)), filters: format === 'csv' ? { CSV: ['csv'] } : { JSON: ['json'] } });
+        if (!target) return;
+        await vscode.workspace.fs.writeFile(target, Buffer.from(format === 'csv' ? toCsv(u) : toJson(u), 'utf8'));
+        vscode.window.showInformationMessage(`Exported usage to ${target.fsPath}`);
+    }
+
     async refreshHtml() {
         if (!this._panel) return;
         try {
@@ -233,9 +261,12 @@ class DashboardProvider {
             if (this._usageService) {
                 // Usage is always for the active gh account, independent of the selected account chip.
                 this._usage = await Promise.race([
-                    this._usageService.getActiveUsage(),
+                    this._usageService.getActiveUsage(this._usagePeriod || undefined),
                     new Promise(r => setTimeout(() => r(null), 10000))
                 ]).catch(() => null);
+                this._usageOpts = this._usageService.viewOptions ? this._usageService.viewOptions() : {};
+                // The compact card always shows the current month, even when the Usage page shows another one.
+                this._usageCard = this._usagePeriod ? await this._usageService.getActiveUsage().catch(() => null) : null;
             }
             this._panel.webview.html = this.buildDashboardHtml(all, activeAccount, accounts);
             if (this._initialPage === 'usage') this._initialPage = null;
@@ -2065,7 +2096,7 @@ ${HUB_CSS}
     </header>
 
     <!-- ── Usage (active gh account) ─────────────────────────────────── -->
-    ${hubUsageCardHtml(this._usage, I.clock)}
+    ${hubUsageCardHtml(this._usageCard || this._usage, I.clock, this._usageOpts)}
 
     <!-- ── 3. KPI Metrics Row (4 Cards) ────────────────────────────── -->
     <section class="kpi-row">
@@ -2101,7 +2132,7 @@ ${HUB_CSS}
         <div class="kpi-icon-box kpi-icon-storage">${I.shield}</div>
         <div class="kpi-meta">
           <span class="kpi-label">STORAGE TIER</span>
-          <span class="kpi-value">${escapeHtml(storageTierText(this._usage))}</span>
+          <span class="kpi-value">${escapeHtml(storageTierText(this._usageCard || this._usage))}</span>
         </div>
         <div class="kpi-chevron">${I.chevronRight}</div>
       </div>
@@ -2183,7 +2214,7 @@ ${HUB_CSS}
       <button class="btn-clear-search" id="btnClearSearch">Clear search</button>
     </div>
 
-    ${hubUsagePageHtml(this._usage)}
+    ${hubUsagePageHtml(this._usage, this._usageOpts)}
   </main>
 </div>
 

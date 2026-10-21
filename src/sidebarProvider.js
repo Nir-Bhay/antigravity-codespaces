@@ -1588,7 +1588,7 @@ body {
     </div>
 
     <!-- Codespaces usage (active gh account) -->
-    ${sidebarSummaryHtml(this._usage, nonce)}
+    ${sidebarSummaryHtml(this._usage, nonce, this._usageService && this._usageService.viewOptions ? this._usageService.viewOptions() : {})}
 
     <!-- gh CLI Status Row -->
     ${ghStatusRowHtml}

@@ -20,6 +20,13 @@
 
 ---
 
+## What's new in 5.3.0
+
+- **Deeper usage analytics:** month switcher and month-over-month comparison, a forecast ("~X / quota by reset · won't run out" or "runs out ~date"), hours left per machine size, daily compute chart with hover hours and $, cumulative vs pace, storage sparkline, and an expandable, filterable per-repo table with CSV/JSON export.
+- **Settings:** usage alert thresholds (75/90% by default), refresh interval, sidebar line on/off, preferred unit (core-hours or $).
+- **Docs:** [multi-IDE setup guide](docs/IDE_SETUP.md) and a copy-paste [agent setup prompt](AGENT_SETUP.md).
+- All figures come from GitHub's billing API; derived values are labelled.
+
 ## What's new in 5.2.0
 
 **5.2.0** adds **Codespaces usage analytics** that use GitHub's own billing numbers.

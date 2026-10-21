@@ -1,0 +1,33 @@
+{
+ "timePeriod": {
+  "year": 2026,
+  "month": 9
+ },
+ "user": "octocat",
+ "usageItems": [
+  {
+   "product": "Codespaces",
+   "sku": "codespaces_compute_d2",
+   "grossQuantity": 59.02624,
+   "discountQuantity": 59.02624,
+   "netQuantity": 0.0,
+   "grossAmount": 10.6247232,
+   "discountAmount": 10.6247232,
+   "netAmount": 0.0,
+   "pricePerUnit": 0.18,
+   "unitType": "hours"
+  },
+  {
+   "product": "Codespaces",
+   "sku": "codespaces_storage",
+   "grossQuantity": 15.479961424,
+   "discountQuantity": 15.479961424,
+   "netQuantity": 0.0,
+   "grossAmount": 1.083596729,
+   "discountAmount": 1.083596729,
+   "netAmount": 0.0,
+   "pricePerUnit": 0.07,
+   "unitType": "gigabyte-hours"
+  }
+ ]
+}

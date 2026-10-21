@@ -68,10 +68,40 @@ async function activate(context) {
             return {
                 plan: c.get('usage.plan', 'auto'),
                 monthlyCoreHours: c.get('usage.monthlyCoreHours', 120),
-                monthlyStorageGb: c.get('usage.monthlyStorageGb', 15)
+                monthlyStorageGb: c.get('usage.monthlyStorageGb', 15),
+                refreshMinutes: c.get('usage.refreshMinutes', 10),
+                preferredUnit: c.get('usage.preferredUnit', 'core-hours'),
+                showSidebarLine: c.get('usage.showSidebarLine', true),
+                alertThresholds: c.get('usage.alertThresholds', [75, 90])
             };
         }
     });
+
+    // Quota alerts: one notification per account, month, quota and threshold.
+    const USAGE_ALERTS_KEY = 'antigravity.usageAlertsShown.v1';
+    usageService.onLoaded((u) => {
+        const c = vscode.workspace.getConfiguration('antigravity-codespaces');
+        const { pendingAlerts } = require('./src/usageService');
+        const shown = context.globalState.get(USAGE_ALERTS_KEY, {}) || {};
+        const alerts = pendingAlerts(u, c.get('usage.alertThresholds', [75, 90]), shown);
+        if (!alerts.length) return;
+        for (const al of alerts) shown[al.key] = Date.now();
+        context.globalState.update(USAGE_ALERTS_KEY, shown);
+        const top = alerts[alerts.length - 1];
+        vscode.window.showWarningMessage(top.message, 'Open Usage').then((pick) => {
+            if (pick === 'Open Usage') vscode.commands.executeCommand('antigravity-codespaces.openDashboard', 'usage');
+        });
+    });
+
+    // Periodic refresh (GitHub updates billing data hourly).
+    let usageTimer = null;
+    const scheduleUsageRefresh = () => {
+        if (usageTimer) clearInterval(usageTimer);
+        const mins = Math.max(5, Number(vscode.workspace.getConfiguration('antigravity-codespaces').get('usage.refreshMinutes', 10)) || 10);
+        usageTimer = setInterval(() => usageService.refresh(), mins * 60 * 1000);
+    };
+    scheduleUsageRefresh();
+    context.subscriptions.push({ dispose: () => usageTimer && clearInterval(usageTimer) });
     const sidebarProvider = new SidebarProvider(context, authManager, githubApi, usageService);
     usageService.onDidChange(() => sidebarProvider.render());
     const dashboardProvider = new DashboardProvider(context, authManager, githubApi, usageService);
@@ -279,7 +309,7 @@ async function activate(context) {
             }
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('antigravity-codespaces.usage')) usageService.refresh();
+            if (e.affectsConfiguration('antigravity-codespaces.usage')) { scheduleUsageRefresh(); usageService.refresh(); }
         })
     );
 

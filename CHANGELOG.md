@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.3.0] - 2026-10-21
+
+### Added
+- **Deeper usage analytics (Usage page):** month switcher (last 6 months) with month-over-month comparison; projection line ("At this pace: ~X core-hrs by reset, won't run out" / "runs out ~date"); hours left per machine size (2/4/8/16/32-core); separate compute and storage daily charts with hover tooltips (hours and $) and a Month/7-day toggle; cumulative vs pace chart; peak day, active days, today.
+- Per-repository table with expandable SKU breakdown, sparkline, sorting and filter; CSV/JSON export of the billing rows.
+- Storage tip naming the top storage repository (stopped codespaces still bill storage); links to GitHub billing, spending limit, idle timeout and docs.
+- Settings: `usage.alertThresholds` (default 75/90% notifications, once per month), `usage.refreshMinutes`, `usage.showSidebarLine`, `usage.preferredUnit` (core-hours or dollars).
+- Every derived figure is labelled and has a tooltip with its source/formula.
+
+### Docs
+- New multi-IDE setup guide (`docs/IDE_SETUP.md`) and copy-paste agent setup prompt (`AGENT_SETUP.md`), linked from the README and the Cursor guide.
+
+### Fixed
+- CSV export guards against spreadsheet formula injection.
+- The 7-day average now counts days elapsed in the cycle, not days since first usage (overstated burn rate after idle days).
+- "Full cycle" wording replaced with an explicit projection.
+
 ## [5.2.0] - 2026-10-21
 
 ### Added

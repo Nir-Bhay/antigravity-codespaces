@@ -2,7 +2,7 @@
   "name": "antigravity-codespaces",
   "displayName": "Antigravity Codespaces Pro",
   "description": "Enterprise multi-account GitHub Codespaces manager for Cursor IDE, Antigravity IDE, VS Code & Code-OSS. Connect, start, stop, rebuild, test, and monitor all your cloud dev environments across multiple GitHub accounts with 1 click — by Nirbhay hiwse.",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "publisher": "nirbhay-hiwse",
   "author": {
     "name": "Nirbhay hiwse",
@@ -139,6 +139,29 @@
           "default": 120,
           "minimum": 0,
           "description": "Monthly included core-hours when usage.plan is 'custom'."
+        },
+        "antigravity-codespaces.usage.alertThresholds": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 1, "maximum": 100 },
+          "default": [75, 90],
+          "description": "Show a notification when compute or storage usage crosses these percentages of the included quota (once per month each). Empty list disables alerts."
+        },
+        "antigravity-codespaces.usage.refreshMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "description": "How often (minutes) to re-fetch usage from the GitHub billing API. GitHub updates the data hourly."
+        },
+        "antigravity-codespaces.usage.showSidebarLine": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the compact usage line under the account picker in the sidebar."
+        },
+        "antigravity-codespaces.usage.preferredUnit": {
+          "type": "string",
+          "enum": ["core-hours", "dollars"],
+          "default": "core-hours",
+          "description": "Primary unit for the compute figure in the sidebar and Cloud Hub card."
         },
         "antigravity-codespaces.usage.monthlyStorageGb": {
           "type": "number",
