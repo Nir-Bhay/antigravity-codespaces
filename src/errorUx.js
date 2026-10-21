@@ -53,8 +53,9 @@ function classifyError(err) {
     if (/"codespace" (scope|permission)|lack the "codespace"|needs the "user" scope|missing the "user"/i.test(msg)) {
         return { kind: 'scope', level: 'warning', title: 'A GitHub permission is missing.', why: msg, actions: ['grantScope', 'details'] };
     }
-    if (/rate limit/i.test(msg)) {
-        return { kind: 'rateLimit', level: 'warning', title: 'GitHub rate limit reached.', why: 'Wait a few minutes, then retry.', actions: ['retry', 'details'] };
+    if (kind === 'rateLimit' || /rate limit/i.test(msg)) {
+        const at = err && err.resetAt ? new Date(err.resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        return { kind: 'rateLimit', level: 'warning', title: 'GitHub rate limit reached.', why: at ? `Try again after ${at}.` : 'Wait a few minutes, then retry.', actions: ['retry', 'details'] };
     }
     return { kind: 'other', level: 'critical', title: 'Something went wrong.', why: msg, actions: ['retry', 'details'] };
 }

@@ -221,6 +221,10 @@ function errorBodyHtml(u) {
     if (u.kind === 'auth') {
         return `<div class="usage-hero-figure">GitHub sign-in expired <small>${escapeHtml(u.why || '')}</small></div><div><button class="btn-new-cs" data-usage-signin="1">Sign in again</button></div>`;
     }
+    if (u.kind === 'malformed') {
+        // Technical detail is only in the log (Details).
+        return errorUx.bannerHtml({ kind: 'malformed', level: 'critical', title: u.error, why: u.why || '', actions: ['retry', 'details'] }, { dismissible: false });
+    }
     const title = u.kind === 'malformed' || u.kind === 'rateLimit' ? u.error : 'Usage unavailable';
     const why = u.kind === 'malformed' || u.kind === 'rateLimit' ? (u.why || '') : (u.error || 'Unknown error');
     return `<div class="usage-hero-figure">${escapeHtml(title)} <small>${escapeHtml(why)}</small></div>${u.fix ? `<div class="usage-muted">Fix: <code>${escapeHtml(u.fix)}</code></div>` : ''}`;

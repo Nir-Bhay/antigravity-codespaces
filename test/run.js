@@ -1459,5 +1459,72 @@ function ok(name, fn) {
         assert.strictEqual(uv.storageTierText({ mode: 'error', plan: { key: 'free', label: 'Free', storageGb: 15, personal: true, guessed: true } }), '', 'guessed plan hidden');
     });
 
+    // ── Review fixes on c9f310b ──
+    console.log('review fixes');
+    await ok('githubApi: 403 with x-ratelimit-remaining: 0 (and 429) is a rate limit with reset time', async () => {
+        const gapi2 = require(path.join(ROOT, 'src', 'githubApi.js'));
+        const reset = Math.floor(Date.UTC(2026, 9, 21, 15, 30) / 1000);
+        const hdr = (status, h) => ({ status, ok: false, json: async () => ({}), headers: { get: (k) => h[k.toLowerCase()] ?? null } });
+        const e1 = gapi2.rateLimitError(hdr(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) }));
+        assert.strictEqual(e1.kind, 'rateLimit'); assert.strictEqual(e1.resetAt, new Date(reset * 1000).toISOString()); assert.match(e1.message, /Resets at/);
+        assert.strictEqual(gapi2.rateLimitError(hdr(403, { 'x-ratelimit-remaining': '17' })), null, 'plain 403 is not a rate limit');
+        assert.ok(gapi2.rateLimitError(hdr(429, { 'retry-after': '30' })).resetAt);
+        const mk = (res) => new gapi2.GithubApi({ getToken: async () => 't', getActiveAccount: () => 'octocat' }, { fetchImpl: async () => res, retryDelayMs: 0 });
+        const limited = hdr(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) });
+        await assert.rejects(() => mk(limited).listCodespaces('octocat'), (e) => e.kind === 'rateLimit');
+        await assert.rejects(() => mk(limited).startCodespace('cs-1', 'octocat'), (e) => e.kind === 'rateLimit');
+        await assert.rejects(() => mk(limited).stopCodespace('cs-1', 'octocat'), (e) => e.kind === 'rateLimit');
+        await assert.rejects(() => mk(limited).createCodespace('octocat/repo-a', 'main', 'octocat'), (e) => e.kind === 'rateLimit');
+        const c = eux.classifyError(e1); assert.strictEqual(c.kind, 'rateLimit'); assert.match(c.why, /Try again after/);
+    });
+    await ok('friendlyError matches exact status / exit code fields (true and false positives)', () => {
+        const withS = (msg, f) => Object.assign(new Error(msg), f);
+        assert.match(friendlyError(withS('x', { status: 404 })), /Only the owner can open/);
+        assert.match(friendlyError('HTTP 404: Not Found (https://api.github.com/user/codespaces/x)'), /Only the owner/);
+        assert.ok(!/Only the owner/.test(friendlyError('Created codespace in region 404-west for repo4040')), 'bare 404 in text is not a 404');
+        assert.ok(!/Only the owner/.test(friendlyError('Repository "octocat/repo-a" not found or not accessible.')), 'repo not found is not codespace not found');
+        assert.match(friendlyError(withS('ssh failed', { exitCode: 255 })), /SSH tunnel dropped/);
+        assert.match(friendlyError('Command failed with exit code 255'), /SSH tunnel dropped/);
+        assert.ok(!/SSH tunnel dropped/.test(friendlyError('Port 2552 forwarded; 255 bytes sent')), 'bare 255 is not an exit code');
+        assert.match(friendlyError('You have exceeded your Codespaces spending limit'), /spending or quota limit/);
+        assert.match(friendlyError(withS('x', { status: 402 })), /spending or quota limit/);
+        assert.ok(!/spending or quota/.test(friendlyError('Maximum retries exceeded while connecting')), '"exceeded" alone is not quota');
+        assert.ok(!/spending or quota/.test(friendlyError('Showing billing page')), '"billing" alone is not quota');
+        assert.match(friendlyError(withS('x', { status: 401 })), /sign in again/);
+        assert.ok(!/sign in again/.test(friendlyError('Listening on port 14010')), 'bare 401 in text is not auth');
+        assert.match(friendlyError(withS('Forbidden', { status: 403 })), /HTTP 403/);
+        assert.match(friendlyError(withS('x', { status: 429 })), /rate limit/);
+    });
+    await ok('usage unexpected-response banner: plain copy, [Retry][Details], technical detail only in the log', async () => {
+        const logs = [];
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, log: (m) => logs.push(m), now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch([userOk, csOk, [/usage\/summary/, () => fakeResp(200, { usageItems: 'x' })]]) });
+        const u = await svc.getAccountUsage('octocat');
+        assert.strictEqual(u.why, "GitHub returned usage data in a format this version doesn't recognise.");
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /data-ux-action="retry"/); assert.match(card, /data-ux-action="details"/);
+        assert.ok(!/usageItems/.test(card + uv.hubUsagePageHtml(u)), 'no technical detail in the UI');
+        assert.ok(logs.some(l => /usageItems is missing/.test(l)), 'technical detail is logged');
+    });
+    await ok('sidebar: cached cards tagged, dimmed, Connect/Start/Stop disabled; single signed-out card without hardcoded hours', () => {
+        const Module = require('module'); const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
+            const sp = Object.create(SP.prototype); sp._usage = null; sp.isFirstRunDismissed = () => true;
+            const cs = [{ name: 'cs-a', repository: 'octocat/repo-a', state: 'Available' }, { name: 'cs-b', repository: 'octocat/repo-b', state: 'Shutdown' }];
+            const h = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, 'x', {}, false, { errorKind: 'timeout', cachedAt: Date.now() });
+            assert.strictEqual((h.match(/cs-card is-(running|stopped) is-cached/g) || []).length, 2);
+            assert.strictEqual((h.match(/class="cached-tag"/g) || []).length, 2);
+            for (const a of ['connect', 'stop', 'start']) assert.match(h, new RegExp(`data-act="${a}" disabled aria-disabled="true"`));
+            const live = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, '', {}, false);
+            assert.ok(!/cs-card is-(running|stopped) is-cached|data-act="(connect|stop|start)" disabled/.test(live));
+            const w = sp.buildWelcomeHtml({ ghInstalled: true });
+            assert.match(w, /You're signed out\./); assert.match(w, /Sign in with gh/);
+            assert.ok(!/60 free compute hrs/.test(w)); assert.ok(!/System Health Checklist/.test(w), 'single card when gh is installed');
+            assert.match(sp.buildWelcomeHtml({ ghInstalled: false }), /System Health Checklist/, 'gh missing still shows the checklist');
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+    });
+
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
 })();

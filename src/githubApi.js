@@ -50,6 +50,25 @@ async function ghFetch(url, opts = {}, deps = {}) {
     return res;
 }
 
+/**
+ * Rate limit: 429, or 403 with x-ratelimit-remaining: 0 (same rule as usageService).
+ * Returns a GithubRequestError(kind 'rateLimit') with resetAt from x-ratelimit-reset / retry-after, else null.
+ */
+function rateLimitError(res, nowMs = Date.now()) {
+    if (!res) return null;
+    const h = (k) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(k) : null);
+    const limited = res.status === 429 || (res.status === 403 && String(h('x-ratelimit-remaining')) === '0');
+    if (!limited) return null;
+    let resetAt = null;
+    const reset = h('x-ratelimit-reset'), ra = h('retry-after');
+    if (reset && Number.isFinite(Number(reset))) resetAt = new Date(Number(reset) * 1000).toISOString();
+    else if (ra && Number.isFinite(Number(ra))) resetAt = new Date(nowMs + Number(ra) * 1000).toISOString();
+    const when = resetAt ? ` Resets at ${new Date(resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ' Wait a few minutes, then retry.';
+    const e = new GithubRequestError('rateLimit', `GitHub API rate limit reached.${when}`, res.status);
+    e.resetAt = resetAt;
+    return e;
+}
+
 class GithubApi {
     constructor(authManager, deps = {}) {
         this._authManager = authManager;
@@ -116,7 +135,7 @@ class GithubApi {
                 headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` }
             });
             if (res.status === 401) throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
-            if (res.status === 429) throw new Error('GitHub API rate limit reached. Wait a few minutes, then refresh.');
+            { const rl = rateLimitError(res); if (rl) throw rl; }
             if (!res.ok) return { items: out, incomplete: true, status: res.status };
             const data = await res.json();
             const items = Array.isArray(data) ? data : (data.codespaces || []);
@@ -245,6 +264,7 @@ class GithubApi {
                     this._invalidateCs(account);
                     return true;
                 }
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
@@ -293,6 +313,7 @@ class GithubApi {
                     this._invalidateCs(account);
                     return true;
                 }
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
@@ -332,6 +353,7 @@ class GithubApi {
                     this._invalidateCs(account);
                     return true;
                 }
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
@@ -600,6 +622,7 @@ class GithubApi {
                 }
                 const errJson = await res.json().catch(() => ({}));
                 const apiMsg = errJson.message || `HTTP ${res.status}`;
+                { const rl = rateLimitError(res); if (rl) throw rl; }
                 if (res.status === 401) {
                     throw new Error('GitHub authentication expired or token is invalid. Please sign in again.');
                 }
@@ -643,4 +666,4 @@ class GithubApi {
 }
 
 module.exports = {
-    ghFetch, GithubRequestError, FETCH_TIMEOUT_MS, GITHUB_STATUS_URL, GithubApi };
+    rateLimitError, ghFetch, GithubRequestError, FETCH_TIMEOUT_MS, GITHUB_STATUS_URL, GithubApi };

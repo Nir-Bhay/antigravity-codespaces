@@ -586,7 +586,7 @@ class UsageService {
         let parsed = summary.ok ? parseSummary(summary.body) : null;
         if (parsed && parsed.malformed) {
             this._log(`Usage: unexpected billing summary for ${login}: ${parsed.malformed}`);
-            return { ...base, mode: 'error', kind: 'malformed', status: summary.status, error: 'Usage data unavailable (unexpected response).', why: `GitHub's billing API returned data this version can't read (${parsed.malformed}).` };
+            return { ...base, mode: 'error', kind: 'malformed', status: summary.status, error: 'Usage data unavailable (unexpected response).', why: "GitHub returned usage data in a format this version doesn't recognise." };
         }
         if (parsed && parsed.unknownSkus.length) {
             this._log(`Usage: unrecognised Codespaces compute SKU(s) for ${login}: ${parsed.unknownSkus.join(', ')}; showing an error instead of guessed numbers.`);

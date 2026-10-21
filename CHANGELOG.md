@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Usage: offline with nothing cached shows the offline banner instead of raw error text.
 - Usage: if daily usage or the previous month fails to load, a warning note appears in that section instead of the section silently disappearing.
 - Usage: if the codespaces list can't be loaded, the account is no longer treated as org-billed; the page says it's unknown.
+- API rate limits: a 403 with `x-ratelimit-remaining: 0` is treated as a rate limit (like 429) for list/start/stop/create, with the reset time.
+- Error messages match exact HTTP status / exit code fields instead of any "404", "255" or "exceeded" in the text.
+- The sidebar uses the new error UI too: cached cards are tagged, dimmed and have their actions disabled, and the signed-out screen is a single sign-in card (the hardcoded "60 free compute hrs / month" is gone).
+- The unexpected-response usage error has [Retry] and [Details]; technical detail goes only to the log.
 - The storage tile no longer shows a hardcoded "15 GB Free Tier". It shows the plan's included storage from GitHub, or is hidden.
 
 ### Changed
