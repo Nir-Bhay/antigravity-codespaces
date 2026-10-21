@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [5.3.2] - 2026-10-21
 
 ### Changed
 - "GitHub isn't responding (15s)." is a Warning (amber) in both the sidebar and Cloud Hub, not an Error.
-- Sidebar: when the GitHub CLI is missing, the whole view is replaced by one card ("GitHub CLI isn't installed." [Install GitHub CLI], "I've installed it, check again").
+- Sidebar: when the GitHub CLI is missing, the whole view is replaced by one card ("GitHub CLI isn't installed." [Install GitHub CLI] opens https://cli.github.com, "Use a personal access token instead", "I've installed it, check again").
 - Rate limits use one message everywhere (sidebar, Cloud Hub, usage, PAT sign-in, notifications): "GitHub API rate limit reached. Resets at HH:MM.", or "...Try again in a few minutes." when GitHub doesn't send a reset time. PAT sign-in also treats a 403 with no remaining requests as a rate limit.
 
 ## [5.3.1] - 2026-10-21

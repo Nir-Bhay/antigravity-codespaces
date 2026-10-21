@@ -20,6 +20,16 @@
 
 ---
 
+## What's new in 5.3.2
+
+5.3.1 and 5.3.2 make errors clear and consistent:
+
+- **Clear errors.** Every GitHub request times out after 15s. Server errors are retried once. Each error shows what happened and a next step, such as [Retry], [Sign in again] or [Run Setup Doctor]. A slow GitHub is a Warning, not an Error.
+- **Cached data stays usable.** If a refresh fails, the sidebar and Cloud Hub keep the last list ("Showing data as of <time>"). Cached cards are tagged and their actions are disabled until a refresh succeeds.
+- **One rate-limit message:** "GitHub API rate limit reached. Resets at HH:MM."
+- **gh missing:** the sidebar shows one card with [Install GitHub CLI] and a personal-access-token option.
+- See the [CHANGELOG](CHANGELOG.md) for the full list.
+
 ## What's new in 5.3.0
 
 - **Deeper usage analytics:** month switcher and month-over-month comparison, a forecast ("~X / quota by reset · won't run out" or "runs out ~date"), hours left per machine size, daily compute chart with hover hours and $, cumulative vs pace, storage sparkline, and an expandable, filterable per-repo table with CSV/JSON export.
