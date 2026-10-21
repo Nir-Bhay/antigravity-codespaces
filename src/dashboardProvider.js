@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { testSshTunnel } = require('./sshManager');
 const errorUx = require('./errorUx');
+const EXT_VERSION = (() => { try { return require('../package.json').version; } catch (e) { return ''; } })();
 const logger = require('./logger');
 const { hubUsageCardHtml, hubUsagePageHtml, hubUsageScript, storageTierText, HUB_CSS } = require('./usageView');
 
@@ -379,6 +380,7 @@ class DashboardProvider {
         // Logged-out (or fully undiscoverable) state: no accounts at all.
         const isLoggedOut = !accountsList || accountsList.length === 0;
 
+        const cachedAccounts = new Set(accountErrors.filter(e => e.cachedAt).map(e => e.account));
         const accountErrorsHtml = DashboardProvider.accountErrorBanners(accountErrors, accountsList && accountsList.length > 1);
 
         const nonce = generateNonce();
@@ -426,7 +428,7 @@ class DashboardProvider {
             const accColor = getAccountColor(cs.account);
 
             return `
-            <article class="ws-card ${running ? 'is-running' : 'is-stopped'}" 
+            <article class="ws-card ${running ? 'is-running' : 'is-stopped'}${cachedAccounts.has(cs.account) ? ' is-cached' : ''}" 
                      data-account="${escapeHtml(cs.account)}" 
                      data-name="${escapeHtml(cs.name)}" 
                      data-repo="${escapeHtml(repo)}"
@@ -440,7 +442,7 @@ class DashboardProvider {
                     <span class="status-dot"></span>
                     ${running ? '<span class="status-pulse"></span>' : ''}
                   </span>
-                  <h3 class="ws-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</h3>
+                  <h3 class="ws-title" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</h3>${cachedAccounts.has(cs.account) ? '<span class="cached-tag" title="Last known state. Actions are disabled until a refresh succeeds.">Cached</span>' : ''}
                 </div>
                 <div class="ws-dropdown-wrap">
                   <button class="btn-more" data-cmd="openMenu" title="More options" aria-label="More options">
@@ -505,14 +507,14 @@ class DashboardProvider {
               <div class="ws-action-dock">
                 <div class="action-primary-group">
                   ${running ? `
-                    <button class="action-btn btn-connect" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}" title="Connect in Antigravity IDE">
+                    <button class="action-btn btn-connect" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Connect in Antigravity IDE"'}>
                       ${I.play} <span>Connect</span>
                     </button>
-                    <button class="action-btn btn-stop" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Stop Codespace (save hours)">
+                    <button class="action-btn btn-stop" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Stop Codespace (save hours)"'}>
                       ${I.stop} <span>Stop</span>
                     </button>
                   ` : `
-                    <button class="action-btn btn-start" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Turn ON Codespace">
+                    <button class="action-btn btn-start" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Turn ON Codespace"'}>
                       ${I.play} <span>Start</span>
                     </button>
                   `}
@@ -522,18 +524,18 @@ class DashboardProvider {
                   <button class="util-btn" data-cmd="testSSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Test SSH Tunnel Latency" aria-label="Test SSH">
                     ${I.zap}
                   </button>
-                  <button class="util-btn" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open in GitHub Web" aria-label="Open Web">
+                  ${running ? '' : `<button class="util-btn" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open in GitHub Web" aria-label="Open Web">
                     ${I.globe}
                   </button>
                   <button class="util-btn" data-cmd="openRebuildModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Rebuild DevContainer" aria-label="Rebuild">
                     ${I.build}
                   </button>
-                  <button class="util-btn" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH Command" aria-label="Copy SSH">
+                  `}<button class="util-btn" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH Command" aria-label="Copy SSH">
                     ${I.term}
                   </button>
-                  <button class="util-btn btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete Codespace" aria-label="Delete">
+                  ${running ? '' : `<button class="util-btn btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete Codespace" aria-label="Delete">
                     ${I.trash}
-                  </button>
+                  </button>`}
                 </div>
               </div>
             </article>`;
@@ -964,7 +966,7 @@ html, body {
 /* ── 3. KPI Metrics Row (4 Cards) ────────────────────────────────── */
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
 }
 
@@ -1436,6 +1438,7 @@ html, body {
 /* Action Dock at bottom of cards */
 .ws-action-dock {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -1582,6 +1585,13 @@ html, body {
   color: var(--hub-text-muted);
   word-break: break-word;
 }
+.main-canvas.is-signed-out > :not(.hub-header):not(.workspace-grid) { display: none !important; }
+.main-canvas.is-signed-out .header-action-dock { display: none; }
+.main-canvas.is-signed-out .workspace-grid { flex: 1; display: flex; align-items: center; justify-content: center; }
+.main-canvas.is-signed-out .empty-state-canvas { max-width: 440px; border-style: solid; box-shadow: var(--shadow-card); }
+.ws-card.is-cached { opacity: .72; }
+.ws-card.is-cached .action-btn[disabled] { cursor: not-allowed; }
+.cached-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #b45309; background: rgba(217,119,6,.12); border: 1px solid rgba(217,119,6,.4); border-radius: 10px; padding: 1px 7px; margin-left: 6px; }
 .empty-state-canvas {
   grid-column: 1 / -1;
   text-align: center;
@@ -2104,13 +2114,13 @@ ${errorUx.UX_CSS}
       <div class="rail-footer-meta">
         <span class="rail-ide-title">Antigravity IDE</span>
         <span class="rail-ide-tagline">Build anywhere.</span>
-        <span class="rail-ide-version">v1.0.0</span>
+        <span class="rail-ide-version">${EXT_VERSION ? 'v' + escapeHtml(EXT_VERSION) : ''}</span>
       </div>
     </div>
   </aside>
 
   <!-- ── 2. Main Content Canvas ───────────────────────────────────── -->
-  <main class="main-canvas">
+  <main class="main-canvas${isLoggedOut ? ' is-signed-out' : ''}">
 
     <!-- Page Header -->
     <header class="hub-header">
@@ -2118,7 +2128,7 @@ ${errorUx.UX_CSS}
         <div class="brand-hero-cloud">${I.cloudBrand}</div>
         <div class="header-titles">
           <h1>Antigravity Codespaces Cloud Hub</h1>
-          <p>Multi-Account Cloud Workspace Director &nbsp;·&nbsp; Enterprise Edition</p>
+          <p>Multi-Account Cloud Workspace Director</p>
         </div>
       </div>
 
@@ -2175,7 +2185,7 @@ ${errorUx.UX_CSS}
       </div>
 
       <!-- Storage Tier -->
-      <div class="kpi-card kpi-card-storage" id="kpiCardStorage" style="cursor:pointer;" title="Click for storage tier details">
+      <div class="kpi-card kpi-card-storage" id="kpiCardStorage" style="cursor:pointer;${storageTierText(this._usageCard || this._usage) ? '' : 'display:none;'}" title="Included storage for your plan (from GitHub)">
         <div class="kpi-icon-box kpi-icon-storage">${I.shield}</div>
         <div class="kpi-meta">
           <span class="kpi-label">STORAGE TIER</span>

@@ -1,3 +1,4 @@
+const errorUx = require('./errorUx');
 /**
  * HTML builders for Codespaces usage analytics (active gh account only).
  *  - Sidebar: one compact summary under the account picker.
@@ -91,8 +92,12 @@ function sidebarSummaryHtml(u, nonce, opts = {}) {
             : `${n1(s.used)} / ${s.quota} core-hrs`;
         body = `<div class="usage-mini-bar" role="progressbar" aria-valuenow="${Math.round(s.pct)}" aria-valuemin="0" aria-valuemax="100"><div class="usage-mini-fill ${s.level}" style="width:${Math.min(100, s.pct)}%"></div></div>
 <div class="usage-mini-line">${fig} · ${escapeHtml(daysLeftShort(s))}</div>`;
+    } else if (u.mode === 'offline') {
+        body = `<div class="usage-mini-line" role="status"><span aria-hidden="true">⚠️</span> <b>Offline</b> · usage refreshes when GitHub is reachable</div>`;
+    } else if (u.kind === 'auth') {
+        body = `<div class="usage-mini-line" role="alert"><span aria-hidden="true">⛔</span> GitHub sign-in expired · <button class="usage-mini-link" data-usage-signin="1">Sign in again</button></div>`;
     } else {
-        body = `<div class="usage-mini-line" title="${escapeHtml(u.error || '')}">Usage unavailable${u.status ? ' (' + escapeHtml(String(u.status)) + ')' : ''}</div>`;
+        body = `<div class="usage-mini-line" title="${escapeHtml([u.error, u.why].filter(Boolean).join(' '))}">${escapeHtml(u.kind === 'malformed' || u.kind === 'rateLimit' ? u.error : 'Usage unavailable')}${u.status && u.kind !== 'rateLimit' && u.kind !== 'malformed' ? ' (' + escapeHtml(String(u.status)) + ')' : ''}</div>`;
     }
     return `<style nonce="${nonce}">${SIDEBAR_CSS}</style><div class="usage-mini" role="button" tabindex="0" data-usage-open="${acc}" title="Open Codespaces usage in Cloud Hub">${top}${body}</div>`;
 }
@@ -101,6 +106,7 @@ function sidebarSummaryHtml(u, nonce, opts = {}) {
 function buildSidebarUsageScript(nonce) {
     return `<script nonce="${nonce}">(function(){const vs=(typeof vscode!=='undefined')?vscode:acquireVsCodeApi();
 document.querySelectorAll('[data-usage-grant]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();vs.postMessage({command:'usageGrantAccess',account:b.getAttribute('data-usage-grant')});}));
+document.querySelectorAll('[data-usage-signin]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();vs.postMessage({command:'loginGitHub'});}));
 document.querySelectorAll('[data-usage-open]').forEach(c=>{const go=()=>vs.postMessage({command:'openUsageDashboard'});c.addEventListener('click',go);c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});});})();</script>`;
 }
 
@@ -137,6 +143,8 @@ const HUB_CSS = `
 .usage-panel{background:var(--hub-bg-card);border:1px solid var(--hub-border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-card)}
 .usage-panel h3{font-size:12px;font-weight:600;color:var(--hub-text-muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 10px;display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}
 .usage-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.usage-warn-note{background:rgba(217,119,6,.09);border:1px solid rgba(217,119,6,.45);border-radius:8px;padding:8px 10px;font-size:12px;margin:6px 0}
+.usage-warn-note b{color:#b45309;text-transform:uppercase;font-size:10.5px;letter-spacing:.05em}
 .usage-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .usage-qfacts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--hub-border-subtle)}
 .usage-qfacts>div{display:flex;flex-direction:column;gap:2px}
@@ -207,7 +215,15 @@ function billingLineHtml(u) {
     return `<div class="usage-muted" title="From the billing summary API: grossAmount, discountAmount, netAmount">Billing this cycle: ${money(d.consumed)} consumed · −${money(d.discount)} included discount · <b>${money(d.billable)} billable</b></div>`;
 }
 function errorBodyHtml(u) {
-    return `<div class="usage-hero-figure">Usage unavailable <small>${escapeHtml(u.error || 'Unknown error')}</small></div>${u.fix ? `<div class="usage-muted">Fix: <code>${escapeHtml(u.fix)}</code></div>` : ''}`;
+    if (u.mode === 'offline') {
+        return errorUx.bannerHtml({ kind: 'network', level: 'warning', title: u.error || "You're offline.", why: u.why || '', actions: ['retry'] }, { dismissible: false });
+    }
+    if (u.kind === 'auth') {
+        return `<div class="usage-hero-figure">GitHub sign-in expired <small>${escapeHtml(u.why || '')}</small></div><div><button class="btn-new-cs" data-usage-signin="1">Sign in again</button></div>`;
+    }
+    const title = u.kind === 'malformed' || u.kind === 'rateLimit' ? u.error : 'Usage unavailable';
+    const why = u.kind === 'malformed' || u.kind === 'rateLimit' ? (u.why || '') : (u.error || 'Unknown error');
+    return `<div class="usage-hero-figure">${escapeHtml(title)} <small>${escapeHtml(why)}</small></div>${u.fix ? `<div class="usage-muted">Fix: <code>${escapeHtml(u.fix)}</code></div>` : ''}`;
 }
 function tagsHtml(u) {
     return (u.offline ? `<span class="usage-tag off">offline · last updated ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '')
@@ -245,7 +261,9 @@ ${billingLineHtml(u)}</div>
 /** Value for the existing Storage Tier KPI card. */
 function storageTierText(u) {
     if (hasData(u) && u.storage && u.storage.quota && u.storage.used != null) return `${n1(u.storage.used)} / ${u.storage.quota} GB-month`;
-    return '15 GB Free Tier';
+    // No usage data: show the included storage only when the plan came from GitHub's API; otherwise hide the tile.
+    if (u && u.plan && !u.plan.guessed && u.plan.personal && u.plan.storageGb) return `${u.plan.storageGb} GB-month · ${u.plan.label}`;
+    return '';
 }
 
 /**
@@ -334,7 +352,7 @@ function hubUsagePageHtml(u, opts = {}) {
         return `<section class="usage-page" id="usagePage">${head(title)}<div class="usage-panel" style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><b>Usage needs permission.</b> <span class="usage-muted">GitHub's billing API needs the "user" scope for ${escapeHtml(u.account)}.</span></div><button class="btn-new-cs" data-usage-grant="${escapeHtml(u.account)}">Grant access</button></div></section>`;
     }
     if (u.mode === 'orgBilled' || !hasData(u)) {
-        return `<section class="usage-page" id="usagePage">${head(title)}<div class="usage-panel">${u.mode === 'orgBilled' ? 'Billed to ' + escapeHtml((u.orgBilled || []).join(', ')) : '<b>Usage unavailable.</b> ' + escapeHtml(u.error || '') + (u.fix ? `<div class="usage-muted" style="margin-top:6px;">Fix: run <code>${escapeHtml(u.fix)}</code> in a terminal, then Refresh usage.</div>` : '')}</div>${links}</section>`;
+        return `<section class="usage-page" id="usagePage">${head(title)}<div class="usage-panel">${u.mode === 'orgBilled' ? 'Billed to ' + escapeHtml((u.orgBilled || []).join(', ')) : errorBodyHtml(u) + (u.fix ? `<div class="usage-muted" style="margin-top:6px;">Run it in a terminal, then Refresh usage.</div>` : '')}</div>${links}</section>`;
     }
     const s = u.stats, a = u.analytics, d = u.dollars;
     const proj = projectionText(u);
@@ -353,7 +371,9 @@ function hubUsagePageHtml(u, opts = {}) {
 <div class="usage-muted" style="margin-top:8px;">Core-hours = cores × hours, so a 4-core machine uses your quota 2× as fast as a 2-core, and an 8-core 4× as fast.${u.skus && u.skus.length ? ' This month: ' + u.skus.map(k => `${k.cores}-core ${n1(k.coreHours)} core-hrs`).join(', ') + '.' : ''}</div></div>` : '';
 
     // MoM
-    const mom = u.mom ? `<div class="usage-panel"><h3>Compared with ${escapeHtml(new Date(Date.UTC(u.prevPeriod.year, u.prevPeriod.month - 1, 1)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }))}${u.isCurrent ? ' <span class="usage-muted" style="text-transform:none;letter-spacing:0;">(this month is still in progress)</span>' : ''}</h3>
+    const warnNote = (t) => `<div class="usage-warn-note" role="status"><span aria-hidden="true">⚠️</span> <b>Warning</b> ${escapeHtml(t)}</div>`;
+    const dailyNote = u.dailyError ? warnNote(`${u.dailyError}. Daily charts and the per-repository table are unavailable; the totals above come from the billing summary.`) : '';
+    const mom = !u.mom && u.prevError ? `<div class="usage-panel"><h3>Compared with the previous month</h3>${warnNote(`${u.prevError}, so the comparison can't be shown.`)}</div>` : u.mom ? `<div class="usage-panel"><h3>Compared with ${escapeHtml(new Date(Date.UTC(u.prevPeriod.year, u.prevPeriod.month - 1, 1)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }))}${u.isCurrent ? ' <span class="usage-muted" style="text-transform:none;letter-spacing:0;">(this month is still in progress)</span>' : ''}</h3>
 <div class="usage-mom">
 <div><div class="usage-muted">Compute</div><b>${n1(u.mom.coreHours.current)}</b> vs ${n1(u.mom.coreHours.previous)} core-hrs<br>${deltaHtml(u.mom.coreHours, 'core-hrs')}</div>
 <div><div class="usage-muted">Storage</div><b>${n2(u.mom.storageGbMonths.current)}</b> vs ${n2(u.mom.storageGbMonths.previous)} GB-month<br>${deltaHtml(u.mom.storageGbMonths, 'GB-month')}</div>
@@ -367,6 +387,7 @@ function hubUsagePageHtml(u, opts = {}) {
 ${a && (u.storageSeries || []).length ? `<div class="usage-spark" title="GB-month accrued per day (hover a bar for the day and $)">${barChartSvg(u.storageSeries, { unit: 'GB-month', color: 'var(--hub-purple-icon)', label: 'Daily storage GB-month sparkline', digits: 3, height: 44 })}<span class="usage-muted">GB-month per day</span></div>` : ''}
 ${topSt ? `<div class="usage-proj">Most storage this month: <b>${escapeHtml(topSt.repo)}</b> — ${n2(topSt.storageGbMonths)} GB-month (${money(topSt.amount)}).</div>` : ''}
 <div class="usage-muted" style="margin-top:6px;">Storage is billed for every codespace that exists, including stopped ones, until it is deleted (<button class="usage-link" data-usage-url="${LINKS.storageDocs}">GitHub docs ↗</button>). Stopping a codespace only stops compute charges.</div>
+${u.orgBilledUnknown ? warnNote("Couldn't load your codespaces list, so it's unknown whether some are billed to an organization.") : ''}
 ${u.orgBilled && u.orgBilled.length ? `<div class="usage-muted" style="margin-top:6px;">Some codespaces are billed to ${escapeHtml(u.orgBilled.join(', '))} and are not counted.</div>` : ''}</div>`;
 
     // Charts
@@ -421,6 +442,7 @@ ${u.dailyGapCoreHours > 0.05 ? `<div class="usage-muted" style="margin-top:6px;"
     const storageTail = a ? '' : storagePanel;
     return `<section class="usage-page" id="usagePage">${head(title)}
 <div class="usage-tiles">${tiles}</div>
+${dailyNote}
 ${machines}
 ${charts}
 ${mom}
@@ -449,6 +471,7 @@ function hubUsageScript(initialPage) {
   const hero = document.getElementById('usageHero');
   if (hero) { hero.addEventListener('click', () => showUsage(true)); hero.addEventListener('keydown', (e) => { if (e.key === 'Enter') showUsage(true); }); }
   document.querySelectorAll('[data-usage-grant]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ command: 'usageGrant', account: b.getAttribute('data-usage-grant') }); }));
+  document.querySelectorAll('[data-usage-signin]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ command: 'loginGitHub' }); }));
   const rb = document.getElementById('usageRefreshBtn');
   if (rb) rb.addEventListener('click', () => vscode.postMessage({ command: 'usageRefresh' }));
   const ms = document.getElementById('usageMonth');

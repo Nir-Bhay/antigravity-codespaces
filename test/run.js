@@ -851,10 +851,11 @@ function ok(name, fn) {
         assert.match(u.error, /404/);
         const card = uv.hubUsageCardHtml(u);
         assert.match(card, /Usage unavailable/);
-        assert.match(card, /gh auth refresh -h github\.com -s user/);
+        assert.match(card, /enhanced billing platform/);
+        assert.ok(!/gh auth refresh/.test(card), 'scope is present, so no scope fix is suggested');
         assert.ok(!/core-hrs|Estimated/.test(card));
         assert.ok(!/core-hrs|Estimated/.test(uv.sidebarSummaryHtml(u, 'n')));
-        assert.strictEqual(uv.storageTierText(u), '15 GB Free Tier');
+        assert.strictEqual(uv.storageTierText(u), '15 GB-month · Free', 'plan from the API');
     });
     await ok('org plan with only org-billed codespaces -> "Billed to {org}" with no bar', async () => {
         const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
@@ -1009,7 +1010,7 @@ function ok(name, fn) {
         assert.match(uv.hubUsageCardHtml(mk(95)), /usage-fill amber/);
         assert.match(uv.hubUsageCardHtml(mk(110)), /usage-fill red/);
         assert.strictEqual(uv.storageTierText(u), '2 / 15 GB-month');
-        assert.strictEqual(uv.storageTierText(null), '15 GB Free Tier');
+        assert.strictEqual(uv.storageTierText(null), '', 'unknown plan -> tile hidden, never a hardcoded tier');
         const page = uv.hubUsagePageHtml(u);
         assert.match(page, /id="usagePage"/);
         assert.match(page, /Resets<\/span><b>/);
@@ -1341,6 +1342,10 @@ function ok(name, fn) {
             assert.strictEqual(w.has, true); assert.strictEqual(w.id, 'codeium.windsurf-remote-openssh');
             assert.deepStrictEqual((SD.SystemDoctor || SD).detectRemoteSsh(['codeium.windsurf-remote-openssh', 'jeanp413.open-remote-ssh'], 'Windsurf').conflicts, ['jeanp413.open-remote-ssh']);
             assert.strictEqual((SD.SystemDoctor || SD).detectRemoteSsh(['foo.bar'], 'Visual Studio Code').has, false);
+            const SDc = SD.SystemDoctor || SD;
+            assert.strictEqual(SDc.detectRemoteSsh(['codeium.windsurf-remote-openssh'], 'Some Renamed IDE').isWindsurf, true, 'detected by extension, not name');
+            assert.strictEqual(SDc.detectRemoteSsh([], 'Devin Desktop').isWindsurf, true);
+            assert.strictEqual(SDc.detectRemoteSsh(['ms-vscode-remote.remote-ssh'], 'Visual Studio Code').isWindsurf, false);
         } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
     });
     await ok('docs: keep-alive guide uses accept-new; SECURITY/CONTRIBUTING no longer 4.3.x', () => {
@@ -1348,6 +1353,110 @@ function ok(name, fn) {
         assert.ok(!/StrictHostKeyChecking no/.test(g)); assert.match(g, /StrictHostKeyChecking accept-new/);
         assert.match(fs.readFileSync(path.join(ROOT, 'SECURITY.md'), 'utf8'), /5\.3\.x/);
         assert.ok(!/4\.3\.0/.test(fs.readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8')));
+    });
+
+    // ── Usage-side gaps (a–g) + design review ──
+    console.log('usage error gaps + design');
+    const SUM_OK = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'billing-usage-summary.json'), 'utf8'));
+    const svcWith = (routes) => new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch(routes) });
+    const userOk = [/\/user$/, () => fakeResp(200, userBody('octocat', 'pro'), 'codespace, user')];
+    const csOk = [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })];
+    const withHeaders = (status, body, h) => ({ status, ok: false, json: async () => body, headers: { get: (k) => h[k.toLowerCase()] ?? null } });
+    await ok('(a) malformed 200 body / non-numeric quantity -> "Usage data unavailable (unexpected response)", never 0 or NaN', async () => {
+        for (const bad of ['<html>', null, {}, { usageItems: 'x' }, { usageItems: [{ product: 'Codespaces', sku: 'codespaces_compute_d2', grossQuantity: 'abc' }] }, { usageItems: [{ product: 'Codespaces', sku: 'codespaces_storage' }] }]) {
+            const u = await svcWith([userOk, csOk, [/usage\/summary/, () => fakeResp(200, bad)]]).getAccountUsage('octocat');
+            assert.strictEqual(u.mode, 'error', JSON.stringify(bad)); assert.strictEqual(u.kind, 'malformed');
+            assert.strictEqual(u.error, 'Usage data unavailable (unexpected response).');
+            const card = uv.hubUsageCardHtml(u); assert.match(card, /Usage data unavailable \(unexpected response\)/);
+            assert.ok(!/NaN|>0 \//.test(card + uv.sidebarSummaryHtml(u, 'n')));
+        }
+        assert.strictEqual(us.billingShapeError({ usageItems: [] }), '', 'empty month is valid');
+        assert.strictEqual(us.billingShapeError(SUM_OK), '');
+    });
+    await ok('(b) 401 from /user -> "GitHub sign-in expired" with [Sign in again]', async () => {
+        const u = await svcWith([[/\/user$/, () => fakeResp(401, { message: 'Bad credentials' })]]).getAccountUsage('octocat');
+        assert.strictEqual(u.kind, 'auth'); assert.match(u.error, /GitHub sign-in expired/);
+        assert.match(uv.hubUsageCardHtml(u), /data-usage-signin="1">Sign in again</);
+        assert.match(uv.sidebarSummaryHtml(u, 'n'), /Sign in again/);
+        assert.ok(!/user" scope/.test(uv.hubUsageCardHtml(u)), 'not mistaken for a missing scope');
+    });
+    await ok('(c) 403 / 404 with the user scope present -> specific messages', async () => {
+        const u404 = await svcWith([userOk, csOk, [/usage\/summary/, () => fakeResp(404, { message: 'Not Found' })]]).getAccountUsage('octocat');
+        assert.match(u404.error, /404.*enhanced billing platform/); assert.strictEqual(u404.fix, null);
+        const u403 = await svcWith([userOk, csOk, [/usage\/summary/, () => fakeResp(403, { message: 'Resource protected by organization SAML enforcement' })]]).getAccountUsage('octocat');
+        assert.match(u403.error, /403.*SAML.*fine-grained token/);
+        assert.notStrictEqual(u403.error, u404.error);
+    });
+    await ok('(d) usage 429 / exhausted 403 shows the reset time from headers', async () => {
+        const reset = Math.floor(Date.UTC(2026, 9, 21, 15, 30) / 1000);
+        const u = await svcWith([userOk, csOk, [/usage\/summary/, () => withHeaders(429, { message: 'rate' }, { 'x-ratelimit-reset': String(reset) })]]).getAccountUsage('octocat');
+        assert.strictEqual(u.kind, 'rateLimit'); assert.strictEqual(u.resetAt, new Date(reset * 1000).toISOString());
+        assert.match(u.why, /Usage can refresh after/);
+        const u2 = await svcWith([userOk, csOk, [/usage\/summary/, () => withHeaders(403, {}, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) })]]).getAccountUsage('octocat');
+        assert.strictEqual(u2.kind, 'rateLimit');
+        assert.ok(us.rateLimitInfo({ status: 429, retryAfter: '60' }).resetAt);
+        assert.strictEqual(us.rateLimitInfo({ status: 403, rateRemaining: '12' }), null);
+    });
+    await ok('(e) offline with no cache -> offline banner, not raw text', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: async () => { const e = new TypeError('fetch failed'); e.cause = { code: 'ENOTFOUND' }; throw e; } });
+        const u = await svc.getAccountUsage('octocat');
+        assert.strictEqual(u.mode, 'offline');
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /ux-banner ux-warning/); assert.match(card, /You're offline|You&#39;re offline/);
+        assert.ok(!/fetch failed|ENOTFOUND|TypeError/.test(card + uv.hubUsagePageHtml(u) + uv.sidebarSummaryHtml(u, 'n')));
+        assert.match(uv.sidebarSummaryHtml(u, 'n'), /Offline/);
+    });
+    await ok('(f) daily-usage and previous-month failures show warning notes in their sections', async () => {
+        const u = await svcWith([userOk, csOk,
+            [/usage\/summary\?product=codespaces&year=2026&month=9\b/, () => fakeResp(500, {})],
+            [/usage\/summary/, () => fakeResp(200, SUM_OK)],
+            [/settings\/billing\/usage\?/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2-core', date: '2026-10-02', quantity: 'x' }] })]
+        ]).getAccountUsage('octocat');
+        assert.strictEqual(u.mode, 'live');
+        assert.match(u.dailyError, /unexpected response/); assert.match(u.prevError, /500/);
+        const page = uv.hubUsagePageHtml(u);
+        assert.match(page, /usage-warn-note[\s\S]*?Daily usage returned an unexpected response/);
+        assert.match(page, /Compared with the previous month[\s\S]*?Previous month returned 500/);
+    });
+    await ok('(g) codespaces-list failure does not misdetect org billing (unknown)', async () => {
+        const u = await svcWith([[/\/user$/, () => fakeResp(200, userBody('octocat', 'business'), 'codespace, user')], [/\/user\/codespaces/, () => fakeResp(500, {})], [/usage\/summary/, () => fakeResp(200, SUM_OK)], [/settings\/billing\/usage\?/, () => fakeResp(200, { usageItems: [] })]]).getAccountUsage('octocat');
+        assert.notStrictEqual(u.mode, 'orgBilled');
+        assert.strictEqual(u.orgBilledUnknown, true); assert.strictEqual(u.codespaceCount, null);
+        if (u.mode === 'live') assert.match(uv.hubUsagePageHtml(u), /unknown whether some are billed to an organization/);
+    });
+    await ok('design: signed-out full page, no Enterprise Edition, real version, cached cards, running-card actions, storage tile', () => {
+        const Module = require('module'); const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const D = require(path.join(ROOT, 'src', 'dashboardProvider.js')); const DP = D.DashboardProvider || D;
+            const p = Object.create(DP.prototype); p._usage = null; p._initialPage = null; p._context = { extensionUri: {} };
+            const out = p.buildDashboardHtml([], '', []);
+            assert.match(out, /class="main-canvas is-signed-out"/);
+            assert.match(out, /\.main-canvas\.is-signed-out > :not\(\.hub-header\):not\(\.workspace-grid\) \{ display: none/);
+            assert.ok(!/Enterprise Edition/.test(out));
+            const ver = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+            assert.match(out, new RegExp('rail-ide-version">v' + ver.replace(/\./g, '\\.') + '<'));
+            assert.match(out, /id="kpiCardStorage" style="cursor:pointer;display:none;"/, 'no hardcoded storage tier');
+            const cs = [{ name: 'cs-a', repository: 'octocat/repo-a', state: 'Available', lastUsedAt: '2026-10-21T08:00:00Z' }];
+            const cached = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: cs, error: 'x', errorKind: 'timeout', cachedAt: Date.now() }], 'octocat', ['octocat']);
+            assert.match(cached, /ws-card is-running is-cached/); assert.match(cached, /class="cached-tag"[^>]*>Cached</);
+            assert.match(cached, /data-cmd="connect"[^>]*disabled aria-disabled="true"/); assert.match(cached, /data-cmd="stop"[^>]*disabled/);
+            const live = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: cs }], 'octocat', ['octocat']);
+            const dock = live.slice(live.indexOf('class="action-utility-group"'), live.indexOf('</article>'));
+            assert.ok(!/data-cmd="openDeleteModal"|data-cmd="openRebuildModal"|data-cmd="openWeb"/.test(dock), 'extra actions live in the ⋮ menu on running cards');
+            assert.ok(!/disabled aria-disabled/.test(live));
+            const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
+            assert.match(SP.skeletonPage(), /ux-skel-card/);
+            const sp = Object.create(SP.prototype); sp._usage = null; sp._context = { globalState: { get: () => true } }; sp.isFirstRunDismissed = () => true;
+            const accs = [{ account: 'octocat', type: 'gh' }];
+            const sc = sp.buildSidebarHtml(accs, 'octocat', cs, "GitHub isn't responding (15s).", {}, false, { errorKind: 'timeout', cachedAt: Date.now() });
+            assert.match(sc, /ux-banner ux-warning/); assert.match(sc, /Showing data as of/); assert.ok(!/id="errorView"/.test(sc));
+            const se = sp.buildSidebarHtml(accs, 'octocat', [], 'boom', {}, false, { errorKind: 'server', errorStatus: 503 });
+            assert.match(se, /id="errorView"/); assert.match(se, /GitHub is having trouble right now/);
+            assert.match(sp.buildSidebarHtml(accs, 'octocat', [], '', {}, false), /No codespaces yet\./);
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+        assert.strictEqual(uv.storageTierText({ mode: 'error', plan: { key: 'free', label: 'Free', storageGb: 15, personal: true, guessed: true } }), '', 'guessed plan hidden');
     });
 
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));

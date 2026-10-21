@@ -115,14 +115,35 @@ function itemCoreHours(item, qty) {
  * Parse /settings/billing/usage/summary (or /usage) items into totals.
  * Remaining is NOT returned by GitHub; we compute it from discountQuantity.
  */
+/**
+ * Shape check for billing responses. Returns a reason string when the body can't be trusted
+ * (not an object, usageItems missing/not an array, or a Codespaces row with a non-numeric value), else ''.
+ */
+function billingShapeError(json) {
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return 'response body is not a JSON object';
+    const items = json.usageItems !== undefined ? json.usageItems : json.usage_items;
+    if (!Array.isArray(items)) return 'usageItems is missing or not a list';
+    for (const it of items) {
+        if (!it || typeof it !== 'object') return 'a usage row is not an object';
+        if (!isCodespacesItem(it)) continue;
+        for (const f of ['grossQuantity', 'quantity', 'discountQuantity', 'netQuantity', 'grossAmount', 'discountAmount', 'netAmount']) {
+            if (it[f] === undefined || it[f] === null) continue;
+            if (typeof it[f] === 'boolean' || it[f] === '' || !Number.isFinite(Number(it[f]))) return `non-numeric ${f} in a Codespaces row`;
+        }
+        if (it.grossQuantity === undefined && it.quantity === undefined) return 'a Codespaces row has no quantity';
+    }
+    return '';
+}
+
 function parseSummary(json) {
     const items = (json && (json.usageItems || json.usage_items)) || [];
     const out = {
         computeCoreHours: 0, includedCoreHours: 0, computeNet: 0,
         storageGbMonths: 0, includedStorage: 0, storageNet: 0,
         grossAmount: 0, discountAmount: 0, netAmount: 0, gross: 0, computeAmount: 0, storageAmount: 0,
-        bySku: [], unknownSkus: []
+        bySku: [], unknownSkus: [], malformed: billingShapeError(json)
     };
+    if (out.malformed) return out;
     for (const it of items) {
         if (!isCodespacesItem(it)) continue;
         const gross = Number(it.grossQuantity ?? it.quantity ?? 0);
@@ -165,7 +186,8 @@ function parseSummary(json) {
  *  rows         normalised rows for CSV/JSON export
  */
 function parseDaily(json, cycleStart, cycleEnd) {
-    const items = (json && (json.usageItems || json.usage_items)) || [];
+    const malformed = billingShapeError(json);
+    const items = malformed ? [] : ((json && (json.usageItems || json.usage_items)) || []);
     const daily = {}, dailyAmount = {}, dailyStorage = {}, dailyStorageAmount = {}, byRepo = {}, repoMap = {};
     const rows = [];
     const startMs = cycleStart ? new Date(cycleStart).getTime() : -Infinity;
@@ -211,7 +233,7 @@ function parseDaily(json, cycleStart, cycleEnd) {
         return { ...r, skus };
     }).sort((a, b) => b.amount - a.amount);
     rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.repository.localeCompare(b.repository)));
-    return { daily, dailyAmount, dailyStorage, dailyStorageAmount, byRepo, repos, rows };
+    return { daily, dailyAmount, dailyStorage, dailyStorageAmount, byRepo, repos, rows, malformed };
 }
 
 function dateKey(ms) { return new Date(ms).toISOString().slice(0, 10); }
@@ -365,6 +387,28 @@ function pendingAlerts(u, thresholds, shown = {}) {
     return out;
 }
 
+function isNetworkError(err) {
+    if (!err) return false;
+    if (err.kind === 'network' || err.kind === 'timeout') return true;
+    const m = String(err.message || err) + ' ' + String(err.cause && err.cause.code || '');
+    return err.name === 'TypeError' && /fetch/i.test(m) || /ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|fetch failed|network/i.test(m);
+}
+
+/** 429, or 403 with x-ratelimit-remaining: 0 -> { resetAt ISO | null }. */
+function rateLimitInfo(res) {
+    if (!res) return null;
+    const limited = res.status === 429 || (res.status === 403 && String(res.rateRemaining) === '0');
+    if (!limited) return null;
+    let resetAt = null;
+    if (res.rateReset && Number.isFinite(Number(res.rateReset))) resetAt = new Date(Number(res.rateReset) * 1000).toISOString();
+    else if (res.retryAfter && Number.isFinite(Number(res.retryAfter))) resetAt = new Date(Date.now() + Number(res.retryAfter) * 1000).toISOString();
+    return { resetAt };
+}
+
+function fmtClock(iso) {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function csvCell(v) {
     if (v == null) return '';
     let s = String(v);
@@ -438,8 +482,9 @@ class UsageService {
         const res = await this._fetch(url, { headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` } });
         let body = null;
         try { body = await res.json(); } catch {}
-        const scopes = res.headers && typeof res.headers.get === 'function' ? (res.headers.get('x-oauth-scopes') || '') : '';
-        return { status: res.status, ok: res.ok, body, scopes };
+        const h = (k) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(k) : null);
+        const scopes = h('x-oauth-scopes') || '';
+        return { status: res.status, ok: res.ok, body, scopes, rateRemaining: h('x-ratelimit-remaining'), rateReset: h('x-ratelimit-reset'), retryAfter: h('retry-after') };
     }
 
     /** UI options from settings (preferred unit, sidebar visibility). */
@@ -479,6 +524,10 @@ class UsageService {
         } catch (err) {
             // Network failure: keep the last good result instead of blanking the card.
             if (hit && hit.data) return { ...hit.data, offline: true, lastUpdated: hit.data.fetchedAt };
+            if (isNetworkError(err)) {
+                // Spec offline state (no raw error text); nothing cached yet.
+                return { account, login: account, mode: 'offline', offline: true, error: "You're offline.", why: "Couldn't reach GitHub billing, and there is no earlier data to show.", period: p, fetchedAt: nowMs };
+            }
             throw err;
         }
         this._cache.set(key, { at: nowMs, data });
@@ -502,6 +551,9 @@ class UsageService {
         if (!token) return { ...base, mode: 'needsPermission', reason: 'No token for this account' };
 
         const user = await this._get(`${GITHUB_API_BASE}/user`, token);
+        if (user.status === 401) {
+            return { ...base, mode: 'error', kind: 'auth', status: 401, error: 'GitHub sign-in expired.', why: 'GitHub rejected the saved token for this account.', action: 'signIn' };
+        }
         const login = (user.body && user.body.login) || account;
         const hasUserScope = /(^|[\s,])user($|[\s,])/.test(user.scopes) || !!(user.body && user.body.plan);
         const plan = resolvePlan(user.body && user.body.plan && user.body.plan.name, this._getConfig());
@@ -509,16 +561,20 @@ class UsageService {
 
         // Codespaces list (no `user` scope needed)
         let codespaces = [];
+        let csListFailed = false;
         try {
             const cs = await this._get(`${GITHUB_API_BASE}/user/codespaces?per_page=100`, token);
-            if (cs.ok && cs.body) codespaces = cs.body.codespaces || [];
-        } catch {}
+            if (cs.ok && cs.body && Array.isArray(cs.body.codespaces)) codespaces = cs.body.codespaces;
+            else csListFailed = true;
+        } catch (e) { csListFailed = true; this._log(`Usage: codespaces list failed for ${login}: ${e && e.message}`); }
         const orgBilled = [...new Set(codespaces.filter(c => isOrgBilled(c, login)).map(c => c.billable_owner.login))];
         const personalCs = codespaces.filter(c => !isOrgBilled(c, login));
         base.orgBilled = orgBilled;
-        base.codespaceCount = personalCs.length;
+        base.codespaceCount = csListFailed ? null : personalCs.length;
+        // If the list failed we don't know who pays: never conclude "org-billed" from a missing list.
+        base.orgBilledUnknown = csListFailed;
 
-        if (!plan.personal && personalCs.length === 0) {
+        if (!csListFailed && !plan.personal && personalCs.length === 0) {
             return { ...base, mode: 'orgBilled' };
         }
 
@@ -528,6 +584,10 @@ class UsageService {
         const summary = await this._get(`${GITHUB_API_BASE}/users/${u}/settings/billing/usage/summary?product=codespaces&${q(period.year, period.month)}`, token);
 
         let parsed = summary.ok ? parseSummary(summary.body) : null;
+        if (parsed && parsed.malformed) {
+            this._log(`Usage: unexpected billing summary for ${login}: ${parsed.malformed}`);
+            return { ...base, mode: 'error', kind: 'malformed', status: summary.status, error: 'Usage data unavailable (unexpected response).', why: `GitHub's billing API returned data this version can't read (${parsed.malformed}).` };
+        }
         if (parsed && parsed.unknownSkus.length) {
             this._log(`Usage: unrecognised Codespaces compute SKU(s) for ${login}: ${parsed.unknownSkus.join(', ')}; showing an error instead of guessed numbers.`);
             parsed = null;
@@ -540,12 +600,19 @@ class UsageService {
                 this._get(`${GITHUB_API_BASE}/users/${u}/settings/billing/usage/summary?product=codespaces&${q(prevStart.getUTCFullYear(), prevStart.getUTCMonth() + 1)}`, token).catch(() => null)
             ]);
             if (!dRes) dailyError = 'Daily usage API unreachable';
-            else if (dRes.ok) dd = parseDaily(dRes.body, start, reset);
-            else dailyError = `Daily usage API returned ${dRes.status}`;
-            let prev = null;
-            if (prevRes && prevRes.ok) {
+            else if (dRes.ok) {
+                const pd = parseDaily(dRes.body, start, reset);
+                if (pd.malformed) dailyError = 'Daily usage returned an unexpected response';
+                else dd = pd;
+            } else dailyError = `Daily usage API returned ${dRes.status}`;
+            let prev = null, prevError = null;
+            if (!prevRes) prevError = 'Previous month unreachable';
+            else if (!prevRes.ok) prevError = `Previous month returned ${prevRes.status}`;
+            else {
                 const ps = parseSummary(prevRes.body);
-                if (!ps.unknownSkus.length) prev = ps;
+                if (ps.malformed) prevError = 'Previous month returned an unexpected response';
+                else if (ps.unknownSkus.length) prevError = 'Previous month has a SKU this version can\'t read';
+                else prev = ps;
             }
             // remaining = quota - included usage (discountQuantity); usage beyond the quota is billed
             const used = Math.max(s.includedCoreHours, s.computeCoreHours);
@@ -565,7 +632,7 @@ class UsageService {
                 dollars: { consumed: round(s.grossAmount, 2), discount: round(s.discountAmount, 2), billable: round(s.netAmount, 2) },
                 billed: round(s.netAmount, 2),
                 skus: s.bySku.map(k => ({ sku: k.sku, cores: k.cores, coreHours: round(k.coreHours, 2), net: round(k.net, 2) })),
-                mom: compareMonths(s, prev),
+                mom: compareMonths(s, prev), prevError,
                 prevPeriod: { year: prevStart.getUTCFullYear(), month: prevStart.getUTCMonth() + 1 },
                 repos: dd.repos.map(r => ({
                     repo: r.repo, coreHours: round(r.coreHours), storageGbMonths: round(r.storageGbMonths, 2),
@@ -580,6 +647,8 @@ class UsageService {
         }
 
         const status = summary.ok ? 'unknown-sku' : summary.status;
+        const rl = rateLimitInfo(summary);
+        if (rl) return { ...base, mode: 'error', kind: 'rateLimit', status, error: 'GitHub rate limit reached.', why: rl.resetAt ? `Usage can refresh after ${fmtClock(rl.resetAt)}.` : 'Wait a few minutes, then refresh.', resetAt: rl.resetAt };
         if ((status === 403 || status === 404 || status === 401) && !hasUserScope) {
             return { ...base, mode: 'needsPermission', status, reason: 'The billing API needs the "user" scope.' };
         }
@@ -588,14 +657,15 @@ class UsageService {
         const fix = 'gh auth refresh -h github.com -s user';
         let error;
         if (status === 'unknown-sku') error = `GitHub returned a Codespaces SKU this version can't read (${(summary.ok && parseSummary(summary.body).unknownSkus.join(', ')) || 'unknown'}). Update the extension.`;
-        else if (status === 404 || status === 403) error = `GitHub billing API returned ${status}. This account may not be on GitHub's enhanced billing platform, or the token lacks the "user" scope.`;
+        else if (status === 404) error = `GitHub has no billing usage for ${login} (404). Usage reports need GitHub's enhanced billing platform; accounts not yet moved to it have no usage API.`;
+        else if (status === 403) error = `GitHub refused access to ${login}'s billing data (403)${summary.body && summary.body.message ? ': ' + summary.body.message : ''}. The token has the "user" scope; this usually means organization SSO or a fine-grained token without "Plan: read".`;
         else error = `GitHub billing API returned ${status}${summary.body && summary.body.message ? ': ' + summary.body.message : ''}.`;
-        return { ...base, mode: 'error', status, error, fix };
+        return { ...base, mode: 'error', status, error, fix: status === 404 || status === 403 ? null : fix };
     }
 }
 
 module.exports = {
     UsageService, PLAN_QUOTAS, PRICE_PER_HOUR, STORAGE_PRICE_PER_GB_MONTH, CORE_HOUR_PRICE, CACHE_TTL_MS,
     coreHoursFor, pricePerHour, resolvePlan, billingCycle, parseSummary, parseDaily, computeStats,
-    isOrgBilled, coresFromSku, buildAnalytics, compareMonths, monthOptions, toCsv, toJson, MACHINE_SIZES, pendingAlerts
+    isOrgBilled, coresFromSku, buildAnalytics, compareMonths, monthOptions, toCsv, toJson, MACHINE_SIZES, pendingAlerts, billingShapeError, rateLimitInfo, isNetworkError
 };

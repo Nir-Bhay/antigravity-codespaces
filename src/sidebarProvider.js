@@ -3,6 +3,8 @@ const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { SystemDoctor } = require('./systemDoctor');
 const { getGhAuthHealth } = require('./sshManager');
 const { sidebarSummaryHtml, buildSidebarUsageScript } = require('./usageView');
+const errorUx = require('./errorUx');
+const logger = require('./logger');
 
 const FIRST_RUN_DISMISSED_KEY = 'antigravity.firstRunCardDismissed';
 
@@ -101,6 +103,9 @@ class SidebarProvider {
                 case 'openDashboard':
                     await vscode.commands.executeCommand('antigravity-codespaces.openDashboard');
                     break;
+                case 'showLogs':
+                    logger.show();
+                    break;
                 case 'refresh':
                     await this.refresh();
                     break;
@@ -188,6 +193,11 @@ class SidebarProvider {
 
     async render() {
         if (!this._view) return;
+        if (!this._rendered) {
+            // Loading: skeleton cards on first render.
+            this._rendered = true;
+            this._view.webview.html = SidebarProvider.skeletonPage();
+        }
         try {
             const accounts = await this._authManager.getAccounts();
             const diag = await SystemDoctor.diagnose(this._authManager);
@@ -214,9 +224,14 @@ class SidebarProvider {
             }
             try {
                 const codespaces = await this._githubApi.listCodespaces(activeAccount);
+                this._lastGood = { account: activeAccount, codespaces, at: Date.now() };
                 this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, codespaces, '', diag, showFirstRunCard);
             } catch (fetchErr) {
-                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, [], fetchErr.message, diag, showFirstRunCard);
+                logger.warn(`sidebar: list for ${activeAccount} failed`, fetchErr && fetchErr.message);
+                const prev = this._lastGood && this._lastGood.account === activeAccount ? this._lastGood : null;
+                // Error banner over the last cached list ("as of <time>"), or the error card when nothing is cached.
+                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, prev ? prev.codespaces : [], fetchErr.message, diag, showFirstRunCard,
+                    { errorKind: fetchErr.kind, errorStatus: fetchErr.status, cachedAt: prev ? prev.at : null });
             }
         } catch (err) {
             const diag = await SystemDoctor.diagnose(this._authManager).catch(() => ({}));
@@ -497,7 +512,18 @@ body {
      * Screens 2, 3, 4, 5, 6, 7, 8: Authenticated Sidebar UI
      * Handles List, Card expansion, Empty, Error, Search, and In-Webview Modals.
      */
-    buildSidebarHtml(accounts, activeAccount, codespaces, errorMsg = '', diag = {}, showFirstRunCard = false) {
+    /** Skeleton page shown while the first load runs. Pure. */
+    static skeletonPage() {
+        const nonce = generateNonce();
+        return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}';"><style nonce="${nonce}">body{padding:10px;font-family:var(--vscode-font-family,sans-serif);color:var(--vscode-foreground)}${errorUx.UX_CSS}.ux-skel-grid{grid-template-columns:1fr}</style></head><body>${errorUx.skeletonHtml(3)}</body></html>`;
+    }
+
+    buildSidebarHtml(accounts, activeAccount, codespaces, errorMsg = '', diag = {}, showFirstRunCard = false, errOpts = {}) {
+        const errC = errorMsg ? errorUx.classifyError(Object.assign(new Error(errorMsg), { kind: errOpts.errorKind, status: errOpts.errorStatus })) : null;
+        const cachedBanner = errC && errOpts.cachedAt
+            ? errorUx.bannerHtml({ ...errC, level: errC.level === 'critical' && errC.kind !== 'auth' ? 'warning' : errC.level, actions: errC.actions.filter(a => a === 'retry' || a === 'signIn' || a === 'details') }, { asOf: new Date(errOpts.cachedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })
+            : '';
+        if (cachedBanner) errorMsg = '';
         const nonce = generateNonce();
         const ghHealth = diag.ghAuthHealth || {};
         
@@ -671,6 +697,8 @@ body {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GitHub Codespaces</title>
 <style nonce="${nonce}">
+${errorUx.UX_CSS}
+.ux-banner{margin:0 0 10px;font-size:12px}.ux-banner .ux-actions{margin-top:4px}
 *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
@@ -1603,12 +1631,13 @@ body {
     </div>
 
     <!-- Main Content: Error / Empty / Cards List -->
+    ${cachedBanner}
     ${errorMsg ? `
     <!-- Screen 5: Error State -->
     <div class="error-state-card" id="errorView">
         <span class="error-icon-circle">${I.alertCircle}</span>
-        <div class="error-headline">Failed to load Codespaces:</div>
-        <div class="error-subtext">${escapeHtml(errorMsg)}</div>
+        <div class="error-headline"><span class="ux-label">${escapeHtml(errorUx.LEVELS[errC.level].label)}</span> ${escapeHtml(errC.title)}</div>
+        <div class="error-subtext">${escapeHtml(errC.why && errC.why !== errC.title ? errC.why : '')}</div>
         <div style="display:flex; gap:8px; width:100%; justify-content:center; margin-top:10px; flex-wrap:wrap;">
             <button class="btn-retry" id="retryBtn">
                 ${I.refresh}
@@ -1625,13 +1654,13 @@ body {
     <!-- Screen 4: Empty State -->
     <div class="empty-state-view" id="emptyView">
         <div class="empty-hero-icon">${I.emptyHero}</div>
-        <div class="empty-title">No Codespaces found.</div>
+        <div class="empty-title">No codespaces yet.</div>
         <div class="empty-desc">
-            <a class="empty-link-inline" id="emptyCreateLink">Create</a> a new Codespace to get started with cloud development.
+            Create one from any repository you can access.
         </div>
         <button class="btn-primary-create" id="emptyCreateBtn">
             ${I.plus}
-            <span>Create New Codespace</span>
+            <span>Create codespace</span>
         </button>
     </div>
     ` : `
@@ -1802,6 +1831,18 @@ body {
             vscode.postMessage({ command: 'createCodespace' });
         });
     }
+
+    // ── Error banners: dismiss (comes back on next refresh if still failing) + actions ──
+    document.addEventListener('click', (ev) => {
+        const b = ev.target.closest && ev.target.closest('button');
+        if (!b) return;
+        if (b.classList.contains('ux-dismiss')) { const x = b.closest('.ux-banner'); if (x) x.remove(); return; }
+        const a = b.dataset && b.dataset.uxAction;
+        if (!a) return;
+        if (a === 'retry') { b.disabled = true; b.innerHTML = '<span class="btn-spin" aria-hidden="true"></span>Retrying…'; vscode.postMessage({ command: 'refresh' }); }
+        else if (a === 'signIn' || a === 'grantScope') vscode.postMessage({ command: 'loginGitHub' });
+        else if (a === 'details') vscode.postMessage({ command: 'showLogs' });
+    });
 
     // ── Retry & Auth Actions (Error state) ──
     const retryBtn = document.getElementById('retryBtn');

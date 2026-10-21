@@ -434,7 +434,8 @@ class SystemDoctor {
      */
     static detectRemoteSsh(extIds, appName = '') {
         const ids = (extIds || []).map(x => String(x).toLowerCase());
-        const isWindsurf = /windsurf/i.test(appName || '');
+        // Windsurf may ship under another name (e.g. Devin Desktop): its bundled Remote SSH extension is the stronger signal.
+        const isWindsurf = /windsurf|devin/i.test(appName || '') || ids.includes('codeium.windsurf-remote-openssh');
         const known = ['codeium.windsurf-remote-openssh', 'anysphere.remote-ssh', 'jeanp413.open-remote-ssh', 'ms-vscode-remote.remote-ssh', 'vsx-remote-ssh.vsx-remote-ssh'];
         const id = known.find(k => ids.includes(k)) || ids.find(x => /remote-?(open)?ssh/.test(x)) || '';
         const conflicts = isWindsurf ? ids.filter(x => x === 'ms-vscode-remote.remote-ssh' || x === 'jeanp413.open-remote-ssh') : [];
