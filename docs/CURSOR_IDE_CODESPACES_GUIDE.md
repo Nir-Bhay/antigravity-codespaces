@@ -4,6 +4,8 @@
 
 ---
 
+> **Other editors:** setup for Antigravity, VS Code, Windsurf, VSCodium, Trae and more, plus OS notes and troubleshooting, is in the [multi-IDE setup guide](IDE_SETUP.md). To have Cursor's agent configure everything for you, use the [agent setup prompt](../AGENT_SETUP.md).
+
 ## 1. The Situation with Cursor IDE & Codespaces
 
 Cursor is an AI-first code editor built as a fork of VS Code. However, there is a fundamental difference in how extensions are distributed:

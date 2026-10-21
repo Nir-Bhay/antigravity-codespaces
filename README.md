@@ -67,6 +67,9 @@ Without a dedicated extension, connecting your favorite AI editor to GitHub Code
 | **Windsurf & VSCodium** | Native / Full | Search **`Antigravity Codespaces Pro`** on Open VSX |
 | **Gitpod Desktop** | Full Support | Install via Open VSX extension view |
 
+
+Step-by-step instructions for each editor: **[docs/IDE_SETUP.md](docs/IDE_SETUP.md)** · or let your AI agent set it up: **[AGENT_SETUP.md](AGENT_SETUP.md)**
+
 ---
 
 ## Core Capabilities
@@ -394,6 +397,8 @@ Tools like Cursor Agent, Antigravity Agent, Claude Code, and Aider frequently pe
 
 Explore dedicated architecture and workflow guides:
 
+- 🧭 **[Multi-IDE Setup Guide](docs/IDE_SETUP.md)** — Antigravity, Cursor, VS Code, Windsurf, VSCodium, Trae and more: the Remote-SSH extension each editor needs, OS notes and troubleshooting.
+- 🤖 **[Copy-paste Agent Setup Prompt](AGENT_SETUP.md)** — Paste one prompt into your IDE's AI agent and it installs and verifies everything (it never handles your token).
 - 📖 **[Connecting Cursor IDE to GitHub Codespaces (Step-by-Step)](docs/CURSOR_IDE_CODESPACES_GUIDE.md)** — Complete walkthrough for Cursor users, including Open VSX installation, GitHub CLI auth, and port forwarding.
 - 🤖 **[AI Agent KeepAlive & Session Persistence](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md)** — How to prevent idle SSH socket termination during long Cursor Agent and Antigravity Agent runs.
 - 🏢 **[Multi-Account GitHub Codespaces Management](docs/MULTI_ACCOUNT_MANAGEMENT.md)** — Isolate personal, employer, and client org tokens with zero credential cross-contamination.
