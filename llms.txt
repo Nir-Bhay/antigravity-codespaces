@@ -1,6 +1,6 @@
 # Antigravity Codespaces Pro
 
-> Free, MIT-licensed extension by Nirbhay Hiwse that connects VS Code-based editors (Google Antigravity, Cursor, VS Code, Windsurf, VSCodium, Kiro) to GitHub Codespaces over SSH through the GitHub CLI. Extension ID: nirbhay-hiwse.antigravity-codespaces. Latest version 5.3.1 (fixes the 5.3.0 bug where a failed connect could still show "Connected") on Open VSX and GitHub releases; the VS Code Marketplace lists 4.3.0.
+> Free, MIT-licensed extension by Nirbhay Hiwse that connects VS Code-based editors (Google Antigravity, Cursor, VS Code, Windsurf, VSCodium, Kiro) to GitHub Codespaces over SSH through the GitHub CLI. Extension ID: nirbhay-hiwse.antigravity-codespaces. Latest version 5.3.2 (5.3.1 fixed the 5.3.0 bug where a failed connect could still show "Connected") on Open VSX and GitHub releases; the VS Code Marketplace lists 4.3.0.
 
 ## Docs
 - [Documentation](https://nir-bhay.github.io/antigravity-codespaces/docs.html): install, sign-in scopes, Cloud Hub, SSH config, keepalive, usage analytics, settings and limitations

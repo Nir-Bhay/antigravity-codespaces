@@ -6,7 +6,7 @@
 
 [Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / Documentation
 ## Documentation
-Version 5.3.1 · Last updated 21 October 2026
+Version 5.3.2 · Last updated 21 October 2026
 Antigravity Codespaces Pro is a free, MIT-licensed extension that connects VS Code-based editors such as Cursor and Google Antigravity to GitHub Codespaces over SSH using the GitHub CLI.
 ### Overview
 Antigravity Codespaces Pro is an open-source extension that lets you list, start, stop and connect to GitHub Codespaces from VS Code-based editors such as Google Antigravity, Cursor, VS Code, Windsurf and VSCodium. Your editor stays on your machine and the codespace runs on GitHub. The connection is an ordinary SSH session tunnelled through the official GitHub CLI, so there are no keys to manage and no ports to open.
@@ -21,7 +21,7 @@ The extension does not host anything, does not proxy your traffic through a thir
 | Editor | Where to get it | Remote-SSH |
 | Google Antigravity | Open VSX (Extensions view) | Antigravity's remote support, or jeanp413.open-remote-ssh |
 | Cursor | Open VSX, served through Cursor's marketplace | anysphere.remote-ssh (bundled) |
-| VS Code / Insiders | Release .vsix for 5.3.1 | ms-vscode-remote.remote-ssh |
+| VS Code / Insiders | Release .vsix for 5.3.2 | ms-vscode-remote.remote-ssh |
 | Windsurf | Open VSX | Built-in SSH only. Do not add other Remote-SSH extensions. |
 | VSCodium | Open VSX | jeanp413.open-remote-ssh |
 | Kiro | Open VSX | jeanp413.open-remote-ssh |
@@ -31,7 +31,7 @@ Per-editor steps, OS notes and sources are in the [IDE setup guide](https://gith
 # Open VSX editors (replace cursor with antigravity, windsurf, codium…)
 cursor --install-extension nirbhay-hiwse.antigravity-codespaces
 # VS Code, from the downloaded release file
-code --install-extension antigravity-codespaces-5.3.1.vsix
+code --install-extension antigravity-codespaces-5.3.2.vsix
 ```
 ### Sign in and scopes
 Connecting needs a gh token with the codespace scope. Usage analytics additionally need the user scope, because GitHub's billing API requires it. You can skip the second one if you do not want analytics.
@@ -92,7 +92,7 @@ Codespaces: Setup Doctor checks that gh is installed and signed in, that the tok
 | antigravity-codespaces.usage.showSidebarLine | true | Show the compact usage line under the account picker in the sidebar. |
 | antigravity-codespaces.usage.preferredUnit | core-hours | Primary unit for the compute figure in the sidebar and Cloud Hub card. |
 | antigravity-codespaces.usage.monthlyStorageGb | 15 | Monthly included storage (GB-month) when usage.plan is 'custom'. |
-All 14 settings use the prefix antigravity-codespaces. Defaults and descriptions are taken from package.json in version 5.3.1.
+All 14 settings use the prefix antigravity-codespaces. Defaults and descriptions are taken from package.json in version 5.3.2.
 ### Security and privacy
 - Authentication uses gh and the IDE's built-in GitHub sign-in. A personal access token, if you paste one, is kept in the IDE's SecretStorage.
 - Host keys are pinned on first use in ~/.antigravity-codespaces/known_hosts ; a changed key is rejected and reported.
@@ -100,29 +100,29 @@ All 14 settings use the prefix antigravity-codespaces. Defaults and descriptions
 - The extension talks only to GitHub. There is no telemetry server.
 ### Limitations
 - Organization-owned codespaces have no free quota; their usage appears as “Billed to {org}”.
-- The VS Code Marketplace lists 4.3.0; 5.3.1 is on Open VSX and as a.vsix.
+- The VS Code Marketplace lists 4.3.0; 5.3.2 is on Open VSX and as a.vsix.
 - Editors that cannot open vscode-remote://ssh-remote+ windows need a manual connection with Copy SSH Command.
 - Browser-based IDEs such as Eclipse Theia or OpenVSCode Server are not supported, because they have no local SSH client.
 ### Errors and alerts
-#### GitHub API and connection messages (5.3.1)
+#### GitHub API and connection messages (5.3.1 and later)
 Every GitHub API request has a 15-second timeout. When GitHub answers with a 5xx server error, the extension waits 5 seconds and retries once before it shows a message. Each message states what happened and why, and offers the buttons listed below.
 | Type | Level | Message | Buttons |
-| Timeout | Error | GitHub isn't responding (15s). The request took too long. Your network or GitHub may be slow. | Retry, Work offline, Details |
+| Timeout | Warning | GitHub isn't responding (15s). The request took too long. Your network or GitHub may be slow. | Retry, Work offline, Details |
 | Server error | Error | GitHub is having trouble right now. GitHub returned a server error (status). We retried once. | Retry, GitHub Status, Details |
 | Offline | Warning | You're offline. Couldn't reach GitHub. Showing the last data we have. | Retry, Details |
 | Sign-in expired | Error | Your GitHub sign-in has expired. GitHub rejected the saved token. | Sign in with gh, Details |
 | Missing permission | Warning | A GitHub permission is missing. The reason names the missing scope. | Grant permission, Details |
-| Rate limit | Warning | GitHub rate limit reached. Try again after HH:MM. (when GitHub sends a reset time; otherwise “Wait a few minutes, then retry.”) | Retry, Details |
+| Rate limit | Warning | GitHub API rate limit reached. Resets at HH:MM. When GitHub sends no reset time: “GitHub API rate limit reached. Try again in a few minutes.” | Retry, Details |
 | Other | Error | Something went wrong. The cleaned-up reason, without stack traces. | Retry, Details |
-Listing, starting, stopping, creating and deleting codespaces treat a 429 response, or a 403 response with x-ratelimit-remaining: 0, as a rate limit rather than a missing permission. The notification reads “GitHub API rate limit reached. Resets at HH:MM.” when GitHub sends a reset time, and “GitHub API rate limit reached. Wait a few minutes, then retry.” when it does not.
+Listing, starting, stopping, creating and deleting codespaces treat a 429 response, or a 403 response with x-ratelimit-remaining: 0, as a rate limit rather than a missing permission. Every rate-limit message in 5.3.2 uses the same wording: “GitHub API rate limit reached. Resets at HH:MM.” when GitHub sends a reset time, and “GitHub API rate limit reached. Try again in a few minutes.” when it does not.
 A failed connect shows Couldn't open <codespace> in this IDE. with Run Setup Doctor, Copy SSH command and Details, and the card returns to its real state instead of showing “Connected”.
-#### Usage card messages (5.3.1)
-- Rate limit: when the billing API answers 429, or 403 with x-ratelimit-remaining: 0, the card shows GitHub rate limit reached. and, when GitHub sends a reset time, “Usage can refresh after <time>.” Without a reset time it says “Wait a few minutes, then refresh.”
+#### Usage card messages (5.3.1 and later)
+- Rate limit: when the billing API answers 429, or 403 with x-ratelimit-remaining: 0, the card shows the same message: “GitHub API rate limit reached. Resets at HH:MM.”, or “GitHub API rate limit reached. Try again in a few minutes.” when there is no reset time.
 - Unexpected response: if the billing API returns data this version cannot read, the card shows Usage data unavailable (unexpected response). with the explanation “GitHub returned usage data in a format this version doesn't recognise.” and the buttons Retry and Details. It never shows 0 or a made-up figure in that case.
 - Last good data: when GitHub billing cannot be reached, the Cloud Hub keeps the last numbers and shows Usage is from the last successful refresh. with the time of that refresh.
 #### Alert levels and panel states
 Messages use four levels. Error (critical) shows a notification and a red banner. Warning shows an amber banner without a popup. Info uses the status bar or a quiet notification. Silent is written to the log only. Banners carry a text label as well as a colour, and a dismissed banner returns on the next refresh if the problem is still there.
-The Cloud Hub has five panel states: loading (skeleton cards), empty (“No codespaces yet.” with a create button), signed out (a single sign-in card), error with cached data (a banner reading “Showing data as of <time>.”, with each card tagged “Cached”, dimmed, and its actions disabled until a refresh succeeds), and partial (a banner for each account that failed to load, with Retry). The sidebar follows the same rules: cached cards are tagged, dimmed and disabled, and the signed-out sidebar shows a single card, “Sign in with the GitHub CLI to see and open your codespaces.”, with a Sign in with gh button.
+The Cloud Hub has five panel states: loading (skeleton cards), empty (“No codespaces yet.” with a create button), signed out (a single sign-in card), error with cached data (a banner reading “Showing data as of <time>.”, with each card tagged “Cached”, dimmed, and its actions disabled until a refresh succeeds), and partial (a banner for each account that failed to load, with Retry). The sidebar follows the same rules: cached cards are tagged, dimmed and disabled, and the signed-out sidebar shows a single card, “Sign in with the GitHub CLI to see and open your codespaces.”, with a Sign in with gh button. If the GitHub CLI is not found, the sidebar instead shows the card “GitHub CLI isn't installed.” Its Install GitHub CLI button opens [cli.github.com](https://cli.github.com), and two links follow: “Use a personal access token instead” and “I've installed it, check again”.
 #### Other messages
 Every message below is produced by the extension's own code. Where a fix can be automated, the message carries a button for it.
 | Level | Message and cause | What to do |
@@ -418,6 +418,13 @@ The one your editor ships or recommends. Installing two Remote-SSH extensions in
 ### Related
 - [Cursor setup](https://nir-bhay.github.io/antigravity-codespaces/guide-cursor.html), [Antigravity setup](https://nir-bhay.github.io/antigravity-codespaces/guide-antigravity.html) and [Windsurf](https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html)
 - [Install and editor table](https://nir-bhay.github.io/antigravity-codespaces/docs.html#install)
+### Frequently asked questions
+**Q:** Why can't VS Code forks use Microsoft's Remote - SSH?
+A: Its licence allows use with validly licensed copies of Microsoft Visual Studio Code, the Remote Development extensions are not open source, and the extension is not on Open VSX.
+**Q:** What is the open alternative to Microsoft's Remote - SSH?
+A: jeanp413.open-remote-ssh, published on Open VSX under the MIT licence. On some editors it depends on a proposed API that must be enabled in argv.json.
+**Q:** Can I install two Remote-SSH extensions in the same editor?
+A: It is better not to. Two Remote-SSH extensions in the same editor can conflict, which Windsurf documents explicitly. Use the one your editor ships or recommends.
 
 # https://nir-bhay.github.io/antigravity-codespaces/index.html#faq
 
@@ -434,7 +441,7 @@ A: Cursor: anysphere.remote-ssh (bundled). VS Code: ms-vscode-remote.remote-ssh.
 **Q:** Why does my codespace disconnect during long AI agent runs?
 A: Either the network drops an idle SSH connection, or GitHub stops the codespace after its idle timeout. The extension writes SSH keepalive settings (ServerAliveInterval 30, ServerAliveCountMax 10) for the first; the second is a setting in your GitHub Codespaces preferences.
 **Q:** Which version is on the VS Code Marketplace?
-A: The Marketplace currently has an older version (4.3.0). The latest, 5.3.1, is on Open VSX and as a.vsix in the GitHub release.
+A: The Marketplace currently has an older version (4.3.0). The latest, 5.3.2, is on Open VSX and as a.vsix in the GitHub release.
 **Q:** Is it free?
 A: The extension is free and open source under MIT. "Pro" is part of the name, not a paid plan. Codespaces usage itself is billed by GitHub to your account or organization.
 **Q:** Where do the usage numbers come from?
