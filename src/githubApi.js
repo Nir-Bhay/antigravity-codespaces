@@ -1,4 +1,4 @@
-const { runCommand } = require('./utils');
+const { runCommand, rateLimitMessage } = require('./utils');
 const { findGhExecutable } = require('./sshManager');
 
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -63,8 +63,7 @@ function rateLimitError(res, nowMs = Date.now()) {
     const reset = h('x-ratelimit-reset'), ra = h('retry-after');
     if (reset && Number.isFinite(Number(reset))) resetAt = new Date(Number(reset) * 1000).toISOString();
     else if (ra && Number.isFinite(Number(ra))) resetAt = new Date(nowMs + Number(ra) * 1000).toISOString();
-    const when = resetAt ? ` Resets at ${new Date(resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : ' Wait a few minutes, then retry.';
-    const e = new GithubRequestError('rateLimit', `GitHub API rate limit reached.${when}`, res.status);
+    const e = new GithubRequestError('rateLimit', rateLimitMessage(resetAt), res.status);
     e.resetAt = resetAt;
     return e;
 }

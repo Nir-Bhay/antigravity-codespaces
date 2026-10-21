@@ -1,6 +1,6 @@
 let vscode;
 try { vscode = require('vscode'); } catch {}
-const { runCommand } = require('./utils');
+const { runCommand, rateLimitMessage } = require('./utils');
 const { findGhExecutable } = require('./sshManager');
 
 const PAT_SECRET_KEY_PREFIX = 'antigravity_github_pat_';  // per-account PAT key (fixes: single-key stomping)
@@ -368,8 +368,11 @@ class AuthManager {
         } catch (netErr) {
             throw new Error('GitHub is unreachable. Check your connection, proxy, or firewall.');
         }
-        if (res.status === 429) {
-            throw new Error('GitHub API rate limit reached. Wait a few minutes and try again.');
+        if (res.status === 429 || (res.status === 403 && res.headers && res.headers.get('x-ratelimit-remaining') === '0')) {
+            const reset = Number(res.headers && res.headers.get('x-ratelimit-reset'));
+            const err = new Error(rateLimitMessage(Number.isFinite(reset) && reset > 0 ? reset * 1000 : null));
+            err.kind = 'rateLimit';
+            throw err;
         }
         if (!res.ok) return null;
         try {

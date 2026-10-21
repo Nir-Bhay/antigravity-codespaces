@@ -1,4 +1,5 @@
 'use strict';
+const { rateLimitMessage } = require('./utils');
 /**
  * Error UX: one place that turns failures into user-facing messages.
  *
@@ -39,7 +40,8 @@ function classifyError(err) {
     const kind = err && err.kind;
     const msg = cleanReason(err);
     if (kind === 'timeout' || /isn't responding|ETIMEDOUT|TimeoutError/i.test(msg)) {
-        return { kind: 'timeout', level: 'critical', title: "GitHub isn't responding (15s).", why: 'The request took too long. Your network or GitHub may be slow.', actions: ['retry', 'workOffline', 'details'] };
+        // Warning, not Critical: a slow GitHub is usually transient and cached data stays usable.
+        return { kind: 'timeout', level: 'warning', title: "GitHub isn't responding (15s).", why: 'The request took too long. Your network or GitHub may be slow.', actions: ['retry', 'workOffline', 'details'] };
     }
     if (kind === 'server' || /having trouble|HTTP 5\d\d|returned 5\d\d/i.test(msg)) {
         return { kind: 'server', level: 'critical', title: 'GitHub is having trouble right now.', why: `GitHub returned a server error${err && err.status ? ' (' + err.status + ')' : ''}. We retried once.`, actions: ['retry', 'githubStatus', 'details'] };
@@ -54,8 +56,7 @@ function classifyError(err) {
         return { kind: 'scope', level: 'warning', title: 'A GitHub permission is missing.', why: msg, actions: ['grantScope', 'details'] };
     }
     if (kind === 'rateLimit' || /rate limit/i.test(msg)) {
-        const at = err && err.resetAt ? new Date(err.resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-        return { kind: 'rateLimit', level: 'warning', title: 'GitHub rate limit reached.', why: at ? `Try again after ${at}.` : 'Wait a few minutes, then retry.', actions: ['retry', 'details'] };
+        return { kind: 'rateLimit', level: 'warning', title: rateLimitMessage(err && err.resetAt), why: '', actions: ['retry', 'details'] };
     }
     return { kind: 'other', level: 'critical', title: 'Something went wrong.', why: msg, actions: ['retry', 'details'] };
 }

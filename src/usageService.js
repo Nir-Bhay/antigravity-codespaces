@@ -1,3 +1,4 @@
+const { rateLimitMessage } = require('./utils');
 /**
  * Codespaces usage analytics (core-hours, storage, $) per GitHub account.
  *
@@ -648,7 +649,7 @@ class UsageService {
 
         const status = summary.ok ? 'unknown-sku' : summary.status;
         const rl = rateLimitInfo(summary);
-        if (rl) return { ...base, mode: 'error', kind: 'rateLimit', status, error: 'GitHub rate limit reached.', why: rl.resetAt ? `Usage can refresh after ${fmtClock(rl.resetAt)}.` : 'Wait a few minutes, then refresh.', resetAt: rl.resetAt };
+        if (rl) return { ...base, mode: 'error', kind: 'rateLimit', status, error: rateLimitMessage(rl.resetAt), why: '', resetAt: rl.resetAt };
         if ((status === 403 || status === 404 || status === 401) && !hasUserScope) {
             return { ...base, mode: 'needsPermission', status, reason: 'The billing API needs the "user" scope.' };
         }

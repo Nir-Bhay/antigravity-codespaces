@@ -100,6 +100,18 @@ function exitCodeOf(err, msg) {
     return m ? Number(m[1]) : null;
 }
 
+/**
+ * The one rate-limit sentence used everywhere: "GitHub API rate limit reached. Resets at HH:MM."
+ * Falls back to "...Try again in a few minutes." when the reset time is unknown or invalid.
+ */
+function rateLimitMessage(resetAt) {
+    const d = resetAt ? new Date(resetAt) : null;
+    if (d && !isNaN(d.getTime())) {
+        return `GitHub API rate limit reached. Resets at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+    }
+    return 'GitHub API rate limit reached. Try again in a few minutes.';
+}
+
 function friendlyError(err) {
     if (!err) return 'Unknown error occurred.';
     let msg = typeof err === 'string' ? err : (err.message || String(err));
@@ -136,7 +148,7 @@ function friendlyError(err) {
         return 'SSH tunnel dropped unexpectedly. Check the machine is RUNNING (press Start if stopped), verify the gh CLI account owns it, then retry. Details in Antigravity Codespaces logs.';
     }
     if (status === 429 || (err && err.kind === 'rateLimit') || /\brate limit\b|rate_limit|secondary rate|abuse detection/i.test(msg)) {
-        return 'GitHub API rate limit reached. Wait a few minutes, then refresh.';
+        return rateLimitMessage(err && err.resetAt);
     }
     if (status === 402 || /\b(spending limit|quota)\b[^.]*\b(exceeded|reached)\b|\b(exceeded|reached)\b[^.]*\b(spending limit|quota)\b|billing (is )?(not enabled|disabled|issue)/i.test(msg)) {
         return 'GitHub Codespaces spending or quota limit reached. Check your GitHub account billing settings.';
@@ -351,6 +363,7 @@ const I = {
 };
 
 module.exports = {
+    rateLimitMessage,
     escapeHtml,
     generateNonce,
     formatRelativeTime,

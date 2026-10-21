@@ -204,7 +204,8 @@ class SidebarProvider {
             const ghHealth = diag.ghAuthHealth || {};
             const ghHealthy = ghHealth.state === 'ok';
             
-            if (accounts.length === 0) {
+            // gh missing: the whole view becomes the install card (nothing else works without gh).
+            if (accounts.length === 0 || diag.ghInstalled === false) {
                 this._view.webview.html = this.buildWelcomeHtml(diag);
                 return;
             }
@@ -433,6 +434,17 @@ body {
 </head>
 <body>
     <div class="welcome-wrap">
+        ${diag.ghInstalled === false ? `
+        <div class="signin-card" role="region" aria-label="Install GitHub CLI">
+            <div class="hero-illustration">${I.cloudHero}</div>
+            <h1 class="welcome-title">GitHub CLI isn't installed.</h1>
+            <p class="welcome-desc">Antigravity Codespaces uses the GitHub CLI (gh) to sign in and open SSH tunnels to your codespaces.</p>
+            <button class="btn-primary-auth" id="installGhBtn" aria-label="Install GitHub CLI">
+                ${I.github}
+                <span>Install GitHub CLI</span>
+            </button>
+            <a class="signup-link" id="recheckBtn" role="button" tabindex="0">I've installed it, check again</a>
+        </div>` : `
         <div class="signin-card" role="region" aria-label="Sign in">
             <div class="hero-illustration">${I.cloudHero}</div>
             <h1 class="welcome-title">You're signed out.</h1>
@@ -442,56 +454,16 @@ body {
                 <span>Sign in with gh</span>
             </button>
             <a class="signup-link" id="patBtn" role="button" tabindex="0">Use a personal access token instead</a>
-        </div>
-
-        ${diag.ghInstalled ? '' : `
-        <div class="diag-card">
-            <div class="diag-card-title">System Health Checklist</div>
-
-            <div class="diag-item">
-                <span class="diag-icon">${diag.ghInstalled ? I.checkCircle : I.alertTriangle}</span>
-                <div class="diag-content">
-                    <span class="diag-label">GitHub CLI (SSH Tunnels)</span>
-                    <span class="diag-substatus ${diag.ghInstalled ? 'status-ok' : 'status-warn'}">
-                        ${diag.ghInstalled ? 'Installed' : 'Missing'}
-                    </span>
-                </div>
-            </div>
-
-            <div class="diag-item">
-                <span class="diag-icon">${diag.hasOpenSsh ? I.checkCircle : I.alertTriangle}</span>
-                <div class="diag-content">
-                    <span class="diag-label">OpenSSH Client</span>
-                    <span class="diag-substatus ${diag.hasOpenSsh ? 'status-ok' : 'status-warn'}">
-                        ${diag.hasOpenSsh ? 'Available' : 'Missing'}
-                    </span>
-                </div>
-            </div>
-
-            <div class="diag-item">
-                <span class="diag-icon">${diag.hasRemoteSsh ? I.checkCircle : I.alertTriangle}</span>
-                <div class="diag-content">
-                    <span class="diag-label">Remote SSH Extension</span>
-                    <span class="diag-substatus ${diag.hasRemoteSsh ? 'status-ok' : 'status-warn'}">
-                        ${diag.hasRemoteSsh ? 'Detected' : 'Recommended'}
-                    </span>
-                </div>
-            </div>
-
-            ${!diag.ghInstalled ? `
-            <div class="diag-install-link">
-                <a class="signup-link" id="installGhLink">Install GitHub CLI &rarr;</a>
-            </div>` : ''}
-        </div>
-        `}
+        </div>`}
     </div>
 
     <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
-        document.getElementById('loginBtn').addEventListener('click', () => vscode.postMessage({ command: 'loginGitHub' }));
-        document.getElementById('patBtn').addEventListener('click', () => vscode.postMessage({ command: 'loginPat' }));
-        const ghLink = document.getElementById('installGhLink');
-        if (ghLink) ghLink.addEventListener('click', () => vscode.postMessage({ command: 'promptInstallGh' }));
+        const on = (id, command) => { const el = document.getElementById(id); if (el) el.addEventListener('click', () => vscode.postMessage({ command })); };
+        on('loginBtn', 'loginGitHub');
+        on('patBtn', 'loginPat');
+        on('installGhBtn', 'promptInstallGh');
+        on('recheckBtn', 'refresh');
     </script>
 </body>
 </html>`;
