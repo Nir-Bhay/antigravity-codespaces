@@ -1,5 +1,4 @@
 const { UsageService } = require('./src/usageService');
-const { UsageDashboard } = require('./src/usageDashboard');
 const vscode = require('vscode');
 const fs = require('fs');
 const { execFile } = require('child_process');
@@ -60,6 +59,11 @@ async function activate(context) {
         authManager,
         state: context.globalState,
         log: (msg) => codespacesChannel.appendLine(`[usage] ${msg}`),
+        // Usage follows the active gh CLI account (re-read on every refresh).
+        getActiveAccount: async () => {
+            try { await authManager.getAccounts(); } catch {}
+            return authManager.getGhCliActiveAccount() || authManager.getActiveAccount();
+        },
         getConfig: () => {
             const c = vscode.workspace.getConfiguration('antigravity-codespaces');
             return {
@@ -69,10 +73,9 @@ async function activate(context) {
             };
         }
     });
-    const usageDashboard = new UsageDashboard(context, authManager, usageService);
     const sidebarProvider = new SidebarProvider(context, authManager, githubApi, usageService);
     usageService.onDidChange(() => sidebarProvider.render());
-    const dashboardProvider = new DashboardProvider(context, authManager, githubApi);
+    const dashboardProvider = new DashboardProvider(context, authManager, githubApi, usageService);
     const setupDoctorProvider = new SetupDoctorProvider(context, authManager);
 
     /**
@@ -264,9 +267,6 @@ async function activate(context) {
 
     // ── Usage analytics commands ─────────────────────────────────────────────
     context.subscriptions.push(
-        vscode.commands.registerCommand('antigravity-codespaces.usageDashboard', async () => {
-            await usageDashboard.open();
-        }),
         vscode.commands.registerCommand('antigravity-codespaces.refreshUsage', async () => {
             await usageService.refresh();
         }),
@@ -286,8 +286,8 @@ async function activate(context) {
 
     // ── Command: Open Dashboard ──────────────────────────────────────────────
     context.subscriptions.push(
-        vscode.commands.registerCommand('antigravity-codespaces.openDashboard', async () => {
-            await dashboardProvider.openOrReveal();
+        vscode.commands.registerCommand('antigravity-codespaces.openDashboard', async (page) => {
+            await dashboardProvider.openOrReveal(typeof page === 'string' ? page : undefined);
         })
     );
 

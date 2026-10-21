@@ -263,11 +263,6 @@
         "icon": "$(history)"
       },
       {
-        "command": "antigravity-codespaces.usageDashboard",
-        "title": "Codespaces: Usage Dashboard",
-        "icon": "$(graph)"
-      },
-      {
         "command": "antigravity-codespaces.refreshUsage",
         "title": "Codespaces: Refresh Usage",
         "icon": "$(refresh)"

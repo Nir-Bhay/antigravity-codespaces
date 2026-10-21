@@ -278,7 +278,8 @@ class UsageService {
      * @param {() => object} [opts.getConfig] returns { plan, monthlyCoreHours, monthlyStorageGb }
      * @param {() => number} [opts.now]
      */
-    constructor({ authManager, fetchImpl, state, getConfig, now, log } = {}) {
+    constructor({ authManager, fetchImpl, state, getConfig, now, log, getActiveAccount } = {}) {
+        this._getActive = typeof getActiveAccount === 'function' ? getActiveAccount : async () => (authManager && authManager.getActiveAccount ? authManager.getActiveAccount() : null);
         this._log = typeof log === 'function' ? log : () => {};
         this._auth = authManager;
         this._fetch = fetchImpl || ((...a) => fetch(...a));
@@ -309,6 +310,14 @@ class UsageService {
         const store = this._state.get(SESSIONS_KEY, {}) || {};
         recordObservation(store, account, codespaces, this._now());
         await this._state.update(SESSIONS_KEY, store);
+    }
+
+    /** Usage for the currently active gh account only (re-read on every call, so it follows account switches). */
+    async getActiveUsage() {
+        const account = await this._getActive();
+        if (!account) return null;
+        try { return await this.getAccountUsage(account); }
+        catch (err) { return { account, login: account, mode: 'error', error: String(err && err.message || err) }; }
     }
 
     async getAllUsage(accounts) {
