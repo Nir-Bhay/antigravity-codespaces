@@ -1259,7 +1259,7 @@ function ok(name, fn) {
     });
     await ok('classifyError rows: timeout / 5xx / offline / auth / scope / rate limit / other', () => {
         const k = (kind, msg = 'x', status) => { const e = new Error(msg); e.kind = kind; e.status = status; return eux.classifyError(e); };
-        const t = k('timeout'); assert.strictEqual(t.title, "GitHub isn't responding (15s)."); assert.deepStrictEqual(t.actions.slice(0, 2), ['retry', 'workOffline']); assert.strictEqual(t.level, 'critical');
+        const t = k('timeout'); assert.strictEqual(t.title, "GitHub isn't responding (15s)."); assert.deepStrictEqual(t.actions.slice(0, 2), ['retry', 'workOffline']); assert.strictEqual(t.level, 'warning');
         const s5 = k('server', 'x', 503); assert.strictEqual(s5.title, 'GitHub is having trouble right now.'); assert.deepStrictEqual(s5.actions.slice(0, 2), ['retry', 'githubStatus']);
         assert.strictEqual(k('network').level, 'warning');
         assert.deepStrictEqual(eux.classifyError(new Error('GitHub authentication expired or token is invalid.')).actions[0], 'signIn');
@@ -1302,9 +1302,9 @@ function ok(name, fn) {
     });
     await ok('banner: icon + text label (not colour only), dismissible, "as of <time>" over cached data', () => {
         const h = eux.bannerHtml(eux.classifyError(Object.assign(new Error('x'), { kind: 'timeout' })), { asOf: '10:42' });
-        assert.match(h, /class="ux-icon"[^>]*>⛔/); assert.match(h, /class="ux-label">Error</);
+        assert.match(h, /class="ux-icon"[^>]*>⚠️/); assert.match(h, /class="ux-label">Warning</);
         assert.match(h, /class="ux-dismiss"/); assert.match(h, /Showing data as of 10:42/);
-        assert.match(h, /role="alert"/);
+        assert.match(h, /role="status"/);
         assert.match(eux.bannerHtml({ kind: 'k', level: 'warning', title: 't', actions: [] }), /class="ux-label">Warning</);
         assert.match(eux.skeletonHtml(2), /aria-busy="true"/);
         assert.strictEqual((eux.skeletonHtml(2).match(/ux-skel-card/g) || []).length, 2);
@@ -1391,7 +1391,7 @@ function ok(name, fn) {
         const reset = Math.floor(Date.UTC(2026, 9, 21, 15, 30) / 1000);
         const u = await svcWith([userOk, csOk, [/usage\/summary/, () => withHeaders(429, { message: 'rate' }, { 'x-ratelimit-reset': String(reset) })]]).getAccountUsage('octocat');
         assert.strictEqual(u.kind, 'rateLimit'); assert.strictEqual(u.resetAt, new Date(reset * 1000).toISOString());
-        assert.match(u.why, /Usage can refresh after/);
+        assert.match(u.error, /^GitHub API rate limit reached\. Resets at \d{1,2}:\d{2}/);
         const u2 = await svcWith([userOk, csOk, [/usage\/summary/, () => withHeaders(403, {}, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) })]]).getAccountUsage('octocat');
         assert.strictEqual(u2.kind, 'rateLimit');
         assert.ok(us.rateLimitInfo({ status: 429, retryAfter: '60' }).resetAt);
@@ -1475,7 +1475,7 @@ function ok(name, fn) {
         await assert.rejects(() => mk(limited).startCodespace('cs-1', 'octocat'), (e) => e.kind === 'rateLimit');
         await assert.rejects(() => mk(limited).stopCodespace('cs-1', 'octocat'), (e) => e.kind === 'rateLimit');
         await assert.rejects(() => mk(limited).createCodespace('octocat/repo-a', 'main', 'octocat'), (e) => e.kind === 'rateLimit');
-        const c = eux.classifyError(e1); assert.strictEqual(c.kind, 'rateLimit'); assert.match(c.why, /Try again after/);
+        const c = eux.classifyError(e1); assert.strictEqual(c.kind, 'rateLimit'); assert.match(c.title, /^GitHub API rate limit reached\. Resets at /);
     });
     await ok('friendlyError matches exact status / exit code fields (true and false positives)', () => {
         const withS = (msg, f) => Object.assign(new Error(msg), f);
@@ -1522,8 +1522,84 @@ function ok(name, fn) {
             const w = sp.buildWelcomeHtml({ ghInstalled: true });
             assert.match(w, /You're signed out\./); assert.match(w, /Sign in with gh/);
             assert.ok(!/60 free compute hrs/.test(w)); assert.ok(!/System Health Checklist/.test(w), 'single card when gh is installed');
-            assert.match(sp.buildWelcomeHtml({ ghInstalled: false }), /System Health Checklist/, 'gh missing still shows the checklist');
+            const g = sp.buildWelcomeHtml({ ghInstalled: false });
+            assert.match(g, /GitHub CLI isn't installed\./); assert.match(g, /id="installGhBtn"/); assert.ok(!/System Health Checklist/.test(g));
         } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+    });
+
+    console.log('error ux follow-ups');
+    await ok('rateLimitMessage: one wording with reset time, fallback when unknown/invalid', () => {
+        const U = require(path.join(ROOT, 'src', 'utils.js'));
+        const at = new Date(Date.UTC(2026, 9, 21, 15, 30));
+        const hhmm = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        assert.strictEqual(U.rateLimitMessage(at.toISOString()), `GitHub API rate limit reached. Resets at ${hhmm}.`);
+        assert.strictEqual(U.rateLimitMessage(at.getTime()), `GitHub API rate limit reached. Resets at ${hhmm}.`);
+        for (const v of [null, undefined, '', 'nonsense']) assert.strictEqual(U.rateLimitMessage(v), 'GitHub API rate limit reached. Try again in a few minutes.');
+        assert.strictEqual(U.friendlyError(Object.assign(new Error('x'), { kind: 'rateLimit', resetAt: at.toISOString() })), `GitHub API rate limit reached. Resets at ${hhmm}.`);
+        assert.strictEqual(U.friendlyError(Object.assign(new Error('x'), { status: 429 })), 'GitHub API rate limit reached. Try again in a few minutes.');
+        const gapi3 = require(path.join(ROOT, 'src', 'githubApi.js'));
+        const h = (st, o) => ({ status: st, headers: { get: (k) => (k in o ? o[k] : null) } });
+        assert.strictEqual(gapi3.rateLimitError(h(429, {})).message, 'GitHub API rate limit reached. Try again in a few minutes.');
+        assert.strictEqual(gapi3.rateLimitError(h(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(at.getTime() / 1000) })).message, `GitHub API rate limit reached. Resets at ${hhmm}.`);
+        const src = ['utils.js', 'authManager.js', 'usageService.js', 'errorUx.js', 'githubApi.js'].map(f => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8')).join('\n');
+        assert.ok(!/Usage can refresh after|Try again after|Wait a few minutes and try again|rate limit reached\. Wait a few minutes/.test(src), 'no old rate-limit wording left');
+    });
+    await ok('authManager.verifyPat: 429 and exhausted 403 use the unified rate-limit message', async () => {
+        const auth = new AuthManager({ globalState: { get: () => undefined, update: () => {} } });
+        const orig = global.fetch;
+        const at = Date.UTC(2026, 9, 21, 15, 30);
+        const hhmm = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const mk = (st, o) => async () => ({ status: st, ok: false, headers: { get: (k) => (k in o ? o[k] : null) }, json: async () => ({}) });
+        try {
+            global.fetch = mk(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(at / 1000) });
+            await assert.rejects(() => auth.verifyPat('t'), (e) => e.kind === 'rateLimit' && e.message === `GitHub API rate limit reached. Resets at ${hhmm}.`);
+            global.fetch = mk(429, {});
+            await assert.rejects(() => auth.verifyPat('t'), (e) => e.message === 'GitHub API rate limit reached. Try again in a few minutes.');
+            global.fetch = mk(403, { 'x-ratelimit-remaining': '12' });
+            assert.strictEqual(await auth.verifyPat('t'), null, 'plain 403 is still a rejected token');
+        } finally { global.fetch = orig; }
+    });
+    await ok('15s timeout is a Warning in both the sidebar and Cloud Hub', () => {
+        const Module = require('module'); const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        try {
+            const D = require(path.join(ROOT, 'src', 'dashboardProvider.js')); const DP = D.DashboardProvider || D;
+            const hubWarm = DP.accountErrorBanners([{ account: 'octocat', error: "GitHub isn't responding (15s).", errorKind: 'timeout', cachedAt: Date.UTC(2026, 9, 21, 5, 0) }]);
+            const hubCold = DP.accountErrorBanners([{ account: 'octocat', error: "GitHub isn't responding (15s).", errorKind: 'timeout' }]);
+            for (const h of [hubWarm, hubCold]) { assert.match(h, /ux-warning/); assert.ok(!/ux-critical/.test(h)); assert.match(h, /class="ux-label">Warning</); }
+            const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
+            const sp = Object.create(SP.prototype); sp._usage = null; sp.isFirstRunDismissed = () => true;
+            const cs = [{ name: 'cs-1', repository: 'octocat/repo-a', state: 'Available', branch: 'main', displayName: 'repo-a' }];
+            const warm = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, "GitHub isn't responding (15s).", { ghInstalled: true }, false, { errorKind: 'timeout', cachedAt: Date.now() });
+            const cold = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', [], "GitHub isn't responding (15s).", { ghInstalled: true }, false, { errorKind: 'timeout' });
+            for (const h of [warm, cold]) { assert.match(h, /ux-label">Warning</); assert.ok(!/ux-label">Error</.test(h)); }
+        } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
+    });
+    await ok('gh missing replaces the whole sidebar view with the install card, even when signed in', async () => {
+        const Module = require('module'); const orig = Module._resolveFilename;
+        Module._resolveFilename = function (r, ...a) { return r === 'vscode' ? 'vscode' : orig.call(this, r, ...a); };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: { window: {}, commands: {}, env: {}, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } } };
+        const SD = require(path.join(ROOT, 'src', 'systemDoctor.js')); const SDC = SD.SystemDoctor || SD; const origDiag = SDC.diagnose;
+        try {
+            const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
+            const sp = Object.create(SP.prototype);
+            let listed = false;
+            sp._view = { webview: { html: '' } }; sp._rendered = true; sp._usageService = null; sp.isFirstRunDismissed = () => true;
+            sp._authManager = { getAccounts: async () => [{ account: 'octocat', type: 'pat' }], getActiveAccount: () => 'octocat' };
+            sp._githubApi = { clearCache: () => {}, listCodespaces: async () => { listed = true; return []; } };
+            SDC.diagnose = async () => ({ ghInstalled: false, ghAuthHealth: {} });
+            await sp.refresh();
+            const h = sp._view.webview.html;
+            assert.match(h, /GitHub CLI isn't installed\./); assert.match(h, /Install GitHub CLI/); assert.match(h, /id="recheckBtn"/);
+            assert.match(h, /id="patBtn"[^>]*>Use a personal access token instead</); assert.ok(!/Sign in with gh/.test(h), 'no gh sign-in when gh is missing');
+            assert.match(h, /getElementById\('installGhBtn'\)[\s\S]{0,160}command: 'openExternal', url: 'https:\/\/cli\.github\.com'/);
+            assert.ok(!/cs-card|search|You're signed out/i.test(h.replace(/<style[\s\S]*?<\/style>/g, '')), 'nothing else in the view');
+            assert.strictEqual(listed, false, 'no list call without gh');
+            SDC.diagnose = async () => ({ ghInstalled: true, ghAuthHealth: { state: 'ok' } });
+            await sp.refresh();
+            assert.ok(!/GitHub CLI isn't installed/.test(sp._view.webview.html)); assert.strictEqual(listed, true);
+        } finally { SDC.diagnose = origDiag; Module._resolveFilename = orig; delete require.cache.vscode; }
     });
 
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
