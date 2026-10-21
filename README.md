@@ -20,6 +20,15 @@
 
 ---
 
+## What's new in 5.2.0
+
+**5.2.0** adds **Codespaces usage analytics** that use GitHub's own billing numbers.
+
+- **Cloud Hub usage card.** A full-width card above the stats shows separate **Compute** (core-hours) and **Storage** (GB-month) bars for the active account, each with the dollar value used out of the included quota. It also shows hours left, days left at your current pace, and a billing line (consumed / included discount / billable).
+- **Usage page.** A new **Usage** item in the Cloud Hub left rail has tiles, a daily chart with an ideal-pace line, and a sortable per-repository table (core-hours, storage, share, amount).
+- **Sidebar usage line.** One compact line under the account picker opens the Usage page.
+- **No estimates.** Every number comes from the GitHub billing API. If it can't be read, you see the reason and the fix command instead of guessed figures. See [Usage analytics](#usage-analytics).
+
 ## What's new in 5.1.0
 
 **5.1.0** is the first-run and connect release. SSH into a Codespace still goes through the GitHub CLI, and the extension now checks that path before it opens a window.
@@ -193,6 +202,46 @@ If that path is not on the machine, Connect asks you to pick a folder under `/wo
 
 ---
 
+## Usage analytics
+
+The Cloud Hub dashboard and the sidebar show how much of your monthly Codespaces quota the **active `gh` account** has used. That's the account `gh auth status` marks as active. The panel follows `gh auth switch`, and the selected account chip in Cloud Hub doesn't change it.
+
+**What's shown**
+
+| Where | What |
+|---|---|
+| Cloud Hub card | `USAGE · <login> · <plan>`, a **Compute** bar (`76.5 / 180 core-hrs ($6.88 of $16.20)`), a **Storage** bar (`7.6 / 20 GB-month ($0.53 of $1.40)`), hours left, days left, reset date, and a billing line (`$7.42 consumed · −$7.42 included discount · $0.00 billable`) |
+| Storage Tier card | Real storage used, for example `7.6 / 20 GB-month` |
+| Usage page (left rail) | Tiles (used, remaining, avg/day, days left, storage, reset), a daily core-hours chart with an ideal-pace line, and a sortable per-repository table |
+| Sidebar | One line: plan, a thin bar, `x / y core-hrs · ~N days left`. Click it to open the Usage page |
+
+Bars turn orange at 75% and red at 90%. Compute and storage are **separate quotas** and aren't interchangeable, so they're never added together.
+
+**Included quotas (personal accounts)**
+
+| Plan | Compute | Storage |
+|---|---|---|
+| GitHub Free | 120 core-hours / month ($10.80 value) | 15 GB-month ($1.05) |
+| GitHub Pro | 180 core-hours / month ($16.20 value) | 20 GB-month ($1.40) |
+
+Core-hours = cores × hours, so a 2-core machine uses 2 core-hours per hour. Dollar values use GitHub's rates of $0.09 per core-hour and $0.07 per GB-month. Codespaces billed to an organization show as **Billed to {org}** and don't count toward your quota. The plan is detected from your account; override it with `antigravity-codespaces.usage.plan`.
+
+**Where the numbers come from**
+
+Numbers come from GitHub's billing API: `GET /users/{user}/settings/billing/usage/summary` and `.../settings/billing/usage`. They match [github.com/settings/billing](https://github.com/settings/billing). GitHub updates this data **hourly**. The extension caches it for 10 minutes; **Refresh usage** fetches it again. If the network drops, the last good numbers stay with an `offline · last updated HH:MM` note.
+
+**Permission**
+
+The billing API needs the **`user`** scope on the active account's token:
+
+```bash
+gh auth refresh -h github.com -s user
+```
+
+Without it, the card shows **Usage needs permission** with a **Grant access** button that runs this command in a terminal. Any other failure shows **Usage unavailable** with the reason. This includes an account not on GitHub's enhanced billing platform, or a machine type this version doesn't recognise. The extension never shows estimated or guessed figures.
+
+---
+
 ## Configuration Settings
 
 Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro**:
@@ -205,7 +254,10 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
   "antigravity-codespaces.serverAliveCountMax": 10,
   "antigravity-codespaces.defaultRemoteFolder": "/workspaces/${repo}",
   "antigravity-codespaces.strictHostKeyChecking": "accept-new",
-  "antigravity-codespaces.sshLogLevel": "error"
+  "antigravity-codespaces.sshLogLevel": "error",
+  "antigravity-codespaces.usage.plan": "auto",
+  "antigravity-codespaces.usage.monthlyCoreHours": 120,
+  "antigravity-codespaces.usage.monthlyStorageGb": 15
 }
 ```
 
@@ -218,6 +270,9 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | `defaultRemoteFolder` | `/workspaces/${repo}` | Default folder to open on remote connection (`${repo}` or `${name}`) |
 | `strictHostKeyChecking` | `accept-new` | Host key mode written as `StrictHostKeyChecking`. `accept-new` stores new keys and rejects changes. `yes` only connects to hosts whose key is already saved. `no` skips verification |
 | `sshLogLevel` | `error` | SSH verbosity written as `LogLevel`. `error` (default) is `LogLevel ERROR`. Also `quiet`, `info`, and `verbose` |
+| `usage.plan` | `auto` | Plan for the usage quota: `auto` (from your GitHub account), `free` (120 core-hrs / 15 GB-month), `pro` (180 / 20), or `custom` |
+| `usage.monthlyCoreHours` | `120` | Included core-hours when `usage.plan` is `custom` |
+| `usage.monthlyStorageGb` | `15` | Included GB-month when `usage.plan` is `custom` |
 
 ---
 
@@ -238,6 +293,8 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | **Connect** | — | Open a Codespace. From the palette, with no machine selected, this opens Quick Connect |
 | **Codespaces: Setup Doctor** | — | First-run and SSH checks with one-click fixes. The panel button **Copy Diagnostic Report** redacts tokens |
 | **Reconnect to Last Codespace** | — | Wake and connect to the Codespace you opened last |
+| **Codespaces: Refresh Usage** | — | Re-fetch usage from the GitHub billing API |
+| **Codespaces: Grant Usage Access (gh user scope)** | — | Open a terminal with `gh auth refresh -h github.com -s user` |
 
 ---
 
