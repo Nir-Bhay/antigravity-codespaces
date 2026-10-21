@@ -59,6 +59,11 @@ class AuthManager {
         await this._context.secrets.store(PAT_SECRET_ACCOUNTS_KEY, JSON.stringify(accounts));
     }
 
+    /** Account `gh auth status` marks Active (refreshed by getAccounts()). */
+    getGhCliActiveAccount() {
+        return this._ghCliActive || null;
+    }
+
     getActiveAccount() {
         return this._activeAccount;
     }
@@ -155,6 +160,7 @@ class AuthManager {
 
                 if (isActive) {
                     cliActive = acc;
+                    this._ghCliActive = acc;
                 }
 
                 if (!seenNames.has(acc)) {

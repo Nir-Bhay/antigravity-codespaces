@@ -1,16 +1,27 @@
 const vscode = require('vscode');
 const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { testSshTunnel } = require('./sshManager');
+const { hubUsageCardHtml, hubUsagePageHtml, hubUsageScript, storageTierText, HUB_CSS } = require('./usageView');
 
 class DashboardProvider {
-    constructor(context, authManager, githubApi) {
+    constructor(context, authManager, githubApi, usageService = null) {
         this._context = context;
+        this._usageService = usageService;
+        this._usage = null;
+        this._initialPage = null;
+        if (usageService) usageService.onDidChange(() => { if (this._panel) this.refreshHtml(); });
         this._authManager = authManager;
         this._githubApi = githubApi;
         this._panel = null;
     }
 
-    async openOrReveal() {
+    async openOrReveal(page) {
+        this._initialPage = page === 'usage' ? 'usage' : null;
+        if (this._panel && this._initialPage) {
+            this._panel.reveal();
+            this._panel.webview.postMessage({ command: 'showUsage' });
+            return;
+        }
         if (!this._panel) {
             this._panel = vscode.window.createWebviewPanel(
                 'csHub',
@@ -98,6 +109,13 @@ class DashboardProvider {
                                 command: 'toast',
                                 text: 'SSH config synced'
                             });
+                            break;
+                        case 'usageGrant':
+                            await vscode.commands.executeCommand('antigravity-codespaces.usageGrantAccess', msg.account);
+                            break;
+                        case 'usageRefresh':
+                            if (this._usageService) await this._usageService.refresh();
+                            else await this.refreshHtml();
                             break;
                         case 'refresh':
                             await this.refreshHtml();
@@ -211,7 +229,16 @@ class DashboardProvider {
                 }
             }));
 
+            this._usage = null;
+            if (this._usageService) {
+                // Usage is always for the active gh account, independent of the selected account chip.
+                this._usage = await Promise.race([
+                    this._usageService.getActiveUsage(),
+                    new Promise(r => setTimeout(() => r(null), 10000))
+                ]).catch(() => null);
+            }
             this._panel.webview.html = this.buildDashboardHtml(all, activeAccount, accounts);
+            if (this._initialPage === 'usage') this._initialPage = null;
         } catch (err) {
             const nonce = generateNonce();
             this._panel.webview.html = `<!DOCTYPE html>
@@ -1937,6 +1964,7 @@ html, body {
   .kpi-row { grid-template-columns: 1fr; }
   .search-box { width: 100%; }
 }
+${HUB_CSS}
 </style>
 </head>
 <body>
@@ -1962,6 +1990,12 @@ html, body {
             <button class="rail-link" id="railMyCsBtn" title="My Codespaces">
               ${I.server}
               <span>My Codespaces</span>
+            </button>
+          </li>
+          <li>
+            <button class="rail-link" id="railUsageBtn" title="Usage">
+              ${I.clock}
+              <span>Usage</span>
             </button>
           </li>
           <li>
@@ -2030,6 +2064,9 @@ html, body {
       </div>
     </header>
 
+    <!-- ── Usage (active gh account) ─────────────────────────────────── -->
+    ${hubUsageCardHtml(this._usage, I.clock)}
+
     <!-- ── 3. KPI Metrics Row (4 Cards) ────────────────────────────── -->
     <section class="kpi-row">
       <!-- Total Workspaces -->
@@ -2064,7 +2101,7 @@ html, body {
         <div class="kpi-icon-box kpi-icon-storage">${I.shield}</div>
         <div class="kpi-meta">
           <span class="kpi-label">STORAGE TIER</span>
-          <span class="kpi-value">15 GB Free Tier</span>
+          <span class="kpi-value">${escapeHtml(storageTierText(this._usage))}</span>
         </div>
         <div class="kpi-chevron">${I.chevronRight}</div>
       </div>
@@ -2146,6 +2183,7 @@ html, body {
       <button class="btn-clear-search" id="btnClearSearch">Clear search</button>
     </div>
 
+    ${hubUsagePageHtml(this._usage)}
   </main>
 </div>
 
@@ -2831,7 +2869,7 @@ document.getElementById('btnApplyManualRepo')?.addEventListener('click', () => {
 
 // ── Storage Tier Interaction (Section 12 & 104) ───────────────────────
 document.getElementById('kpiCardStorage')?.addEventListener('click', () => {
-  showToast('Storage Tier: 15 GB Free Tier · GitHub default monthly quota');
+  showToast('Storage: ${escapeHtml(storageTierText(this._usage))} · included monthly quota');
 });
 
 // ── Theme Switcher & Persistence (Section 80 & 104) ───────────────────
@@ -2856,6 +2894,7 @@ function toggleTheme() {
   }
   showToast('Switched to ' + (next === 'light' ? 'Light' : 'Dark') + ' Mode');
 }
+${hubUsageScript(this._initialPage)}
 document.getElementById('btnThemeToggle').addEventListener('click', toggleTheme);
 </script>
 </body>

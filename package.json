@@ -2,7 +2,7 @@
   "name": "antigravity-codespaces",
   "displayName": "Antigravity Codespaces Pro",
   "description": "Enterprise multi-account GitHub Codespaces manager for Cursor IDE, Antigravity IDE, VS Code & Code-OSS. Connect, start, stop, rebuild, test, and monitor all your cloud dev environments across multiple GitHub accounts with 1 click — by Nirbhay hiwse.",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "publisher": "nirbhay-hiwse",
   "author": {
     "name": "Nirbhay hiwse",
@@ -121,6 +121,30 @@
             "Show informational messages",
             "Show verbose debugging output"
           ]
+        },
+        "antigravity-codespaces.usage.plan": {
+          "type": "string",
+          "enum": ["auto", "free", "pro", "custom"],
+          "default": "auto",
+          "description": "Plan used for the Codespaces usage quota. 'auto' reads plan.name from GitHub (needs the 'user' scope; falls back to Free).",
+          "enumDescriptions": [
+            "Detect from your GitHub account",
+            "GitHub Free: 120 core-hours and 15 GB-month per month",
+            "GitHub Pro: 180 core-hours and 20 GB-month per month",
+            "Use usage.monthlyCoreHours and usage.monthlyStorageGb"
+          ]
+        },
+        "antigravity-codespaces.usage.monthlyCoreHours": {
+          "type": "number",
+          "default": 120,
+          "minimum": 0,
+          "description": "Monthly included core-hours when usage.plan is 'custom'."
+        },
+        "antigravity-codespaces.usage.monthlyStorageGb": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "description": "Monthly included storage (GB-month) when usage.plan is 'custom'."
         }
       }
     },
@@ -237,6 +261,16 @@
         "command": "antigravity-codespaces.reconnectLast",
         "title": "Reconnect to Last Codespace",
         "icon": "$(history)"
+      },
+      {
+        "command": "antigravity-codespaces.refreshUsage",
+        "title": "Codespaces: Refresh Usage",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "antigravity-codespaces.usageGrantAccess",
+        "title": "Codespaces: Grant Usage Access (gh user scope)",
+        "icon": "$(key)"
       }
     ],
     "keybindings": [

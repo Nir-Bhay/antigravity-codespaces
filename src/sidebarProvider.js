@@ -2,12 +2,15 @@ const vscode = require('vscode');
 const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { SystemDoctor } = require('./systemDoctor');
 const { getGhAuthHealth } = require('./sshManager');
+const { sidebarSummaryHtml, buildSidebarUsageScript } = require('./usageView');
 
 const FIRST_RUN_DISMISSED_KEY = 'antigravity.firstRunCardDismissed';
 
 class SidebarProvider {
-    constructor(context, authManager, githubApi) {
+    constructor(context, authManager, githubApi, usageService = null) {
         this._context = context;
+        this._usageService = usageService;
+        this._usage = null;
         this._extensionUri = context.extensionUri;
         this._authManager = authManager;
         this._githubApi = githubApi;
@@ -153,6 +156,12 @@ class SidebarProvider {
                     await this.dismissFirstRun();
                     await this.refresh();
                     break;
+                case 'openUsageDashboard':
+                    await vscode.commands.executeCommand('antigravity-codespaces.openDashboard', 'usage');
+                    break;
+                case 'usageGrantAccess':
+                    await vscode.commands.executeCommand('antigravity-codespaces.usageGrantAccess', msg.account);
+                    break;
                 case 'fetchMeta': {
                     try {
                         const meta = await this._githubApi.fetchMeta(msg.name, msg.account);
@@ -195,6 +204,14 @@ class SidebarProvider {
             // Show first-run card if not dismissed and gh CLI is not fully healthy
             const showFirstRunCard = !this.isFirstRunDismissed() && !ghHealthy;
             
+            this._usage = null;
+            if (this._usageService) {
+                // Active gh account only; bounded so the sidebar never hangs.
+                this._usage = await Promise.race([
+                    this._usageService.getActiveUsage(),
+                    new Promise(r => setTimeout(() => r(null), 8000))
+                ]).catch(() => null);
+            }
             try {
                 const codespaces = await this._githubApi.listCodespaces(activeAccount);
                 this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, codespaces, '', diag, showFirstRunCard);
@@ -1570,6 +1587,9 @@ body {
         <button class="btn-switch-account" id="switchAccBtn" title="Switch Account">Switch</button>
     </div>
 
+    <!-- Codespaces usage (active gh account) -->
+    ${sidebarSummaryHtml(this._usage, nonce)}
+
     <!-- gh CLI Status Row -->
     ${ghStatusRowHtml}
 
@@ -2041,6 +2061,7 @@ body {
         }
     }
     </script>
+    ${buildSidebarUsageScript(nonce)}
 </body>
 </html>`;
     }

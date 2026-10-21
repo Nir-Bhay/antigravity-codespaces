@@ -735,5 +735,310 @@ function ok(name, fn) {
         assert.ok(src.includes("Folder \"${remoteFolder}\" not found"), 'offers alternative when folder missing');
     });
 
+    // ── Usage analytics ─────────────────────────────────────────────────
+    console.log('usage analytics');
+    const us = require('../src/usageService');
+    const uv = require('../src/usageView');
+    const NOW = Date.UTC(2026, 9, 21, 12, 0, 0); // 21 Oct 2026
+    const RESET = Date.UTC(2026, 10, 1);
+    function fakeResp(status, body, scopes = '') {
+        return { status, ok: status >= 200 && status < 300, json: async () => body, headers: { get: (k) => (k.toLowerCase() === 'x-oauth-scopes' ? scopes : null) } };
+    }
+    function makeFetch(routes, calls = []) {
+        return async (url, opts) => {
+            calls.push({ url, auth: opts.headers.Authorization });
+            for (const [re, fn] of routes) if (re.test(url)) return fn(url, opts);
+            return fakeResp(404, { message: 'Not Found' });
+        };
+    }
+    function daysOf(n, perDay, endMs = NOW) {
+        const d = {};
+        for (let i = 0; i < n; i++) d[new Date(endMs - i * 86400000).toISOString().slice(0, 10)] = perDay;
+        return d;
+    }
+    await ok('quota math: Free 120, Pro 180, custom, org plan has no personal quota', () => {
+        assert.strictEqual(us.resolvePlan('free').coreHours, 120);
+        assert.strictEqual(us.resolvePlan('free').storageGb, 15);
+        assert.strictEqual(us.resolvePlan('pro').coreHours, 180);
+        assert.strictEqual(us.resolvePlan('pro').storageGb, 20);
+        assert.strictEqual(us.resolvePlan('', {}).coreHours, 120);
+        assert.strictEqual(us.resolvePlan('free', { plan: 'pro' }).coreHours, 180);
+        assert.strictEqual(us.resolvePlan('pro', { plan: 'custom', monthlyCoreHours: 60, monthlyStorageGb: 5 }).coreHours, 60);
+        const team = us.resolvePlan('team');
+        assert.strictEqual(team.personal, false);
+        assert.strictEqual(team.coreHours, 0);
+    });
+    await ok('core-hours = cores x hours (4-core x 10h = 40) and prices', () => {
+        assert.strictEqual(us.coreHoursFor(4, 10), 40);
+        assert.strictEqual(us.coreHoursFor(2, -5), 0);
+        assert.strictEqual(us.pricePerHour(2), 0.18);
+        assert.strictEqual(us.pricePerHour(32), 2.88);
+        assert.strictEqual(us.coresFromSku('Codespaces compute 8 core'), 8);
+    });
+    await ok('remaining = quota - used, never below 0; pct levels amber/red', () => {
+        const a = us.computeStats({ quota: 120, used: 40, now: NOW, reset: RESET });
+        assert.strictEqual(a.remaining, 80);
+        assert.strictEqual(a.level, 'ok');
+        assert.strictEqual(us.computeStats({ quota: 120, used: 90, now: NOW, reset: RESET }).level, 'amber');
+        assert.strictEqual(us.computeStats({ quota: 120, used: 110, now: NOW, reset: RESET }).level, 'red');
+        const over = us.computeStats({ quota: 120, used: 500, now: NOW, reset: RESET });
+        assert.strictEqual(over.remaining, 0);
+        assert.strictEqual(over.daysLeftLabel, 'quota used up');
+    });
+    await ok('days left: <3 days -> not enough data, uses last-7-day avg, full cycle, no divide by zero', () => {
+        assert.strictEqual(us.computeStats({ quota: 120, used: 4, daily: daysOf(2, 2), now: NOW, reset: RESET }).daysLeftLabel, 'not enough data');
+        const s = us.computeStats({ quota: 120, used: 100, daily: daysOf(10, 10), now: NOW, reset: RESET });
+        assert.strictEqual(s.avgPerDay, 10);
+        assert.strictEqual(s.daysLeftLabel, 'about 2 days left');
+        const slow = us.computeStats({ quota: 120, used: 3, daily: daysOf(5, 0.5), now: NOW, reset: RESET });
+        assert.strictEqual(slow.daysLeftLabel, 'lasts the full cycle');
+        const zero = us.computeStats({ quota: 120, used: 0, daily: daysOf(5, 0), now: NOW, reset: RESET });
+        assert.strictEqual(zero.daysLeftLabel, 'lasts the full cycle');
+        const q0 = us.computeStats({ quota: 0, used: 0, now: NOW, reset: RESET });
+        assert.ok(Number.isFinite(q0.pct));
+    });
+    await ok('parseSummary converts per-core SKUs to core-hours and uses discountQuantity', () => {
+        const p = us.parseSummary({ usageItems: [
+            { product: 'codespaces', sku: 'Codespaces compute 4 core', unitType: 'Hours', grossQuantity: 10, discountQuantity: 10, netAmount: 0 },
+            { product: 'codespaces', sku: 'Codespaces storage', unitType: 'GigabyteMonths', grossQuantity: 3.5, discountQuantity: 3.5, netAmount: 0 },
+            { product: 'actions', sku: 'Actions Linux', grossQuantity: 999 }
+        ] });
+        assert.strictEqual(p.computeCoreHours, 40);
+        assert.strictEqual(p.includedCoreHours, 40);
+        assert.strictEqual(p.storageGbMonths, 3.5);
+    });
+    const userBody = (login, plan) => ({ login, plan: plan ? { name: plan } : undefined });
+    const csList = (login) => ({ codespaces: [
+        { name: 'cs-mine', state: 'Available', machine: { cpus: 4, name: 'standardLinux32gb' }, repository: { full_name: login + '/app' }, billable_owner: { login } },
+        { name: 'cs-org', state: 'Available', machine: { cpus: 8 }, repository: { full_name: 'acme/api' }, billable_owner: { login: 'acme' } }
+    ] });
+    await ok('live mode: summary API -> used/remaining from discountQuantity', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 'tok-a' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('alice', 'pro'), 'repo, codespace, user')],
+            [/\/user\/codespaces/, () => fakeResp(200, csList('alice'))],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2 core', unitType: 'Hours', grossQuantity: 30, discountQuantity: 30, netAmount: 0 }] })]
+        ]) });
+        const u = await svc.getAccountUsage('alice');
+        assert.strictEqual(u.mode, 'live');
+        assert.strictEqual(u.plan.coreHours, 180);
+        assert.strictEqual(u.stats.used, 60);
+        assert.strictEqual(u.stats.remaining, 120);
+        assert.deepStrictEqual(u.orgBilled, ['acme']);
+    });
+    await ok('403 and 404 without user scope -> needsPermission', async () => {
+        for (const code of [403, 404]) {
+            const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+                [/\/user$/, () => fakeResp(200, userBody('bob'), 'repo, codespace')],
+                [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+                [/usage\/summary/, () => fakeResp(code, { message: 'x' })]
+            ]) });
+            const u = await svc.getAccountUsage('bob');
+            assert.strictEqual(u.mode, 'needsPermission', 'status ' + code);
+            assert.match(uv.hubUsageCardHtml(u), /Usage needs permission/);
+            assert.match(uv.hubUsageCardHtml(u), /Grant access/);
+            assert.match(uv.sidebarSummaryHtml(u, 'n'), /Grant access to see usage/);
+        }
+    });
+    await ok('404 with user scope -> clear error with reason + gh command, no guessed numbers', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('carol', 'free'), 'repo, codespace, user')],
+            [/\/user\/codespaces/, () => fakeResp(200, csList('carol'))],
+            [/usage\/summary/, () => fakeResp(404, { message: 'Not Found' })]
+        ]) });
+        const u = await svc.getAccountUsage('carol');
+        assert.strictEqual(u.mode, 'error');
+        assert.strictEqual(u.stats, undefined, 'no figures');
+        assert.match(u.error, /404/);
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /Usage unavailable/);
+        assert.match(card, /gh auth refresh -h github\.com -s user/);
+        assert.ok(!/core-hrs|Estimated/.test(card));
+        assert.ok(!/core-hrs|Estimated/.test(uv.sidebarSummaryHtml(u, 'n')));
+        assert.strictEqual(uv.storageTierText(u), '15 GB Free Tier');
+    });
+    await ok('org plan with only org-billed codespaces -> "Billed to {org}" with no bar', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('dan', 'enterprise'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [csList('dan').codespaces[1]] })]
+        ]) });
+        const u = await svc.getAccountUsage('dan');
+        assert.strictEqual(u.mode, 'orgBilled');
+        const html = uv.hubUsageCardHtml(u);
+        assert.match(html, /Billed to acme/);
+        assert.ok(!/usage-bar/.test(html));
+    });
+    await ok('10-minute cache: second call does not refetch; refresh() clears', async () => {
+        const calls = []; let now = NOW;
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('eve', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [] })]
+        ], calls) });
+        await svc.getAccountUsage('eve');
+        const n = calls.length;
+        now += 9 * 60000; await svc.getAccountUsage('eve');
+        assert.strictEqual(calls.length, n, 'cached within 10 min');
+        now += 2 * 60000; await svc.getAccountUsage('eve');
+        assert.ok(calls.length > n, 'refetched after 10 min');
+        const m = calls.length; await svc.refresh(); await svc.getAccountUsage('eve');
+        assert.ok(calls.length > m, 'refresh clears cache');
+    });
+    await ok('unknown compute SKU core count -> error state (no 1-core guess) and SKU logged', async () => {
+        assert.strictEqual(us.parseSummary({ usageItems: [{ product: 'codespaces', sku: 'Codespaces compute premium', grossQuantity: 10 }] }).computeCoreHours, 0);
+        const logs = [];
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, log: (m) => logs.push(m), fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('gus', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute premium', grossQuantity: 10, discountQuantity: 10 }] })]
+        ]) });
+        const u = await svc.getAccountUsage('gus');
+        assert.strictEqual(u.mode, 'error');
+        assert.match(u.error, /Codespaces compute premium/);
+        assert.ok(logs.some(l => l.includes('Codespaces compute premium')));
+    });
+    await ok('offline: network failure keeps last good result with offline note', async () => {
+        let down = false, now = NOW;
+        const net = makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('hal', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2 core', grossQuantity: 5, discountQuantity: 5 }] })]
+        ]);
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: async (u, o) => { if (down) throw new Error('getaddrinfo ENOTFOUND api.github.com'); return net(u, o); } });
+        const first = await svc.getAccountUsage('hal');
+        down = true; await svc.refresh(); now += 60000;
+        const u = await svc.getAccountUsage('hal');
+        assert.strictEqual(u.offline, true);
+        assert.strictEqual(u.stats.used, first.stats.used);
+        assert.match(uv.hubUsageCardHtml(u), /offline · last updated \d\d:\d\d/);
+        now += 11 * 60000;
+        assert.strictEqual((await svc.getAccountUsage('hal')).offline, true, 'still served after TTL');
+        const fresh = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: async () => { throw new Error('offline'); } });
+        const [e] = await fresh.getAllUsage(['nobody']);
+        assert.strictEqual(e.mode, 'error');
+    });
+    await ok('real billing fixtures: summary + daily parse to GitHub billing page numbers', async () => {
+        const sumFx = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'billing-usage-summary.json'), 'utf8'));
+        const dayFx = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'billing-usage-daily.json'), 'utf8'));
+        assert.strictEqual(us.coresFromSku('codespaces_compute_d2'), 2);
+        assert.strictEqual(us.coresFromSku('codespaces_compute_c4'), 4);
+        assert.strictEqual(us.coresFromSku('Codespaces compute 2-core'), 2);
+        assert.strictEqual(us.coresFromSku('codespaces_compute_16_core'), 16);
+        assert.strictEqual(us.coresFromSku('codespaces_storage'), null);
+        const p = us.parseSummary(sumFx);
+        assert.deepStrictEqual(p.unknownSkus, []);
+        assert.ok(Math.abs(p.computeCoreHours - 76.48) < 0.01, 'core-hours ' + p.computeCoreHours);
+        assert.ok(Math.abs(p.storageGbMonths - 7.64) < 0.01, 'storage ' + p.storageGbMonths);
+        assert.ok(Math.abs(p.computeAmount - 6.88) < 0.01);
+        assert.ok(Math.abs(p.storageAmount - 0.53) < 0.01);
+        assert.ok(Math.abs(p.grossAmount - 7.42) < 0.01, 'consumed ' + p.grossAmount);
+        assert.strictEqual(p.netAmount, 0);
+        const d = us.parseDaily(dayFx, '2026-10-01T00:00:00Z');
+        const amt = Object.fromEntries(d.repos.map(r => [r.repo, Math.round(r.amount * 100) / 100]));
+        assert.strictEqual(amt['repo-a'], 6.92);
+        assert.strictEqual(amt['repo-b'], 0.35);
+        assert.strictEqual(amt['repo-c'], 0.16);
+        assert.ok(Object.keys(d.daily).length >= 3);
+
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('octocat', 'pro'), 'user, codespace')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [{ name: 'x', state: 'Shutdown', machine: { cpus: 2, storage_in_bytes: 103e9 }, billable_owner: { login: 'octocat' } }] })],
+            [/usage\/summary/, () => fakeResp(200, sumFx)],
+            [/settings\/billing\/usage\?/, () => fakeResp(200, dayFx)]
+        ]) });
+        const u = await svc.getAccountUsage('octocat');
+        assert.strictEqual(u.mode, 'live');
+        assert.deepStrictEqual(u.compute, { used: 76.5, quota: 180, amount: 6.88, quotaValue: 16.2 });
+        assert.deepStrictEqual(u.storage, { used: 7.64, quota: 20, amount: 0.53, quotaValue: 1.4 });
+        assert.deepStrictEqual(u.dollars, { consumed: 7.42, discount: 7.42, billable: 0 });
+        assert.strictEqual(Math.round(us.resolvePlan('free').coreHours * us.CORE_HOUR_PRICE * 100) / 100, 10.8);
+        assert.strictEqual(u.repos[0].repo, 'repo-a');
+        const card = uv.hubUsageCardHtml(u);
+        assert.ok(!/Estimated/.test(card));
+        assert.match(card, /76\.5<\/b> \/ 180 core-hrs <small>\(\$6\.88 of \$16\.20\)/);
+        assert.match(card, /7\.6<\/b> \/ 20 GB-month <small>\(\$0\.53 of \$1\.40\)/);
+        assert.match(card, /\$7\.42 consumed · −\$7\.42 included discount · <b>\$0\.00 billable/);
+        assert.ok(!/of \$17\.60/.test(card), 'no combined quota');
+        const page = uv.hubUsagePageHtml(u);
+        assert.match(page, /Per repository/);
+        assert.match(page, /repo-a/);
+        assert.match(page, /\$6\.92/);
+        assert.strictEqual(uv.storageTierText(u), '7.6 / 20 GB-month');
+    });
+    await ok('billing API 5xx -> real error state with reason', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('ivy', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(502, { message: 'Bad Gateway' })]
+        ]) });
+        const u = await svc.getAccountUsage('ivy');
+        assert.strictEqual(u.mode, 'error');
+        assert.match(u.error, /502: Bad Gateway/);
+        assert.match(uv.hubUsagePageHtml(u), /Usage unavailable/);
+    });
+    await ok('only the active gh account is fetched (follows account switches)', async () => {
+        const calls = []; let active = 'alice';
+        const tokens = { alice: 'tok-alice', bob: 'tok-bob' };
+        const svc = new us.UsageService({ authManager: { getToken: async (a) => tokens[a] }, getActiveAccount: async () => active, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, (url, o) => fakeResp(200, o.headers.Authorization.endsWith('alice') ? userBody('alice', 'pro') : userBody('bob', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, (url) => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute 2 core', grossQuantity: url.includes('/alice/') ? 10 : 5, discountQuantity: url.includes('/alice/') ? 10 : 5 }] })]
+        ], calls) });
+        const u = await svc.getActiveUsage();
+        assert.strictEqual(u.account, 'alice');
+        assert.strictEqual(u.stats.used, 20);
+        assert.ok(calls.every(c => c.auth === 'Bearer tok-alice'), 'no other account token used');
+        active = 'bob';
+        const u2 = await svc.getActiveUsage();
+        assert.strictEqual(u2.account, 'bob');
+        assert.strictEqual(u2.plan.coreHours, 120);
+        assert.strictEqual(await new us.UsageService({ authManager: { getToken: async () => null }, getActiveAccount: async () => null }).getActiveUsage(), null);
+        const html = uv.sidebarSummaryHtml(u, 'n');
+        assert.strictEqual((html.match(/class="usage-mini"/g) || []).length, 1);
+        assert.match(html, /20 \/ 180 core-hrs/);
+    });
+    await ok('Cloud Hub usage card + page: bar colours, tiles, sortable table, svg chart, last fetched', () => {
+        const mk = (used) => ({ account: 'a', login: 'a', plan: { label: 'Free' }, mode: 'live', fetchedAt: NOW, cycleStart: new Date(Date.UTC(2026, 9, 1)).toISOString(), resetDate: new Date(RESET).toISOString(),
+            stats: us.computeStats({ quota: 120, used, daily: daysOf(5, 6), now: NOW, reset: RESET }), daily: daysOf(5, 6), storage: { used: 2, quota: 15 }, billed: 0,
+            repos: [{ repo: 'a/x', coreHours: 30, storageGbMonths: 1, amount: 2.7, share: 100 }], storageRows: [] });
+        const u = mk(30);
+        const card = uv.hubUsageCardHtml(u, '');
+        assert.match(card, /USAGE · a · Free/);
+        assert.match(card, /30<\/b> \/ 120 core-hrs/);
+        assert.match(card, /HOURS LEFT/);
+        assert.match(card, /DAYS LEFT/);
+        assert.match(uv.hubUsageCardHtml(mk(95)), /usage-fill amber/);
+        assert.match(uv.hubUsageCardHtml(mk(110)), /usage-fill red/);
+        assert.strictEqual(uv.storageTierText(u), '2 / 15 GB-month');
+        assert.strictEqual(uv.storageTierText(null), '15 GB Free Tier');
+        const page = uv.hubUsagePageHtml(u);
+        assert.match(page, /id="usagePage"/);
+        assert.match(page, /RESETS/);
+        assert.match(page, /<svg/);
+        assert.match(page, /stroke-dasharray/);
+        assert.match(page, /class="usage-table sortable"/);
+        assert.match(page, /Updated hourly · last fetched/);
+        assert.match(page, /\$2\.70/);
+    });
+    await ok('Cloud Hub dashboard integrates usage (rail item, card, page) and no separate usage webview', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
+        assert.ok(src.includes('railUsageBtn'));
+        assert.ok(src.includes('hubUsageCardHtml(this._usage'));
+        assert.ok(src.includes('hubUsagePageHtml(this._usage)'));
+        assert.ok(!fs.existsSync(path.join(ROOT, 'src', 'usageDashboard.js')));
+    });
+    await ok('usage service never logs tokens', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'usageService.js'), 'utf8');
+        assert.ok(!/console\.(log|warn|error)\([^)]*token/i.test(src));
+    });
+    await ok('package.json contributes usage settings and refresh command', () => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+        const props = pkg.contributes.configuration.properties;
+        assert.deepStrictEqual(props['antigravity-codespaces.usage.plan'].enum, ['auto', 'free', 'pro', 'custom']);
+        assert.ok(props['antigravity-codespaces.usage.monthlyCoreHours']);
+        assert.ok(props['antigravity-codespaces.usage.monthlyStorageGb']);
+        assert.ok(pkg.contributes.commands.some(c => c.command === 'antigravity-codespaces.refreshUsage'));
+        assert.ok(!pkg.contributes.commands.some(c => c.command === 'antigravity-codespaces.usageDashboard'));
+    });
+
     console.log(passed + ' assertions passed' + (process.exitCode ? ' (WITH FAILURES)' : ''));
 })();
