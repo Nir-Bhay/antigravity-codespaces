@@ -2,7 +2,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const { execFile } = require('child_process');
 
-const { friendlyError, formatRelativeTime, runCommand } = require('./src/utils');
+const { friendlyError, friendlyTunnelError, sniffTunnelStderr, formatRelativeTime, runCommand } = require('./src/utils');
 const logger = require('./src/logger');
 const { AuthManager } = require('./src/authManager');
 const { GithubApi } = require('./src/githubApi');
@@ -11,18 +11,30 @@ const {
     findAntigravityExecutable,
     ensureSSHConfigEntry,
     testSshTunnel,
+    probeSshTunnelVerbose,
     cleanSshConfigFile,
-    getGhActiveUser
+    getGhActiveUser,
+    getGhAuthHealth,
+    mapTunnelError,
+    removeHostFromManagedKnownHosts,
+    checkRemoteFolderExists,
+    listRemoteWorkspaces,
+    setConfigLogger
 } = require('./src/sshManager');
 const { SystemDoctor } = require('./src/systemDoctor');
+const { ensureLinuxRemotePlatform, isPlatformMismatchError, switchFallbackCommand, setPreflightConfigLogger, PLATFORM_SETTING_SECTION } = require('./src/connectPreflight');
 const { SidebarProvider } = require('./src/sidebarProvider');
 const { DashboardProvider } = require('./src/dashboardProvider');
 const { StatusBarManager } = require('./src/statusBar');
+const { SetupDoctorProvider } = require('./src/setupDoctorProvider');
 
 // Concurrency tracker for active connections (fixes BUG-13)
 const connectingSet = new Set();
 let globalAuthManager = null;
 let globalGithubApi = null;
+
+// Key for storing last connected codespace in globalState (Issue #4 §G)
+const LAST_CODESPACE_KEY = 'antigravity.lastConnectedCodespace';
 
 /**
  * Extension activation entry point.
@@ -30,14 +42,21 @@ let globalGithubApi = null;
 async function activate(context) {
     const ANTIGRAVITY_EXE = findAntigravityExecutable(); // Declared and resolved (fixes BUG-02, BUG-04)
 
+    // Create shared 'Codespaces' output channel for SSH config mutation logging
+    const codespacesChannel = vscode.window.createOutputChannel('Codespaces');
+    context.subscriptions.push(codespacesChannel);
+    setConfigLogger(codespacesChannel);
+    setPreflightConfigLogger(codespacesChannel);
+
     const authManager = new AuthManager(context);
     const githubApi = new GithubApi(authManager);
     globalAuthManager = authManager;
     globalGithubApi = githubApi;
 
     const statusBar = new StatusBarManager(context, authManager, githubApi);
-    const sidebarProvider = new SidebarProvider(context.extensionUri, authManager, githubApi);
+    const sidebarProvider = new SidebarProvider(context, authManager, githubApi);
     const dashboardProvider = new DashboardProvider(context, authManager, githubApi);
+    const setupDoctorProvider = new SetupDoctorProvider(context, authManager);
 
     /**
      * Guided error toast: logs full context to the output channel and offers
@@ -47,6 +66,95 @@ async function activate(context) {
         logger.error(context || 'operation failed', message);
         const act = await vscode.window.showErrorMessage(message, 'Show Logs');
         if (act === 'Show Logs') logger.show();
+    }
+
+    /**
+     * Shared gh-CLI preflight for Connect, Quick Connect (delegates to Connect)
+     * and Test SSH. Resolves true to proceed, false when the user cancelled or
+     * was handed a fix. Fails open on 'unknown'.
+     */
+    async function ghPreflight(cs, account) {
+        // Preflight: `gh cs ssh` authenticates with the gh CLI's OWN keyring
+        // token — fully separate from the extension's OAuth/PAT session.
+        // Catches the four common first-run failure states BEFORE launching
+        // SSH, each with a one-click fix (issues #3, #4):
+        //   1. gh not installed          → install guidance
+        //   2. gh logged out             → gh auth login -s codespace
+        //   3. token missing 'codespace' → gh auth refresh -s codespace
+        //   4. active-user mismatch      → gh auth switch (existing flow)
+        // Every branch fails open on doubt ('unknown' state proceeds) so a
+        // probe glitch can never hard-block a working connection.
+        const health = await getGhAuthHealth();
+        if (health.state === 'missing') {
+            const act = await vscode.window.showWarningMessage(
+                'GitHub CLI (gh) is not installed — SSH tunnels to Codespaces are powered by it.',
+                'Install Instructions',
+                'Connect Anyway'
+            );
+            if (act === 'Install Instructions') {
+                await SystemDoctor.promptInstallGhCli();
+                resetDashboardView();
+                return false;
+            }
+        } else if (health.state === 'logged_out') {
+            const act = await vscode.window.showWarningMessage(
+                'GitHub CLI is signed out — SSH would fail immediately. Note: this is separate from the extension sign-in that powers the dashboard.',
+                'Run gh auth login',
+                'Connect Anyway'
+            );
+            if (act === 'Run gh auth login') {
+                const t = vscode.window.createTerminal('gh auth login');
+                t.show();
+                t.sendText('gh auth login -s codespace');
+                vscode.window.showInformationMessage('Complete the browser login in the terminal ("codespace" scope included), then retry Connect.');
+            } else if (act !== 'Connect Anyway') {
+                resetDashboardView();
+                return false;
+            }
+        } else if (health.state === 'scope_missing') {
+            const act = await vscode.window.showWarningMessage(
+                `gh CLI is signed in as "${health.user}" but its token is missing the "codespace" scope — SSH would fail with HTTP 403.`,
+                'Fix scope now',
+                'Connect Anyway'
+            );
+            if (act === 'Fix scope now') {
+                const t = vscode.window.createTerminal('gh auth refresh');
+                t.show();
+                t.sendText('gh auth refresh -h github.com -s codespace');
+                vscode.window.showInformationMessage('Complete the device flow in the terminal, then retry Connect.');
+            } else if (act !== 'Connect Anyway') {
+                resetDashboardView();
+                return false;
+            }
+        } else if (health.state === 'ok' && account &&
+                   health.user.toLowerCase() !== String(account).toLowerCase()) {
+            const ghUser = health.user;
+            const act = await vscode.window.showWarningMessage(
+                `gh CLI is signed in as "${ghUser}", but "${cs.displayName || cs.name}" belongs to "${account}". SSH would fail (Codespace not found for ${ghUser}).`,
+                'Switch gh CLI & Retry',
+                'Connect Anyway'
+            );
+            if (act === 'Switch gh CLI & Retry') {
+                try {
+                    const ghExe = findGhExecutable();
+                    await runCommand(ghExe, ['auth', 'switch', '--hostname', 'github.com', '--user', account], 15000);
+                    vscode.window.showInformationMessage(`gh CLI switched to ${account}. Retrying…`);
+                } catch (swErr) {
+                    // gh auth switch can never work when the CLI has zero
+                    // logged-in accounts — steer those users to login instead.
+                    const t = vscode.window.createTerminal('gh auth');
+                    t.show();
+                    t.sendText(switchFallbackCommand(swErr && swErr.message, account));
+                    vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). If the CLI has no logged-in accounts, complete "gh auth login -s codespace" in the terminal, then retry Connect.`);
+                    resetDashboardView();
+                    return false;
+                }
+            } else if (act !== 'Connect Anyway') {
+                resetDashboardView();
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Refresh the dashboard so disabled card buttons never get stuck. */
@@ -310,6 +418,9 @@ async function activate(context) {
                 cs = pick.cs;
             }
 
+            // Same gh-CLI preflight as Connect / Quick Connect (issue #4 §C).
+            if (!(await ghPreflight(cs, cs.account || authManager.getActiveAccount()))) return;
+
             // A stopped machine cannot answer an SSH probe — guide instead of failing.
             if (cs.state && cs.state !== 'Available') {
                 const act = await vscode.window.showInformationMessage(
@@ -331,13 +442,59 @@ async function activate(context) {
                 async () => {
                     try {
                         const token = await authManager.getToken(cs.account);
-                        const latency = await testSshTunnel(cs.name, token);
-                        vscode.window.showInformationMessage(`✅ SSH tunnel to "${cs.displayName || cs.name}" is healthy! Latency: ${latency}ms`);
+                        const { latencyMs } = await probeSshTunnelVerbose(cs.name, token);
+                        vscode.window.showInformationMessage(`✅ SSH tunnel to "${cs.displayName || cs.name}" is healthy! Latency: ${latencyMs}ms`);
                     } catch (e) {
                         logger.error(`testSSH failed for ${cs.name}`, e.message);
-                        const act = await vscode.window.showErrorMessage(`SSH test failed for ${cs.displayName || cs.name}: ${friendlyError(e)}`, 'Show Logs', 'Test Again');
-                        if (act === 'Show Logs') logger.show();
-                        else if (act === 'Test Again') vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
+                        if (e.stderr) {
+                            logger.error(`testSSH stderr`, e.stderr);
+                            // Store for diagnostic report (Issue #4 §F)
+                            SystemDoctor.setLastTunnelStderr(e.stderr);
+                        }
+                        
+                        // Surface the exact tunnel stderr (gh auth state, platform
+                        // mismatch, host key change, …) as actionable guidance instead of a bare
+                        // exit-255 notification (issues #3, #4, #5 §E).
+                        const detail = friendlyTunnelError(e);
+                        const rawLine = sniffTunnelStderr(e.stderr) ? '' : ` (${e.message})`;
+                        const exactHost = `cs.${cs.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+                        
+                        // Build action buttons based on error type
+                        const mapped = mapTunnelError(e.stderr || e.message, e.exitCode || e.code, exactHost);
+                        const buttons = [];
+                        if (isPlatformMismatchError(e, exactHost)) {
+                            buttons.push('Fix Remote Platform');
+                        }
+                        if (mapped.actionType === 'remove_host_key') {
+                            buttons.push('Remove Host Key');
+                        }
+                        buttons.push('Show Logs', 'Test Again');
+                        
+                        const act = await vscode.window.showErrorMessage(
+                            `SSH test failed for ${cs.displayName || cs.name}: ${detail}${rawLine}`,
+                            ...buttons
+                        );
+                        if (act === 'Fix Remote Platform') {
+                            const alias = ensureSSHConfigEntry(cs, cs.account || authManager.getActiveAccount());
+                            const r = await ensureLinuxRemotePlatform(alias, {
+                                config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
+                                target: vscode.ConfigurationTarget.Global,
+                                log: (m) => logger.info(m)
+                            });
+                            vscode.window.showInformationMessage(r.error
+                                ? `Couldn't update remote.SSH.remotePlatform — set "${alias}": "linux" in settings manually.`
+                                : `remote.SSH.remotePlatform["${alias}"] is now "linux". Reconnect to apply.`);
+                        } else if (act === 'Remove Host Key') {
+                            if (removeHostFromManagedKnownHosts(exactHost)) {
+                                vscode.window.showInformationMessage(`Removed host key for ${exactHost}. Try connecting again.`);
+                            } else {
+                                vscode.window.showWarningMessage(`Could not find host key for ${exactHost} in managed known_hosts.`);
+                            }
+                        } else if (act === 'Show Logs') {
+                            logger.show();
+                        } else if (act === 'Test Again') {
+                            vscode.commands.executeCommand('antigravity-codespaces.testSSH', { codespaceData: cs });
+                        }
                     }
                 }
             );
@@ -477,10 +634,19 @@ async function activate(context) {
                 async () => {
                     try {
                         const newName = await githubApi.createCodespace(repoValue, branch || '', accPick.acc);
-                        vscode.window.showInformationMessage(`Created Codespace: ${newName}`);
                         sidebarProvider.refresh();
                         dashboardProvider.refreshHtml();
                         statusBar.update();
+                        // Offer "Connect now" button (Issue #4 §G)
+                        const action = await vscode.window.showInformationMessage(
+                            `Created Codespace: ${newName}`,
+                            'Connect Now'
+                        );
+                        if (action === 'Connect Now') {
+                            vscode.commands.executeCommand('antigravity-codespaces.connect', {
+                                codespaceData: { name: newName, account: accPick.acc, repository: repoValue }
+                            });
+                        }
                     } catch (e) {
                         await showOpError(`Create failed: ${friendlyError(e)}`, 'createCodespace');
                     }
@@ -508,60 +674,96 @@ async function activate(context) {
             const account = cs.account || authManager.getActiveAccount();
 
             try {
-                // Preflight: `gh cs ssh` authenticates as the CLI's ACTIVE user, not
-                // as our per-account token. A mismatch means GitHub answers 404 and
-                // the tunnel dies with exit 255 — catch it here with a fix action
-                // instead of a cryptic SSH failure. Fails open (proceeds on any doubt).
-                if (account) {
-                    const ghUser = await getGhActiveUser();
-                    if (ghUser && ghUser.toLowerCase() !== String(account).toLowerCase()) {
-                        const act = await vscode.window.showWarningMessage(
-                            `gh CLI is signed in as "${ghUser}", but "${cs.displayName || cs.name}" belongs to "${account}". SSH would fail (Codespace not found for ${ghUser}).`,
-                            'Switch gh CLI & Retry',
-                            'Connect Anyway'
-                        );
-                        if (act === 'Switch gh CLI & Retry') {
-                            try {
-                                const ghExe = findGhExecutable();
-                                await runCommand(ghExe, ['auth', 'switch', '--hostname', 'github.com', '--user', account], 15000);
-                                vscode.window.showInformationMessage(`gh CLI switched to ${account}. Retrying…`);
-                            } catch (swErr) {
-                                const t = vscode.window.createTerminal('gh auth switch');
-                                t.show();
-                                t.sendText(`gh auth switch --hostname github.com --user ${account}`);
-                                vscode.window.showWarningMessage(`Automatic switch failed (${friendlyError(swErr)}). Run the command in the terminal, then retry Connect.`);
-                                resetDashboardView();
-                                return;
-                            }
-                        } else if (act !== 'Connect Anyway') {
-                            resetDashboardView();
-                            return;
-                        }
-                    }
-                }
-
-                const hostAlias = ensureSSHConfigEntry(cs, account);
-                const repoShort = ((cs.repository || cs.name).split('/').pop() || 'workspace').replace(/[^a-zA-Z0-9_-]/g, '-');
-                const config = vscode.workspace.getConfiguration('antigravity-codespaces');
-                const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
-                const remoteFolder = folderTemplate
-                    .replace(/\${repo}/g, repoShort)
-                    .replace(/\${name}/g, cs.name);
-
-                // Fast REST wake-up if container is not available (fixes BUG-10)
-                if (cs.state !== 'Available') {
-                    await vscode.window.withProgress(
-                        { location: vscode.ProgressLocation.Notification, title: `Waking up ${cs.displayName || cs.name}...`, cancellable: false },
-                        async () => {
-                            await githubApi.startCodespace(cs.name, account);
-                        }
-                    );
-                }
+                // Store last connected codespace for quick reconnect (Issue #4 §G)
+                await context.globalState.update(LAST_CODESPACE_KEY, {
+                    name: cs.name,
+                    displayName: cs.displayName || cs.name,
+                    account: account,
+                    repository: cs.repository
+                });
 
                 await vscode.window.withProgress(
                     { location: vscode.ProgressLocation.Notification, title: `Connecting to ${cs.displayName || cs.name}...`, cancellable: false },
                     async (progress) => {
-                        progress.report({ message: 'Opening remote workspace in Antigravity...' });
+                        // Stage 1: Preflight checks
+                        progress.report({ message: 'Step 1/4: Checking gh CLI...' });
+                        if (!(await ghPreflight(cs, account))) {
+                            connectingSet.delete(cs.name);
+                            return;
+                        }
+
+                        // Stage 2: SSH config
+                        progress.report({ message: 'Step 2/4: Configuring SSH...' });
+                        const hostAlias = ensureSSHConfigEntry(cs, account);
+                        await ensureLinuxRemotePlatform(hostAlias, {
+                            config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
+                            target: vscode.ConfigurationTarget.Global,
+                            log: (m) => logger.info(m)
+                        });
+
+                        // Determine the best folder to open (Issue #4 §D)
+                        const config = vscode.workspace.getConfiguration('antigravity-codespaces');
+                        const folderTemplate = config.get('defaultRemoteFolder', '/workspaces/${repo}');
+                        
+                        // Fetch metadata with recentFolders and devcontainerPath
+                        let meta = {};
+                        try {
+                            meta = await githubApi.fetchMeta(cs.name, account);
+                        } catch {}
+                        
+                        let remoteFolder = GithubApi.getBestFolder(meta, cs.repository, cs.name, folderTemplate);
+
+                        // Stage 3: Wake container if needed
+                        if (cs.state !== 'Available') {
+                            progress.report({ message: 'Step 3/4: Waking container...' });
+                            await githubApi.startCodespace(cs.name, account);
+                        } else {
+                            progress.report({ message: 'Step 3/4: Container running...' });
+                        }
+
+                        // Stage 4: Verify folder exists and open
+                        progress.report({ message: 'Step 4/4: Verifying remote folder...' });
+                        
+                        // Check if the folder exists via SSH (Issue #4 §D)
+                        const folderCheck = await checkRemoteFolderExists(hostAlias, remoteFolder);
+                        if (!folderCheck.exists && !folderCheck.error) {
+                            // Folder doesn't exist, offer alternatives
+                            const workspaces = await listRemoteWorkspaces(hostAlias);
+                            const choices = [];
+                            if (workspaces.length > 0) {
+                                choices.push(...workspaces.slice(0, 5).map(w => `/workspaces/${w}`));
+                            }
+                            if (!choices.includes('/workspaces')) {
+                                choices.push('/workspaces');
+                            }
+                            choices.push('Enter custom path...');
+                            
+                            const pick = await vscode.window.showQuickPick(choices, {
+                                placeHolder: `Folder "${remoteFolder}" not found. Select an alternative:`
+                            });
+                            
+                            if (!pick) {
+                                connectingSet.delete(cs.name);
+                                return;
+                            }
+                            
+                            if (pick === 'Enter custom path...') {
+                                const custom = await vscode.window.showInputBox({
+                                    prompt: 'Enter the remote folder path',
+                                    value: '/workspaces/',
+                                    validateInput: (v) => v && v.startsWith('/') ? null : 'Path must start with /'
+                                });
+                                if (!custom) {
+                                    connectingSet.delete(cs.name);
+                                    return;
+                                }
+                                remoteFolder = custom;
+                            } else {
+                                remoteFolder = pick;
+                            }
+                        }
+                        
+                        progress.report({ message: 'Step 4/4: Opening remote folder...' });
                         let connected = false;
 
                         // Tier 1: Direct URI resolution
@@ -573,9 +775,7 @@ async function activate(context) {
                             connected = true;
                         } catch {}
 
-                        // Tier 2: Remote SSH extension commands (new-window variants
-                        // first; current-window last resort before the terminal).
-                        // Includes Antigravity's Open Remote-SSH (jeanp413) IDs.
+                        // Tier 2: Remote SSH extension commands
                         if (!connected) {
                             const allCmds = await vscode.commands.getCommands();
                             const candidateCmds = [
@@ -599,10 +799,7 @@ async function activate(context) {
                             }
                         }
 
-                        // Tier 3: Binary CLI launcher (execFile argv — no shell
-                        // interpolation). Only attempted when the launcher binary
-                        // actually exists, so Tier 4 terminal fallback still runs
-                        // when it does not.
+                        // Tier 3: Binary CLI launcher
                         let launcherExists = false;
                         try { launcherExists = !!ANTIGRAVITY_EXE && fs.existsSync(ANTIGRAVITY_EXE); } catch {}
                         if (!connected && launcherExists) {
@@ -617,7 +814,7 @@ async function activate(context) {
                             } catch {}
                         }
 
-                        // Tier 4: Integrated Terminal SSH fallback
+                        // Tier 4: Terminal fallback
                         if (!connected) {
                             const diag = await SystemDoctor.diagnose(authManager);
                             if (!diag.ghInstalled) {
@@ -627,7 +824,7 @@ async function activate(context) {
                                 t.show();
                                 t.sendText(`gh cs ssh -c ${cs.name}`);
                                 vscode.window.showInformationMessage(
-                                    `Opened a terminal fallback for "${cs.displayName || cs.name}". If the tunnel connects there, you're in. Otherwise run Test SSH Connectivity — its message tells you exactly what to fix.`
+                                    `Opened a terminal fallback for "${cs.displayName || cs.name}". Run Test SSH Connectivity for detailed diagnostics.`
                                 );
                             }
                         }
@@ -785,6 +982,40 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.loginGitHub', async () => {
             await authManager.login();
+        })
+    );
+
+    // ── Command: Setup Doctor (Issue #4 §A) ───────────────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('antigravity-codespaces.setupDoctor', async () => {
+            await setupDoctorProvider.openOrReveal();
+        })
+    );
+
+    // ── Command: Reconnect to Last Codespace (Issue #4 §G) ───────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand('antigravity-codespaces.reconnectLast', async () => {
+            const lastCs = context.globalState.get(LAST_CODESPACE_KEY);
+            if (!lastCs || !lastCs.name) {
+                vscode.window.showInformationMessage('No recent Codespace found. Connect to a Codespace first.');
+                return;
+            }
+            
+            // Wake and connect in one step
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: `Reconnecting to ${lastCs.displayName || lastCs.name}...`, cancellable: false },
+                async () => {
+                    try {
+                        // Wake the codespace if needed
+                        await githubApi.startCodespace(lastCs.name, lastCs.account).catch(() => {});
+                    } catch {}
+                }
+            );
+            
+            // Delegate to connect command
+            await vscode.commands.executeCommand('antigravity-codespaces.connect', {
+                codespaceData: lastCs
+            });
         })
     );
 

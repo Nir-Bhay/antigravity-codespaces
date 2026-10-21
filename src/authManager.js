@@ -323,7 +323,22 @@ class AuthManager {
         this._context.globalState?.update('activeAccount', this._activeAccount);
         this._tokenCache.set(user.login, cleanPat);
         this._patValidity.set(user.login, Date.now());
-        vscode.window.showInformationMessage(`PAT saved securely. Signed in as ${user.login}`);
+        
+        // Check for codespace scope and warn if missing (Issue #4 §G)
+        const hasCodespace = AuthManager.hasCodespaceScope(user);
+        if (hasCodespace === false) {
+            const act = await vscode.window.showWarningMessage(
+                `PAT saved, but it's missing the "codespace" scope. SSH tunneling may fail. Consider regenerating with the codespace scope.`,
+                'Continue Anyway',
+                'Regenerate Token'
+            );
+            if (act === 'Regenerate Token') {
+                vscode.env.openExternal(vscode.Uri.parse('https://github.com/settings/tokens/new?scopes=repo,codespace'));
+            }
+        } else {
+            vscode.window.showInformationMessage(`PAT saved securely. Signed in as ${user.login}`);
+        }
+        
         this._onAuthChangedEmitter.fire();
         return user.login;
     }
@@ -352,10 +367,23 @@ class AuthManager {
         }
         if (!res.ok) return null;
         try {
-            return await res.json();
+            const user = await res.json();
+            // Extract scopes from response headers (Issue #4 §G)
+            const scopesHeader = res.headers.get('x-oauth-scopes') || '';
+            user._scopes = scopesHeader.split(',').map(s => s.trim()).filter(Boolean);
+            return user;
         } catch {
             return null;
         }
+    }
+
+    /**
+     * Check if a token has the codespace scope.
+     * Works for classic PATs; fine-grained PATs may not expose scopes.
+     */
+    static hasCodespaceScope(user) {
+        if (!user || !user._scopes) return null;
+        return user._scopes.includes('codespace');
     }
 
     /**

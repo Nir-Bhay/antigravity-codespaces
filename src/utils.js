@@ -44,6 +44,43 @@ function formatRelativeTime(dateStr) {
 }
 
 /**
+ * Detects gh-CLI auth/transport failure signatures inside raw SSH tunnel
+ * stderr and returns a short actionable message (or null when nothing known
+ * matched). Called on tunnel probe failures so users get the fix command
+ * directly instead of a bare "exit 255 / nonexistent pipe" (issues #3/#4).
+ */
+function sniffTunnelStderr(stderr) {
+    const raw = String(stderr || '');
+    if (!raw) return null;
+    if (/not logged into any GitHub hosts|gh auth login/i.test(raw)) {
+        return 'GitHub CLI is signed out — SSH tunnels authenticate with the gh CLI, separate from this extension\'s sign-in. Run "gh auth login -s codespace" in the terminal, then retry.';
+    }
+    if (/needs the "codespace" scope|Must have admin rights to Repository|lack the "codespace"/i.test(raw)) {
+        return 'The gh CLI token is missing the "codespace" scope. Run "gh auth refresh -h github.com -s codespace" in the terminal, then retry.';
+    }
+    if (/command not found.*powershell|powershell.*command not found/i.test(raw)) {
+        return 'Remote platform mismatch: the Codespace is Linux but Remote-SSH was told "windows". Remove the "remote.SSH.remotePlatform" entry for this host from settings (or set it to "linux"), then reconnect.';
+    }
+    if (/nonexistent pipe/i.test(raw)) {
+        return 'The SSH tunnel terminated immediately (exit 255). This is almost always a gh CLI auth problem — run "Test SSH Connectivity" for the exact cause.';
+    }
+    return null;
+}
+
+/**
+ * Wraps friendlyError(node) with tunnel-stderr sniffing: if the error carries
+ * a .stderr payload (see probeSshTunnelVerbose), check it first for known
+ * transport signatures, then fall back to the standard mapping.
+ */
+function friendlyTunnelError(err) {
+    if (err && err.stderr) {
+        const sniffed = sniffTunnelStderr(err.stderr);
+        if (sniffed) return sniffed;
+    }
+    return friendlyError(err);
+}
+
+/**
  * Translates low-level network or CLI error messages into actionable, user-friendly guidance.
  */
 function friendlyError(err) {
@@ -139,6 +176,55 @@ function runCommand(cmd, args = [], timeoutMs = 15000, options = {}) {
 }
 
 /**
+ * Executes a CLI command with timeout, returning detailed result including stderr and exit code.
+ * Used for error mapping where stderr content is needed for diagnosis.
+ *
+ * @param {string} cmd - The command to execute
+ * @param {string[]} args - Command arguments
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @param {Object} options - Additional execFile options
+ * @returns {Promise<{stdout: string, stderr: string, exitCode: number}>}
+ */
+function runCommandWithDetails(cmd, args = [], timeoutMs = 15000, options = {}) {
+    return new Promise((resolve, reject) => {
+        const spawnOpts = { windowsHide: true, ...options };
+        let child;
+        try {
+            child = execFile(cmd, args, { ...spawnOpts, timeout: timeoutMs }, (err, stdout, stderr) => {
+                const exitCode = err ? (err.code || 1) : 0;
+                if (!err) {
+                    return resolve({
+                        stdout: (stdout || '').trim(),
+                        stderr: (stderr || '').trim(),
+                        exitCode: 0
+                    });
+                }
+                const killed = err.killed || err.signal === 'SIGTERM';
+                const timedOut = killed || /timed out|ETIMEDOUT/i.test(err.message || '');
+                if (timedOut) {
+                    return reject(new Error(`Timed out (${timeoutMs / 1000}s): ${cmd} ${(args || []).join(' ')}`));
+                }
+                resolve({
+                    stdout: (stdout || '').trim(),
+                    stderr: (stderr || '').trim(),
+                    exitCode: typeof exitCode === 'number' ? exitCode : 1
+                });
+            });
+        } catch (spawnErr) {
+            reject(spawnErr);
+            return;
+        }
+        const guard = setTimeout(() => {
+            try { if (child && !child.killed && child.exitCode === null) child.kill('SIGTERM'); } catch {}
+        }, timeoutMs + 2000);
+        if (guard.unref) guard.unref();
+        const clear = () => clearTimeout(guard);
+        child.on('exit', clear);
+        child.on('error', clear);
+    });
+}
+
+/**
  * Shared SVG icons for sidebar and dashboard webviews.
  */
 const I = {
@@ -189,6 +275,7 @@ const I = {
     arrowRight: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`,
     pencil: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`,
     info: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+    copy: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
     antigravityLogo: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 22 22 22"/><line x1="6" y1="14" x2="18" y2="14"/></svg>`,
     trashModal: `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
     cloudHero: `<svg class="hero-illustration-svg" width="140" height="100" viewBox="0 0 140 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -249,6 +336,9 @@ module.exports = {
     generateNonce,
     formatRelativeTime,
     friendlyError,
+    friendlyTunnelError,
+    sniffTunnelStderr,
     runCommand,
+    runCommandWithDetails,
     I
 };

@@ -361,6 +361,11 @@ class GithubApi {
         else if (m.repository && typeof m.repository === 'object') {
             repository = m.repository.full_name || m.repository.fullName || m.repository.nameWithOwner || '';
         }
+        // Normalize recentFolders from gh CLI (array of folder paths)
+        let recentFolders = null;
+        if (Array.isArray(m.recentFolders)) {
+            recentFolders = m.recentFolders.filter(f => typeof f === 'string' && f.startsWith('/'));
+        }
         return {
             displayName: m.displayName || m.display_name || m.name || '',
             name: m.name || '',
@@ -372,7 +377,9 @@ class GithubApi {
             lastUsedAt: m.lastUsedAt || m.last_used_at || '',
             idleTimeoutMinutes: m.idleTimeoutMinutes || m.idle_timeout_minutes || 30,
             location: m.location || '',
-            account: account || ''
+            account: account || '',
+            recentFolders: recentFolders,
+            devcontainerPath: m.devcontainerPath || m.devcontainer_path || null
         };
     }
 
@@ -416,7 +423,7 @@ class GithubApi {
             const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
             const raw = await runCommand(ghExe, [
                 'codespace', 'view', '-c', name,
-                '--json', 'displayName,name,repository,state,gitStatus,machineDisplayName,machineName,createdAt,lastUsedAt,idleTimeoutMinutes,retentionPeriodDays,location'
+                '--json', 'displayName,name,repository,state,gitStatus,machineDisplayName,machineName,createdAt,lastUsedAt,idleTimeoutMinutes,retentionPeriodDays,location,recentFolders,devcontainerPath'
             ], 8000, envOpts);
             const m = this._normalizeMeta(JSON.parse(raw || '{}'), account);
             this._setFresh(this._metaCache, cacheKey, m);
@@ -424,6 +431,38 @@ class GithubApi {
         } catch {
             return {};
         }
+    }
+
+    /**
+     * Determines the best remote folder to open for a codespace.
+     * Priority: recentFolders[0] > devcontainer workspaceFolder > template fallback.
+     * @param {object} meta - Codespace metadata from fetchMeta
+     * @param {string} repository - Repository name (owner/repo)
+     * @param {string} codespaceName - Codespace name
+     * @param {string} folderTemplate - Template string with ${repo} and ${name} placeholders
+     * @returns {string} The folder path to open
+     */
+    static getBestFolder(meta, repository, codespaceName, folderTemplate = '/workspaces/${repo}') {
+        // Priority 1: Most recent folder from recentFolders
+        if (meta && Array.isArray(meta.recentFolders) && meta.recentFolders.length > 0) {
+            const recent = meta.recentFolders[0];
+            if (typeof recent === 'string' && recent.startsWith('/')) {
+                return recent;
+            }
+        }
+        
+        // Priority 2: Derive from devcontainerPath (usually .devcontainer/devcontainer.json)
+        // The workspaceFolder is typically /workspaces/<repo> by convention
+        if (meta && meta.devcontainerPath) {
+            const repoShort = (repository || codespaceName || '').split('/').pop() || 'workspace';
+            return `/workspaces/${repoShort.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+        }
+        
+        // Priority 3: Fall back to template
+        const repoShort = (repository || codespaceName || '').split('/').pop() || 'workspace';
+        return folderTemplate
+            .replace(/\${repo}/g, repoShort.replace(/[^a-zA-Z0-9_-]/g, '-'))
+            .replace(/\${name}/g, (codespaceName || '').replace(/[^a-zA-Z0-9_-]/g, '-'));
     }
 
     /**

@@ -1,10 +1,14 @@
 const vscode = require('vscode');
 const { escapeHtml, generateNonce, formatRelativeTime, I } = require('./utils');
 const { SystemDoctor } = require('./systemDoctor');
+const { getGhAuthHealth } = require('./sshManager');
+
+const FIRST_RUN_DISMISSED_KEY = 'antigravity.firstRunCardDismissed';
 
 class SidebarProvider {
-    constructor(extensionUri, authManager, githubApi) {
-        this._extensionUri = extensionUri;
+    constructor(context, authManager, githubApi) {
+        this._context = context;
+        this._extensionUri = context.extensionUri;
         this._authManager = authManager;
         this._githubApi = githubApi;
         this._view = null;
@@ -13,6 +17,27 @@ class SidebarProvider {
         this._authManager.onAuthChanged(() => {
             this.refresh();
         });
+    }
+
+    /**
+     * Check if the first-run card was dismissed (persisted in globalState).
+     */
+    isFirstRunDismissed() {
+        return this._context.globalState.get(FIRST_RUN_DISMISSED_KEY, false);
+    }
+
+    /**
+     * Dismiss the first-run card (persisted in globalState).
+     */
+    async dismissFirstRun() {
+        await this._context.globalState.update(FIRST_RUN_DISMISSED_KEY, true);
+    }
+
+    /**
+     * Reset first-run dismissed state (for testing).
+     */
+    async resetFirstRunDismissed() {
+        await this._context.globalState.update(FIRST_RUN_DISMISSED_KEY, false);
     }
 
     resolveWebviewView(webviewView) {
@@ -103,6 +128,31 @@ class SidebarProvider {
                 case 'promptInstallGh':
                     await SystemDoctor.promptInstallGhCli();
                     break;
+                case 'ghAuthLogin': {
+                    const t = vscode.window.createTerminal('gh auth login');
+                    t.show();
+                    t.sendText('gh auth login -s codespace');
+                    break;
+                }
+                case 'ghAuthRefresh': {
+                    const t = vscode.window.createTerminal('gh auth refresh');
+                    t.show();
+                    t.sendText('gh auth refresh -h github.com -s codespace');
+                    break;
+                }
+                case 'ghAuthSwitch': {
+                    const t = vscode.window.createTerminal('gh auth switch');
+                    t.show();
+                    t.sendText(`gh auth switch --hostname github.com --user ${msg.user || ''}`);
+                    break;
+                }
+                case 'openSetupDoctor':
+                    await vscode.commands.executeCommand('antigravity-codespaces.setupDoctor');
+                    break;
+                case 'dismissFirstRun':
+                    await this.dismissFirstRun();
+                    await this.refresh();
+                    break;
                 case 'fetchMeta': {
                     try {
                         const meta = await this._githubApi.fetchMeta(msg.name, msg.account);
@@ -131,18 +181,25 @@ class SidebarProvider {
         if (!this._view) return;
         try {
             const accounts = await this._authManager.getAccounts();
+            const diag = await SystemDoctor.diagnose(this._authManager);
+            const ghHealth = diag.ghAuthHealth || {};
+            const ghHealthy = ghHealth.state === 'ok';
+            
             if (accounts.length === 0) {
-                const diag = await SystemDoctor.diagnose(this._authManager);
                 this._view.webview.html = this.buildWelcomeHtml(diag);
                 return;
             }
 
             const activeAccount = this._authManager.getActiveAccount() || accounts[0].account;
+            
+            // Show first-run card if not dismissed and gh CLI is not fully healthy
+            const showFirstRunCard = !this.isFirstRunDismissed() && !ghHealthy;
+            
             try {
                 const codespaces = await this._githubApi.listCodespaces(activeAccount);
-                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, codespaces);
+                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, codespaces, '', diag, showFirstRunCard);
             } catch (fetchErr) {
-                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, [], fetchErr.message);
+                this._view.webview.html = this.buildSidebarHtml(accounts, activeAccount, [], fetchErr.message, diag, showFirstRunCard);
             }
         } catch (err) {
             const diag = await SystemDoctor.diagnose(this._authManager).catch(() => ({}));
@@ -423,8 +480,87 @@ body {
      * Screens 2, 3, 4, 5, 6, 7, 8: Authenticated Sidebar UI
      * Handles List, Card expansion, Empty, Error, Search, and In-Webview Modals.
      */
-    buildSidebarHtml(accounts, activeAccount, codespaces, errorMsg = '') {
+    buildSidebarHtml(accounts, activeAccount, codespaces, errorMsg = '', diag = {}, showFirstRunCard = false) {
         const nonce = generateNonce();
+        const ghHealth = diag.ghAuthHealth || {};
+        
+        // Build gh CLI status row HTML
+        let ghStatusClass = 'gh-status-ok';
+        let ghStatusIcon = I.checkCircle;
+        let ghStatusText = '';
+        let ghFixBtn = '';
+        
+        if (!diag.ghInstalled) {
+            ghStatusClass = 'gh-status-error';
+            ghStatusIcon = I.alertCircle;
+            ghStatusText = 'gh CLI not installed';
+            ghFixBtn = `<button class="gh-fix-btn" id="ghFixBtn" data-action="install">Fix</button>`;
+        } else if (ghHealth.state === 'logged_out' || ghHealth.state === 'missing') {
+            ghStatusClass = 'gh-status-error';
+            ghStatusIcon = I.alertCircle;
+            ghStatusText = 'gh signed out';
+            ghFixBtn = `<button class="gh-fix-btn" id="ghFixBtn" data-action="login">Fix</button>`;
+        } else if (ghHealth.state === 'scope_missing') {
+            ghStatusClass = 'gh-status-warn';
+            ghStatusIcon = I.alertTriangle;
+            ghStatusText = 'gh needs codespace permission';
+            ghFixBtn = `<button class="gh-fix-btn" id="ghFixBtn" data-action="refresh">Fix</button>`;
+        } else if (ghHealth.user && activeAccount && ghHealth.user.toLowerCase() !== activeAccount.toLowerCase()) {
+            ghStatusClass = 'gh-status-warn';
+            ghStatusIcon = I.alertTriangle;
+            ghStatusText = `gh: @${escapeHtml(ghHealth.user)} (mismatch)`;
+            ghFixBtn = `<button class="gh-fix-btn" id="ghFixBtn" data-action="switch" data-user="${escapeHtml(activeAccount)}">Fix</button>`;
+        } else if (ghHealth.state === 'ok') {
+            ghStatusText = `gh CLI: @${escapeHtml(ghHealth.user || 'unknown')}`;
+        } else {
+            ghStatusText = 'gh CLI: status unknown';
+        }
+        
+        const ghStatusRowHtml = `
+        <div class="gh-status-row ${ghStatusClass}">
+            <span class="gh-status-icon">${ghStatusIcon}</span>
+            <span class="gh-status-text">${ghStatusText}</span>
+            ${ghFixBtn}
+        </div>`;
+
+        // First-run three-step card
+        const step1Done = accounts.length > 0;
+        const step2Done = diag.ghInstalled && ghHealth.state === 'ok';
+        const step3Done = codespaces.length > 0;
+        
+        const firstRunCardHtml = showFirstRunCard ? `
+        <div class="first-run-card">
+            <div class="first-run-header">
+                <span class="first-run-title">Get Started</span>
+                <button class="first-run-dismiss" id="dismissFirstRunBtn" title="Dismiss">${I.close}</button>
+            </div>
+            <div class="first-run-steps">
+                <div class="first-run-step ${step1Done ? 'step-done' : 'step-pending'}">
+                    <span class="step-icon">${step1Done ? I.checkCircle : I.alertCircle}</span>
+                    <div class="step-content">
+                        <span class="step-label">1. Sign in to GitHub</span>
+                        <span class="step-detail">${step1Done ? 'Connected' : 'Required for Codespaces access'}</span>
+                    </div>
+                    ${!step1Done ? `<button class="step-action-btn" id="stepSignInBtn">Sign In</button>` : ''}
+                </div>
+                <div class="first-run-step ${step2Done ? 'step-done' : 'step-pending'}">
+                    <span class="step-icon">${step2Done ? I.checkCircle : I.alertCircle}</span>
+                    <div class="step-content">
+                        <span class="step-label">2. Set up GitHub CLI</span>
+                        <span class="step-detail">${step2Done ? 'Ready for SSH tunnels' : 'Required for SSH connections'}</span>
+                    </div>
+                    ${!step2Done ? `<button class="step-action-btn" id="stepSetupGhBtn">Set Up</button>` : ''}
+                </div>
+                <div class="first-run-step ${step3Done ? 'step-done' : 'step-pending'}">
+                    <span class="step-icon">${step3Done ? I.checkCircle : I.alertCircle}</span>
+                    <div class="step-content">
+                        <span class="step-label">3. Connect to a Codespace</span>
+                        <span class="step-detail">${step3Done ? 'You have active Codespaces' : 'Create or connect to get started'}</span>
+                    </div>
+                    ${!step3Done && step1Done && step2Done ? `<button class="step-action-btn" id="stepConnectBtn">Connect</button>` : ''}
+                </div>
+            </div>
+        </div>` : '';
 
         const csListHtml = codespaces.map(cs => {
             const isRunning = cs.state === 'Available';
@@ -606,6 +742,147 @@ body {
 }
 .btn-switch-account:hover {
     background: rgba(128, 128, 128, 0.12);
+}
+
+/* ── gh CLI Status Row ── */
+.gh-status-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.05));
+    border: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.12));
+}
+.gh-status-row.gh-status-ok {
+    border-color: rgba(46, 160, 67, 0.25);
+}
+.gh-status-row.gh-status-warn {
+    background: rgba(210, 153, 34, 0.08);
+    border-color: rgba(210, 153, 34, 0.35);
+}
+.gh-status-row.gh-status-error {
+    background: rgba(207, 34, 46, 0.08);
+    border-color: rgba(207, 34, 46, 0.35);
+}
+.gh-status-icon {
+    display: flex;
+    flex-shrink: 0;
+}
+.gh-status-ok .gh-status-icon { color: #2ea043; }
+.gh-status-warn .gh-status-icon { color: #d29922; }
+.gh-status-error .gh-status-icon { color: #cf222e; }
+.gh-status-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--vscode-foreground);
+}
+.gh-fix-btn {
+    background: var(--vscode-button-secondaryBackground, transparent);
+    color: var(--vscode-foreground);
+    border: 1px solid var(--vscode-button-secondaryBorder, rgba(128, 128, 128, 0.25));
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+}
+.gh-fix-btn:hover {
+    background: rgba(128, 128, 128, 0.15);
+}
+
+/* ── First-Run Three-Step Card ── */
+.first-run-card {
+    background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.05));
+    border: 1px solid var(--vscode-focusBorder, rgba(9, 105, 218, 0.4));
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+}
+.first-run-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.first-run-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+.first-run-dismiss {
+    background: transparent;
+    border: none;
+    color: var(--vscode-descriptionForeground, #656d76);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    border-radius: 4px;
+}
+.first-run-dismiss:hover {
+    background: rgba(128, 128, 128, 0.15);
+}
+.first-run-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.first-run-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--vscode-editor-background, rgba(255, 255, 255, 0.02));
+}
+.first-run-step.step-done {
+    opacity: 0.7;
+}
+.first-run-step.step-pending {
+    border: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.15));
+}
+.step-icon {
+    display: flex;
+    flex-shrink: 0;
+}
+.step-done .step-icon { color: #2ea043; }
+.step-pending .step-icon { color: var(--vscode-descriptionForeground, #656d76); }
+.step-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.step-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--vscode-foreground);
+}
+.step-detail {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground, #656d76);
+}
+.step-action-btn {
+    background: var(--vscode-button-background, #0969da);
+    color: var(--vscode-button-foreground, #fff);
+    border: none;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+.step-action-btn:hover {
+    background: var(--vscode-button-hoverBackground, #085cc0);
 }
 
 /* ── Search Bar (Screen 2) ── */
@@ -1293,6 +1570,12 @@ body {
         <button class="btn-switch-account" id="switchAccBtn" title="Switch Account">Switch</button>
     </div>
 
+    <!-- gh CLI Status Row -->
+    ${ghStatusRowHtml}
+
+    <!-- First-Run Three-Step Card -->
+    ${firstRunCardHtml}
+
     <!-- Search Bar (Screen 2) -->
     <div class="search-wrapper">
         <span class="search-icon-decor">${I.search}</span>
@@ -1455,6 +1738,50 @@ body {
             if (img.nextElementSibling) img.nextElementSibling.style.display = 'flex';
         });
     });
+
+    // ── gh CLI Fix Button ──
+    const ghFixBtn = document.getElementById('ghFixBtn');
+    if (ghFixBtn) {
+        ghFixBtn.addEventListener('click', () => {
+            const action = ghFixBtn.dataset.action;
+            if (action === 'install') {
+                vscode.postMessage({ command: 'promptInstallGh' });
+            } else if (action === 'login') {
+                vscode.postMessage({ command: 'ghAuthLogin' });
+            } else if (action === 'refresh') {
+                vscode.postMessage({ command: 'ghAuthRefresh' });
+            } else if (action === 'switch') {
+                const user = ghFixBtn.dataset.user;
+                vscode.postMessage({ command: 'ghAuthSwitch', user });
+            }
+        });
+    }
+
+    // ── First-Run Card Actions ──
+    const dismissFirstRunBtn = document.getElementById('dismissFirstRunBtn');
+    if (dismissFirstRunBtn) {
+        dismissFirstRunBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'dismissFirstRun' });
+        });
+    }
+    const stepSignInBtn = document.getElementById('stepSignInBtn');
+    if (stepSignInBtn) {
+        stepSignInBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'loginGitHub' });
+        });
+    }
+    const stepSetupGhBtn = document.getElementById('stepSetupGhBtn');
+    if (stepSetupGhBtn) {
+        stepSetupGhBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'openSetupDoctor' });
+        });
+    }
+    const stepConnectBtn = document.getElementById('stepConnectBtn');
+    if (stepConnectBtn) {
+        stepConnectBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'createCodespace' });
+        });
+    }
 
     // ── Retry & Auth Actions (Error state) ──
     const retryBtn = document.getElementById('retryBtn');
