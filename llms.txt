@@ -23,3 +23,7 @@
 
 ## Optional
 - [Changelog](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/CHANGELOG.md): release history
+
+## Full text
+
+- [llms-full.txt](https://nir-bhay.github.io/antigravity-codespaces/llms-full.txt): all docs, guides and the FAQ as one plain-text file

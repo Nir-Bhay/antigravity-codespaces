@@ -1,0 +1,441 @@
+# Antigravity Codespaces Pro: full documentation, guides and FAQ
+
+> Plain-text copy of the docs, guides and FAQ from https://nir-bhay.github.io/antigravity-codespaces/ for language models. Index: https://nir-bhay.github.io/antigravity-codespaces/llms.txt
+
+# https://nir-bhay.github.io/antigravity-codespaces/docs.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / Documentation
+## Documentation
+Version 5.3.1 · Last updated 21 October 2026
+Antigravity Codespaces Pro is a free, MIT-licensed extension that connects VS Code-based editors such as Cursor and Google Antigravity to GitHub Codespaces over SSH using the GitHub CLI.
+### Overview
+Antigravity Codespaces Pro is an open-source extension that lets you list, start, stop and connect to GitHub Codespaces from VS Code-based editors such as Google Antigravity, Cursor, VS Code, Windsurf and VSCodium. Your editor stays on your machine and the codespace runs on GitHub. The connection is an ordinary SSH session tunnelled through the official GitHub CLI, so there are no keys to manage and no ports to open.
+The extension does not host anything, does not proxy your traffic through a third party, and does not include AI models. It manages the remote environment; you bring the editor and the tools.
+### Requirements
+- An editor compatible with VS Code engine ^1.85.0.
+- The [GitHub CLI](https://cli.github.com) ( gh ).
+- An OpenSSH client ( ssh -V should print a version).
+- A Remote-SSH extension that suits your editor. See the table below.
+- A GitHub account that can create codespaces.
+### Install
+| Editor | Where to get it | Remote-SSH |
+| Google Antigravity | Open VSX (Extensions view) | Antigravity's remote support, or jeanp413.open-remote-ssh |
+| Cursor | Open VSX, served through Cursor's marketplace | anysphere.remote-ssh (bundled) |
+| VS Code / Insiders | Release .vsix for 5.3.1 | ms-vscode-remote.remote-ssh |
+| Windsurf | Open VSX | Built-in SSH only. Do not add other Remote-SSH extensions. |
+| VSCodium | Open VSX | jeanp413.open-remote-ssh |
+| Kiro | Open VSX | jeanp413.open-remote-ssh |
+| Trae, Positron | Install from VSIX | Built-in Remote SSH |
+Per-editor steps, OS notes and sources are in the [IDE setup guide](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/docs/IDE_SETUP.md). See also the guides for [Cursor](https://nir-bhay.github.io/antigravity-codespaces/guide-cursor.html), [Antigravity](https://nir-bhay.github.io/antigravity-codespaces/guide-antigravity.html) and [Windsurf](https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html), and the [Remote-SSH comparison](https://nir-bhay.github.io/antigravity-codespaces/guide-remote-ssh.html).
+```
+# Open VSX editors (replace cursor with antigravity, windsurf, codium…)
+cursor --install-extension nirbhay-hiwse.antigravity-codespaces
+# VS Code, from the downloaded release file
+code --install-extension antigravity-codespaces-5.3.1.vsix
+```
+### Sign in and scopes
+Connecting needs a gh token with the codespace scope. Usage analytics additionally need the user scope, because GitHub's billing API requires it. You can skip the second one if you do not want analytics.
+```
+gh auth login -s codespace
+# already signed in, scope missing
+gh auth refresh -h github.com -s codespace
+# optional, for usage analytics
+gh auth refresh -h github.com -s user
+```
+Before every Connect, Quick Connect and Test SSH, a shared preflight checks four states: gh missing, signed out, scope missing, and the wrong user active. Each one gets its own fix button rather than a generic SSH error.
+### Cloud Hub
+Run Open Cloud Hub Dashboard. Every codespace appears as a card in grid view or as a row in list view, with its state, repository, branch, machine type and owning account. A usage card sits above the grid when analytics are available. A first-run card walks new users through signing in, installing gh and connecting, and it disappears after the first successful connection.
+### Quick Connect
+Press Alt + C or run Quick Connect to Codespace..., pick a codespace and it opens in a new window. If the codespace is stopped, start it first. Reconnect to Last Codespace reopens the one you used most recently. When connecting, the extension looks up the real workspace folder from your recent folders or the dev container metadata, and only falls back to defaultRemoteFolder.
+### Codespace actions
+From a card, the sidebar or the Quick Actions menu you can Turn ON, Stop, Rebuild Container, Delete, Open in Browser and Copy SSH Command, and you can Create New Codespace. Deleting is permanent and removes uncommitted work in that codespace, so push first.
+### Multiple accounts
+The extension reads every account signed in to gh. Switch GitHub Account changes the active one, and the hub, the SSH hosts and the usage numbers follow it. Scope checks read the block for the exact account, so one account's scopes are never mistaken for another's.
+### Forwarded ports
+Ports a codespace exposes are listed under it. Open Port in Browser opens one directly.
+### Usage analytics
+Since 5.2.0 the Cloud Hub and the sidebar show Codespaces usage for the active gh account, read from GitHub's billing API (the usage summary and daily usage). The numbers match github.com/settings/billing. Compute is measured in core-hours and storage in GB-month. They are separate quotas and are never added together.
+| Plan | Compute | Storage |
+| GitHub Free | 120 core-hours | 15 GB-month |
+| GitHub Pro | 180 core-hours | 20 GB-month |
+| Organizations | No free quota; billed to the organization |
+A 4-core machine uses quota twice as fast as a 2-core machine: one hour on it is four core-hours. Bars turn orange at 75% and red at 90%. Source for quotas: [GitHub Docs](https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-codespaces/about-billing-for-github-codespaces).
+The card can be in one of five states: live numbers, needs permission (missing user scope), billed to an organization, unavailable with the reason, or offline with the last good numbers. It never shows an estimate in place of missing data.
+### SSH configuration
+The extension writes one clearly marked block per codespace into ~/.ssh/config, between # CS_ENTRY:<name> and # END_CS_ENTRY:<name>. Nothing outside those markers is touched. Every change is logged in the Codespaces output channel.
+```
+Host cs.<name>
+  User codespace
+  ProxyCommand "<path-to-gh>" cs ssh -c "<name>" --stdio
+  StrictHostKeyChecking accept-new
+  ServerAliveInterval 30
+  ServerAliveCountMax 10
+```
+Run Sync SSH Config to regenerate the blocks and Test SSH Connectivity to check the tunnel without opening a window.
+### Keepalive for long agent sessions
+AI agents often run for many minutes with no keyboard input, which is when idle connections tend to drop. The defaults send a keepalive every 30 seconds and give up after 10 missed replies. Raise them in settings if your network is unreliable. Keepalive keeps the SSH tunnel open; it does not stop GitHub from stopping a codespace after its own idle timeout, which you set in GitHub's Codespaces settings.
+### Setup Doctor
+Codespaces: Setup Doctor checks that gh is installed and signed in, that the token has the right scopes, that an OpenSSH client and a Remote-SSH extension are present, that remote.SSH.remotePlatform is correct and that the SSH config has no duplicate codespace blocks. Every failed check has a one-click fix. It can also produce a diagnostic report for an issue, with GitHub tokens ( gho_, ghu_, ghs_, ghr_, ghp_ ) redacted automatically.
+### Settings
+| Setting | Default | What it does |
+| antigravity-codespaces.autoSyncSSHOnStartup | true | Automatically synchronize Codespaces into ~/.ssh/config on IDE startup. |
+| antigravity-codespaces.showStatusBarItem | true | Display the Codespaces quick-access badge in the bottom Status Bar. |
+| antigravity-codespaces.serverAliveInterval | 30 | SSH keepalive interval in seconds (prevents WebSocket drops during AI agent sessions). |
+| antigravity-codespaces.serverAliveCountMax | 10 | Maximum SSH keepalive probes before declaring a connection dead. |
+| antigravity-codespaces.defaultRemoteFolder | /workspaces/${repo} | Default remote container folder path when connecting via SSH. Supports ${repo} and ${name} placeholders. |
+| antigravity-codespaces.strictHostKeyChecking | accept-new | SSH host key verification mode. 'accept-new' (recommended) accepts new keys and rejects changed keys. 'yes' requires manual verification. 'no' disables verification (insecure). |
+| antigravity-codespaces.sshLogLevel | error | SSH logging verbosity. 'error' (default) shows only errors. 'quiet' suppresses all output. 'info' and 'verbose' show more details for debugging. |
+| antigravity-codespaces.usage.plan | auto | Plan used for the Codespaces usage quota. 'auto' reads plan.name from GitHub (needs the 'user' scope; falls back to Free). |
+| antigravity-codespaces.usage.monthlyCoreHours | 120 | Monthly included core-hours when usage.plan is 'custom'. |
+| antigravity-codespaces.usage.alertThresholds | [75, 90] | Show a notification when compute or storage usage crosses these percentages of the included quota (once per month each). Empty list disables alerts. |
+| antigravity-codespaces.usage.refreshMinutes | 10 | How often (minutes) to re-fetch usage from the GitHub billing API. GitHub updates the data hourly. |
+| antigravity-codespaces.usage.showSidebarLine | true | Show the compact usage line under the account picker in the sidebar. |
+| antigravity-codespaces.usage.preferredUnit | core-hours | Primary unit for the compute figure in the sidebar and Cloud Hub card. |
+| antigravity-codespaces.usage.monthlyStorageGb | 15 | Monthly included storage (GB-month) when usage.plan is 'custom'. |
+All 14 settings use the prefix antigravity-codespaces. Defaults and descriptions are taken from package.json in version 5.3.1.
+### Security and privacy
+- Authentication uses gh and the IDE's built-in GitHub sign-in. A personal access token, if you paste one, is kept in the IDE's SecretStorage.
+- Host keys are pinned on first use in ~/.antigravity-codespaces/known_hosts ; a changed key is rejected and reported.
+- No tokens or secrets are written to logs.
+- The extension talks only to GitHub. There is no telemetry server.
+### Limitations
+- Organization-owned codespaces have no free quota; their usage appears as “Billed to {org}”.
+- The VS Code Marketplace lists 4.3.0; 5.3.1 is on Open VSX and as a.vsix.
+- Editors that cannot open vscode-remote://ssh-remote+ windows need a manual connection with Copy SSH Command.
+- Browser-based IDEs such as Eclipse Theia or OpenVSCode Server are not supported, because they have no local SSH client.
+### Errors and alerts
+#### GitHub API and connection messages (5.3.1)
+Every GitHub API request has a 15-second timeout. When GitHub answers with a 5xx server error, the extension waits 5 seconds and retries once before it shows a message. Each message states what happened and why, and offers the buttons listed below.
+| Type | Level | Message | Buttons |
+| Timeout | Error | GitHub isn't responding (15s). The request took too long. Your network or GitHub may be slow. | Retry, Work offline, Details |
+| Server error | Error | GitHub is having trouble right now. GitHub returned a server error (status). We retried once. | Retry, GitHub Status, Details |
+| Offline | Warning | You're offline. Couldn't reach GitHub. Showing the last data we have. | Retry, Details |
+| Sign-in expired | Error | Your GitHub sign-in has expired. GitHub rejected the saved token. | Sign in with gh, Details |
+| Missing permission | Warning | A GitHub permission is missing. The reason names the missing scope. | Grant permission, Details |
+| Rate limit | Warning | GitHub rate limit reached. Try again after HH:MM. (when GitHub sends a reset time; otherwise “Wait a few minutes, then retry.”) | Retry, Details |
+| Other | Error | Something went wrong. The cleaned-up reason, without stack traces. | Retry, Details |
+Listing, starting, stopping, creating and deleting codespaces treat a 429 response, or a 403 response with x-ratelimit-remaining: 0, as a rate limit rather than a missing permission. The notification reads “GitHub API rate limit reached. Resets at HH:MM.” when GitHub sends a reset time, and “GitHub API rate limit reached. Wait a few minutes, then retry.” when it does not.
+A failed connect shows Couldn't open <codespace> in this IDE. with Run Setup Doctor, Copy SSH command and Details, and the card returns to its real state instead of showing “Connected”.
+#### Usage card messages (5.3.1)
+- Rate limit: when the billing API answers 429, or 403 with x-ratelimit-remaining: 0, the card shows GitHub rate limit reached. and, when GitHub sends a reset time, “Usage can refresh after <time>.” Without a reset time it says “Wait a few minutes, then refresh.”
+- Unexpected response: if the billing API returns data this version cannot read, the card shows Usage data unavailable (unexpected response). with the explanation “GitHub returned usage data in a format this version doesn't recognise.” and the buttons Retry and Details. It never shows 0 or a made-up figure in that case.
+- Last good data: when GitHub billing cannot be reached, the Cloud Hub keeps the last numbers and shows Usage is from the last successful refresh. with the time of that refresh.
+#### Alert levels and panel states
+Messages use four levels. Error (critical) shows a notification and a red banner. Warning shows an amber banner without a popup. Info uses the status bar or a quiet notification. Silent is written to the log only. Banners carry a text label as well as a colour, and a dismissed banner returns on the next refresh if the problem is still there.
+The Cloud Hub has five panel states: loading (skeleton cards), empty (“No codespaces yet.” with a create button), signed out (a single sign-in card), error with cached data (a banner reading “Showing data as of <time>.”, with each card tagged “Cached”, dimmed, and its actions disabled until a refresh succeeds), and partial (a banner for each account that failed to load, with Retry). The sidebar follows the same rules: cached cards are tagged, dimmed and disabled, and the signed-out sidebar shows a single card, “Sign in with the GitHub CLI to see and open your codespaces.”, with a Sign in with gh button.
+#### Other messages
+Every message below is produced by the extension's own code. Where a fix can be automated, the message carries a button for it.
+| Level | Message and cause | What to do |
+| Error | Exit code 255, “The process tried to write to a nonexistent pipe” The gh tunnel ended immediately. In practice this means gh is not signed in, the token lacks the codespace scope, the codespace is stopped, or gh is not on the IDE's PATH. | Run gh auth status . If the scope is missing, run gh auth refresh -h github.com -s codespace . Turn the codespace on, then run Test SSH Connectivity . The extension shows a fix button for the cause it detects. |
+| Error | Exit code 127, command not found Platform mismatch. The Remote-SSH extension treats the Linux codespace as a Windows or macOS host. | Set remote.SSH.remotePlatform["cs.<name>"] to "linux" . Since 5.1.0, Connect does this automatically for codespace hosts, and Setup Doctor repairs existing wrong entries. |
+| Error | GitHub CLI is not logged in No gh session exists for the account you picked. | Use the one-click fix, which opens a terminal with gh auth login -s codespace . You complete the sign-in yourself in the browser. |
+| Error | Token is missing the “codespace” scope gh is signed in, but its token cannot open SSH tunnels. | gh auth refresh -h github.com -s codespace |
+| Warning | The remote host key has changed Usually harmless: a rebuilt or recreated codespace presents a new key. Under accept-new , changed keys are rejected on purpose. | Use the fix to remove the old key from the extension's own known_hosts file, then reconnect. If you did not rebuild the codespace, stop and investigate. |
+| Warning | Connection timed out The codespace is still starting, or the network is slow or blocked. | Wait for the codespace to reach Available , then retry. Check any VPN or proxy. |
+| Warning | Connection refused The codespace is not running, or SSH is not available inside it. | Turn the codespace on. If it persists, rebuild the container. |
+| Warning | Usage needs permission. The billing API returned 403 or 404 because the token lacks the user scope. This affects analytics only, not connecting. | Click Grant access , or run Codespaces: Grant Usage Access (gh user scope) . It runs gh auth refresh -h github.com -s user . |
+| Info | Billed to {org} The codespace is paid for by an organization, so its usage is not in your personal quota. | Nothing to fix. Organization admins see this usage in the organization's billing settings. |
+| Warning | Usage unavailable The billing API failed for another reason. The message includes the reason and the gh command to try. | Retry with Codespaces: Refresh Usage . The extension never fills the gap with estimates. |
+| Info | Offline The network dropped after a successful fetch. | The last good numbers stay on screen with a note. They refresh when the connection returns. |
+| Warning | Connect does nothing No Remote-SSH extension is installed, or it is the wrong one for this IDE. | Run Setup Doctor . It lists what is missing and can install a compatible extension. In Windsurf use the built-in SSH. |
+| Warning | Wrong account's codespaces are shown Several gh accounts are signed in and a different one is active. | Run Switch GitHub Account . |
+| Error | Invalid Personal Access Token. Could not authenticate with GitHub. A pasted token was rejected. | Create a new token with the scopes you need and paste it again. It is stored in the IDE's SecretStorage. |
+| Error | Could not reach GitHub: <reason> A network error stopped the API call. | Check the connection and any proxy, then refresh. |
+### Commands
+The extension contributes 21 commands. Run them from the Command Palette. Quick Connect is also bound to Alt + C.
+- Open Cloud Hub Dashboard
+- Quick Connect to Codespace...
+- Open Quick Actions Menu
+- Test SSH Connectivity
+- Refresh
+- Switch GitHub Account
+- Create New Codespace
+- Sync SSH Config
+- Connect
+- Turn ON
+- Stop
+- Rebuild Container
+- Open in Browser
+- Copy SSH Command
+- Delete Codespace
+- Open Port in Browser
+- Login to GitHub Account
+- Codespaces: Setup Doctor
+- Reconnect to Last Codespace
+- Codespaces: Refresh Usage
+- Codespaces: Grant Usage Access (gh user scope)
+### Getting help
+Run Setup Doctor, copy its report, and open an [issue](https://github.com/Nir-Bhay/antigravity-codespaces/issues/new) with what you did, what you expected and what happened. Check the report for anything personal before you post it.
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-why-hard.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## Why GitHub Codespaces is hard outside VS Code
+By Nirbhay Hiwse · 21 October 2026 · 8 min read
+Short answer: GitHub's Codespaces extension and Microsoft's Remote-SSH extension are not on Open VSX, which most VS Code forks use. Each fork has its own Remote-SSH, the tunnel depends on a signed-in GitHub CLI with the codespace scope, and the editor has to be told that the codespace runs Linux.
+In VS Code, opening a codespace is one click. In Cursor, Antigravity or Windsurf the same task often ends with a cryptic exit code. The reasons are specific and fixable, and they are worth understanding before you start.
+### 1. Why can't forks install the official Codespaces extension?
+VS Code uses Microsoft's Visual Studio Marketplace. Most forks, including Cursor, Google Antigravity, Windsurf and VSCodium, install extensions from [Open VSX](https://open-vsx.org) instead. GitHub's own Codespaces extension and Microsoft's Remote-SSH extension are not published there. You can check this yourself: the Open VSX API returns not found for [GitHub/codespaces](https://open-vsx.org/api/GitHub/codespaces) and for [ms-vscode-remote/remote-ssh](https://open-vsx.org/api/ms-vscode-remote/remote-ssh).
+So the first thing a fork user loses is the button that does everything in VS Code. What remains is plain SSH, which works, but has to be configured by hand.
+### 2. Why does every fork have a different Remote-SSH?
+Without Microsoft's extension, each editor solves SSH its own way. Cursor bundles anysphere.remote-ssh. VSCodium and Kiro rely on the community jeanp413.open-remote-ssh. Windsurf ships its own SSH support, and [its documentation](https://docs.windsurf.com/windsurf/advanced) warns against installing other Remote-SSH extensions because they conflict. Trae and Positron have built-in Remote SSH. A setup guide written for one editor is often wrong for the next.
+### 3. Why isn't a codespace a normal SSH server?
+You cannot point SSH at a hostname and a key. GitHub exposes codespaces through the GitHub CLI, which opens the tunnel: gh codespace ssh --stdio runs as the SSH ProxyCommand. That means the editor's SSH client depends on gh being installed, on PATH and signed in, with a token that has the codespace scope. When any of that is missing, gh exits at once and the editor reports something like exit code 255, the process tried to write to a nonexistent pipe, which says nothing about the real cause.
+### 4. Why does the editor guess the wrong operating system?
+Remote-SSH extensions decide which shell to use from remote.SSH.remotePlatform. If that entry is missing or wrong, a Windows machine may try to run PowerShell commands on the Linux codespace. The result is exit code 127, command not found. Codespaces always run Linux, so the fix is a one-line setting, but you have to know it exists.
+### 5. How do several GitHub accounts make it worse?
+Many developers keep a personal account and a work account in gh. Which codespaces you see, which token opens the tunnel and which quota you are spending all depend on the active account. Switching it in one place and not another is a common source of “codespace not found”.
+### 6. Why do AI agents leave connections idle?
+An agent can run for a long time while you are not typing. Idle SSH connections are exactly the ones that routers and proxies drop. Without keepalive settings the agent's session ends mid-task.
+### What does the extension do about each one?
+| Problem | What Antigravity Codespaces Pro does |
+| Missing official extensions | Published on Open VSX, and as a .vsix for any editor. |
+| Different Remote-SSH per editor | Detects the installed one and uses its connect command. Setup Doctor installs a compatible one if none is found. |
+| gh tunnel failures | A preflight checks gh, sign-in, scope and active user before connecting, and offers a fix for each. |
+| Wrong platform | Sets remotePlatform to linux for codespace hosts automatically. |
+| Multiple accounts | One switcher; the hub, SSH hosts and usage follow it. |
+| Idle drops | Writes ServerAliveInterval 30 and ServerAliveCountMax 10 by default. |
+Next: the step-by-step guides for [Antigravity](https://nir-bhay.github.io/antigravity-codespaces/guide-antigravity.html), [Cursor](https://nir-bhay.github.io/antigravity-codespaces/guide-cursor.html) and [Windsurf](https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html), and the [Remote-SSH comparison](https://nir-bhay.github.io/antigravity-codespaces/guide-remote-ssh.html).
+### Frequently asked questions
+**Q:** Is GitHub's Codespaces extension available on Open VSX?
+A: No. GitHub's Codespaces extension and Microsoft's Remote-SSH extension are not published on Open VSX, which Cursor, Google Antigravity, Windsurf and VSCodium use.
+**Q:** Why do I get exit code 127 when connecting?
+A: The Remote-SSH extension guessed the wrong operating system from remote.SSH.remotePlatform. Codespaces always run Linux, so the fix is to set that platform to Linux.
+**Q:** Why does gh exit immediately when the editor connects?
+A: The tunnel runs gh codespace ssh --stdio as the SSH ProxyCommand, so gh must be installed, on PATH and signed in with a token that has the codespace scope.
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-antigravity.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## GitHub Codespaces in Google Antigravity: a step-by-step setup
+By Nirbhay Hiwse · 21 October 2026 · 6 min read
+Short answer: Install the GitHub CLI, run gh auth login -s codespace, install Antigravity Codespaces Pro from Open VSX, use Antigravity's own remote support or jeanp413.open-remote-ssh, run Codespaces: Setup Doctor, then press Alt+C and pick a codespace.
+This guide takes you from a fresh Google Antigravity install to an open codespace. It takes about ten minutes, most of it waiting for installs.
+### What do you need before you start?
+- Google Antigravity installed and up to date.
+- A GitHub account that can create codespaces, with at least one codespace or a repository to create one from.
+- An OpenSSH client. On Windows 10 and 11 it is usually present; check with ssh -V.
+### What is remote development in Google Antigravity with Codespaces?
+Remote development in Google Antigravity means the editor runs on your machine while the code, terminal and build run in a codespace on GitHub. The steps below set that up over SSH.
+### Step 1: How do I install the GitHub CLI?
+```
+# Windows
+winget install --id GitHub.cli --source winget
+# macOS
+brew install gh
+```
+On Linux, use GitHub's official package repositories as described in the [gh install guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md). Restart Google Antigravity afterwards so it sees the new PATH.
+### Step 2: How do I sign in with the codespace scope?
+```
+gh auth login -s codespace
+gh auth status   # should list 'codespace' under Token scopes
+```
+### Step 3: How do I install the extension?
+Open the Extensions view, search for Antigravity Codespaces and install the one published by nirbhay-hiwse. Or use the command line:
+```
+antigravity --install-extension nirbhay-hiwse.antigravity-codespaces
+```
+### Step 4: Which Remote-SSH should I use?
+Microsoft's Remote-SSH is not available in Antigravity. Use Antigravity's own remote support, or install jeanp413.open-remote-ssh from Open VSX. Setup Doctor can install it for you.
+### Step 5: How do I run Setup Doctor?
+Open the Command Palette and run Codespaces: Setup Doctor. Fix anything it marks in red; each item has a button.
+### Step 6: How do I connect?
+Press Alt + C, choose a codespace, and a new window opens inside it. If it is stopped, turn it on from the Cloud Hub first.
+### What if it does not connect?
+- Exit code 255: run gh auth status ; usually the scope is missing or the codespace is stopped.
+- Exit code 127: the platform is wrong; Setup Doctor sets it to Linux.
+- Anything else: see [Errors and alerts](https://nir-bhay.github.io/antigravity-codespaces/docs.html#errors).
+Other editors: [Windsurf](https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html) and the [Remote-SSH comparison](https://nir-bhay.github.io/antigravity-codespaces/guide-remote-ssh.html).
+### Frequently asked questions
+**Q:** Which scope does the GitHub CLI need?
+A: The codespace scope. Run gh auth login -s codespace, then check that gh auth status lists codespace under Token scopes.
+**Q:** What does exit code 255 mean?
+A: Usually the codespace scope is missing or the codespace is stopped. Run gh auth status to check.
+**Q:** What does exit code 127 mean?
+A: The platform is wrong. Codespaces run Linux, and Setup Doctor sets the platform to Linux.
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-cursor.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## GitHub Codespaces in Cursor: a step-by-step setup
+By Nirbhay Hiwse · 21 October 2026 · 6 min read
+Short answer: Install the GitHub CLI, run gh auth login -s codespace, install Antigravity Codespaces Pro from Open VSX, let it use Cursor's bundled anysphere.remote-ssh, run Codespaces: Setup Doctor, then press Alt+C and pick a codespace.
+This guide takes you from a fresh Cursor install to an open codespace. It takes about ten minutes, most of it waiting for installs.
+### What do you need before you start?
+- Cursor installed and up to date.
+- A GitHub account that can create codespaces, with at least one codespace or a repository to create one from.
+- An OpenSSH client. On Windows 10 and 11 it is usually present; check with ssh -V.
+### Step 1: How do I install the GitHub CLI?
+```
+# Windows
+winget install --id GitHub.cli --source winget
+# macOS
+brew install gh
+```
+On Linux, use GitHub's official package repositories as described in the [gh install guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md). Restart Cursor afterwards so it sees the new PATH.
+### Step 2: How do I sign in with the codespace scope?
+```
+gh auth login -s codespace
+gh auth status   # should list 'codespace' under Token scopes
+```
+### Step 3: How do I install the extension?
+Open the Extensions view, search for Antigravity Codespaces and install the one published by nirbhay-hiwse. Or use the command line:
+```
+cursor --install-extension nirbhay-hiwse.antigravity-codespaces
+```
+### Step 4: Which Remote-SSH should I use?
+Cursor bundles its own Remote SSH ( anysphere.remote-ssh ). The extension detects it and uses it, so there is nothing to install. Cursor's extension catalogue is backed by Open VSX, as [Cursor's documentation](https://cursor.com/help/customization/extensions) explains.
+### Step 5: How do I run Setup Doctor?
+Open the Command Palette and run Codespaces: Setup Doctor. Fix anything it marks in red; each item has a button.
+### Step 6: How do I connect?
+Press Alt + C, choose a codespace, and a new window opens inside it. If it is stopped, turn it on from the Cloud Hub first.
+### What if it does not connect?
+- Exit code 255: run gh auth status ; usually the scope is missing or the codespace is stopped.
+- Exit code 127: the platform is wrong; Setup Doctor sets it to Linux.
+- Anything else: see [Errors and alerts](https://nir-bhay.github.io/antigravity-codespaces/docs.html#errors).
+Other editors: [Windsurf](https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html) and the [Remote-SSH comparison](https://nir-bhay.github.io/antigravity-codespaces/guide-remote-ssh.html).
+### Frequently asked questions
+**Q:** Which scope does the GitHub CLI need?
+A: The codespace scope. Run gh auth login -s codespace, then check that gh auth status lists codespace under Token scopes.
+**Q:** What does exit code 255 mean?
+A: Usually the codespace scope is missing or the codespace is stopped. Run gh auth status to check.
+**Q:** What does exit code 127 mean?
+A: The platform is wrong. Codespaces run Linux, and Setup Doctor sets the platform to Linux.
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-ai-agents.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## Keeping long AI agent sessions alive on a codespace
+By Nirbhay Hiwse · 21 October 2026 · 5 min read
+Short answer: Two separate timers end long sessions. The network drops an idle SSH connection, which the keepalive the extension writes prevents (ServerAliveInterval 30, ServerAliveCountMax 10). GitHub stops an inactive codespace after its idle timeout, which you raise in your Codespaces settings on GitHub.
+Agents in Cursor or Antigravity can work for a long stretch without any input from you. Two separate timers can end that work early, and they need different fixes.
+### Why does the network drop an idle connection?
+Routers, VPNs and corporate proxies close TCP connections that carry no traffic for a while. An agent that is thinking, or waiting on a long build, can look idle from the network's point of view. SSH keepalive sends a small packet at a fixed interval so the connection never looks idle.
+The extension writes these lines into each codespace host block:
+```
+ServerAliveInterval 30
+ServerAliveCountMax 10
+```
+That is a probe every 30 seconds, and the client gives up only after 10 unanswered probes, roughly five minutes of real silence. Both values are settings ( serverAliveInterval, serverAliveCountMax ). Run Sync SSH Config after changing them.
+### Why does GitHub stop an inactive codespace?
+Independently of SSH, GitHub stops a codespace after a period of inactivity. That timeout is a GitHub setting, not an SSH one, and the extension does not change it. You can raise it in [your Codespaces settings](https://github.com/settings/codespaces) on GitHub. A longer timeout also means more billed compute if you forget a codespace, so pick a value you are comfortable paying for.
+### What should I check before a long run?
+- Keep the default keepalive, or shorten the interval on flaky networks.
+- Set a GitHub idle timeout that covers your longest agent run.
+- Watch the usage card in the Cloud Hub so a long run does not surprise you at the end of the month.
+- If a session still drops, use Reconnect to Last Codespace ; the codespace keeps your files.
+### Frequently asked questions
+**Q:** What keepalive does the extension write?
+A: ServerAliveInterval 30 and ServerAliveCountMax 10: a probe every 30 seconds, and the client gives up only after 10 unanswered probes, roughly five minutes of real silence.
+**Q:** Does the extension change GitHub's idle timeout?
+A: No. The idle timeout is a GitHub setting. You can raise it in your Codespaces settings on GitHub.
+**Q:** What if a session still drops?
+A: Use Reconnect to Last Codespace. The codespace keeps your files.
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-quota.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## Codespaces quotas explained: core-hours and GB-month
+By Nirbhay Hiwse · 21 October 2026 · 7 min read
+Short answer: Compute and storage are separate monthly quotas: 120 core-hours and 15 GB-month on GitHub Free, 180 core-hours and 20 GB-month on GitHub Pro. Core-hours scale with machine size, so a 4-core codespace gets 30 hours a month on Free, and storage is charged while a codespace exists, even when it is stopped.
+Most surprises on a Codespaces bill come from two misunderstandings: that hours are wall-clock hours, and that stopped codespaces are free. Neither is true.
+### What are the two Codespaces quotas?
+Each month GitHub includes a compute quota and a storage quota for personal accounts. They are tracked separately and one cannot be used to pay for the other.
+| Plan | Compute | Storage |
+| GitHub Free | 120 core-hours | 15 GB-month |
+| GitHub Pro | 180 core-hours | 20 GB-month |
+Organization-owned codespaces do not use these quotas; they are billed to the organization. Source: [About billing for GitHub Codespaces](https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-codespaces/about-billing-for-github-codespaces).
+### What is a core-hour?
+A core-hour is one CPU core running for one hour. The machine size multiplies everything:
+| Machine | Core-hours per hour | Hours from 120 core-hours | Hours from 180 core-hours |
+| 2-core | 2 | 60 | 90 |
+| 4-core | 4 | 30 | 45 |
+| 8-core | 8 | 15 | 22.5 |
+| 16-core | 16 | 7.5 | 11.25 |
+| 32-core | 32 | 3.75 | 5.6 |
+So on GitHub Free, a 4-core codespace gives you 30 hours a month, not 120.
+### Does storage count when a codespace is stopped?
+Storage is charged for as long as a codespace exists, running or stopped. A GB-month is one gigabyte kept for a whole month. A 10 GB codespace kept for half a month uses about 5 GB-month. Deleting codespaces you no longer need is the only way to stop the meter.
+### How do I see the real numbers?
+The Cloud Hub reads these figures from GitHub's billing API for the active account, which needs the user scope. It shows compute and storage on separate bars and never estimates when the API cannot be read. See [Usage analytics](https://nir-bhay.github.io/antigravity-codespaces/docs.html#usage).
+### Frequently asked questions
+**Q:** How many hours does a 4-core codespace get on GitHub Free?
+A: 30 hours a month, because it uses 4 core-hours per hour from the 120 core-hour quota.
+**Q:** Are stopped codespaces free?
+A: No. Storage is charged for as long as a codespace exists, running or stopped. Deleting codespaces you no longer need is the only way to stop the meter.
+**Q:** Do organization-owned codespaces use these quotas?
+A: No. Organization-owned codespaces are billed to the organization.
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## GitHub Codespaces in Windsurf (now Devin Desktop): what works and what to avoid
+By Nirbhay Hiwse · 21 October 2026 · 5 min read
+Short answer: Windsurf (now Devin Desktop) has its own built-in SSH. Windsurf's documentation now uses the name Devin Desktop; whether the app itself has been renamed is not confirmed. The editor supports Linux hosts over SSH, and its documentation asks you not to install Microsoft's Remote - SSH or open-remote-ssh because they conflict. Codespaces run Linux and are reached through the GitHub CLI, so install gh and this extension, add no other SSH extension, and keep the manual SSH command as a fallback.
+### How does Windsurf handle SSH?
+Windsurf's [advanced configuration documentation](https://docs.windsurf.com/windsurf/advanced) (the page now carries the Devin Desktop name) states that Windsurf supports SSH into Linux-based remote hosts only, and that the usual Microsoft “Remote - SSH” extension and the open-remote-ssh extension will not work and should not be installed, because they conflict with its own support.
+### Where do codespaces fit?
+Codespaces run Linux, which suits Windsurf's SSH. The connection goes through gh codespace ssh --stdio as an OpenSSH ProxyCommand, as described in the [GitHub CLI manual](https://cli.github.com/manual/gh_codespace_ssh). GitHub's own Codespaces extension is not available here: the Open VSX API returns not found for [GitHub/codespaces](https://open-vsx.org/api/GitHub/codespaces).
+### What has not been confirmed?
+Windsurf's documentation does not say whether its SSH honours a custom ProxyCommand in ~/.ssh/config. This guide therefore makes no claim that Quick Connect works in Windsurf. If it does not, use Copy SSH Command and connect from a terminal, or open the host cs.<codespace-name> from Windsurf's remote menu.
+### How do I set it up?
+- Install the GitHub CLI and run gh auth login -s codespace.
+- Install the extension: windsurf --install-extension nirbhay-hiwse.antigravity-codespaces.
+- Do not install any other Remote-SSH extension.
+- Run Codespaces: Setup Doctor. From 5.3.1 it recognises Windsurf by its built-in extension codeium.windsurf-remote-openssh, or by “windsurf” or “devin” in the app name. If the built-in SSH is not enabled, it says so and points to that extension rather than to open-remote-ssh.
+### FAQ
+**Q:** Is Windsurf now called Devin Desktop?
+A: Windsurf (now Devin Desktop, in its documentation): the [advanced configuration page](https://docs.windsurf.com/windsurf/advanced) is titled “Devin Desktop - Advanced”. The documentation uses the new name; this guide does not claim that the app itself has been renamed.
+**Q:** Do I need another Remote-SSH extension in Windsurf (now Devin Desktop)?
+A: No. Use the built-in SSH and do not install Microsoft Remote-SSH or open-remote-ssh, because they conflict with it.
+### Related
+- [Remote-SSH in VS Code forks, compared](https://nir-bhay.github.io/antigravity-codespaces/guide-remote-ssh.html)
+- [Why Codespaces is hard outside VS Code](https://nir-bhay.github.io/antigravity-codespaces/guide-why-hard.html)
+- [Install and editor table](https://nir-bhay.github.io/antigravity-codespaces/docs.html#install) and [Errors and alerts](https://nir-bhay.github.io/antigravity-codespaces/docs.html#errors)
+
+# https://nir-bhay.github.io/antigravity-codespaces/guide-remote-ssh.html
+
+[Home](https://nir-bhay.github.io/antigravity-codespaces/index.html) / [Guides](https://nir-bhay.github.io/antigravity-codespaces/guides.html)
+## Remote-SSH in VS Code forks, compared
+By Nirbhay Hiwse · 21 October 2026 · 6 min read
+Short answer: Microsoft's Remote - SSH is licensed for use with Microsoft Visual Studio Code and is not on Open VSX. Cursor bundles anysphere.remote-ssh, Windsurf has built-in SSH, and VSCodium and Kiro use the MIT-licensed jeanp413.open-remote-ssh.
+### Why can forks not use Microsoft's extension?
+The [Remote - SSH licence](https://ms-vscode-remote.gallerycdn.vsassets.io/extensions/ms-vscode-remote/remote-ssh/0.129.2026100915/1791559318634/Microsoft.VisualStudio.Services.Content.License) allows use of the software “with each validly licensed copy of Microsoft Visual Studio Code”. The [VS Code Remote Development FAQ](https://code.visualstudio.com/docs/remote/faq) adds that the Remote Development extensions are not open source. The extension is also not on Open VSX: the API returns not found for [ms-vscode-remote/remote-ssh](https://open-vsx.org/api/ms-vscode-remote/remote-ssh) (checked on 21 October 2026).
+### What is the open alternative?
+[jeanp413.open-remote-ssh](https://open-vsx.org/extension/jeanp413/open-remote-ssh) is published on Open VSX under the MIT licence ( [source](https://github.com/jeanp413/open-remote-ssh) ). Its README notes that on some editors it depends on a proposed API that must be enabled in argv.json.
+### Which Remote-SSH does each editor use?
+| Editor | Remote-SSH | Source |
+| VS Code | ms-vscode-remote.remote-ssh | [Microsoft licence](https://ms-vscode-remote.gallerycdn.vsassets.io/extensions/ms-vscode-remote/remote-ssh/0.129.2026100915/1791559318634/Microsoft.VisualStudio.Services.Content.License) |
+| Cursor | anysphere.remote-ssh , bundled | [anysphere/open-remote-ssh](https://github.com/anysphere/open-remote-ssh) |
+| Windsurf | Built-in; do not add others | [Windsurf docs](https://docs.windsurf.com/windsurf/advanced) |
+| VSCodium, Kiro | jeanp413.open-remote-ssh | [IDE setup guide](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/docs/IDE_SETUP.md) |
+| Google Antigravity | Built-in remote support if present, otherwise jeanp413.open-remote-ssh | [IDE setup guide](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/docs/IDE_SETUP.md) |
+| Trae, Positron | Built-in Remote SSH | [IDE setup guide](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/docs/IDE_SETUP.md) |
+### What does Antigravity Codespaces Pro need from them?
+Only the ability to open vscode-remote://ssh-remote+<host> for a host defined in ~/.ssh/config. Setup Doctor recognises jeanp413.open-remote-ssh, ms-vscode-remote.remote-ssh, vsx-remote-ssh.vsx-remote-ssh, anysphere.remote-ssh, and any extension whose ID contains remote-ssh ( [systemDoctor.js](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/src/systemDoctor.js) ).
+### Which one should I use?
+The one your editor ships or recommends. Installing two Remote-SSH extensions in the same editor can conflict, which Windsurf documents explicitly.
+### Related
+- [Cursor setup](https://nir-bhay.github.io/antigravity-codespaces/guide-cursor.html), [Antigravity setup](https://nir-bhay.github.io/antigravity-codespaces/guide-antigravity.html) and [Windsurf](https://nir-bhay.github.io/antigravity-codespaces/guide-windsurf.html)
+- [Install and editor table](https://nir-bhay.github.io/antigravity-codespaces/docs.html#install)
+
+# https://nir-bhay.github.io/antigravity-codespaces/index.html#faq
+
+## Frequently asked questions
+### Questions developers ask.
+**Q:** How do I connect Cursor to GitHub Codespaces?
+A: Install the GitHub CLI and run gh auth login -s codespace. Install Antigravity Codespaces Pro from Open VSX in Cursor; Cursor's bundled anysphere.remote-ssh is used automatically. Run Codespaces: Setup Doctor, then press Alt+C and pick a codespace.
+**Q:** Does it work in Google Antigravity?
+A: Yes. Antigravity installs extensions from Open VSX. Search for Antigravity Codespaces Pro, install it, and connect through Antigravity's remote support or the Open Remote - SSH extension.
+**Q:** Why does the official GitHub Codespaces extension not work in Cursor or Antigravity?
+A: These editors install extensions from Open VSX, and GitHub's Codespaces extension and Microsoft's Remote-SSH extension are not published there. Antigravity Codespaces Pro is published on Open VSX and connects over plain SSH through the GitHub CLI instead.
+**Q:** Which Remote-SSH extension should I use?
+A: Cursor: anysphere.remote-ssh (bundled). VS Code: ms-vscode-remote.remote-ssh. VSCodium and Kiro: jeanp413.open-remote-ssh. Windsurf: its built-in SSH only; do not install another Remote-SSH extension.
+**Q:** Why does my codespace disconnect during long AI agent runs?
+A: Either the network drops an idle SSH connection, or GitHub stops the codespace after its idle timeout. The extension writes SSH keepalive settings (ServerAliveInterval 30, ServerAliveCountMax 10) for the first; the second is a setting in your GitHub Codespaces preferences.
+**Q:** Which version is on the VS Code Marketplace?
+A: The Marketplace currently has an older version (4.3.0). The latest, 5.3.1, is on Open VSX and as a.vsix in the GitHub release.
+**Q:** Is it free?
+A: The extension is free and open source under MIT. "Pro" is part of the name, not a paid plan. Codespaces usage itself is billed by GitHub to your account or organization.
+**Q:** Where do the usage numbers come from?
+A: Only from GitHub's billing API for the active gh account, which needs the user scope. If the API fails, the extension shows "Usage unavailable" with the reason. It never estimates.
