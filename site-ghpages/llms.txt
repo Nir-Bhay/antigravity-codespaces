@@ -1,0 +1,23 @@
+# Antigravity Codespaces Pro
+
+> Free, MIT-licensed extension by Nirbhay Hiwse that connects VS Code-based editors (Google Antigravity, Cursor, VS Code, Windsurf, VSCodium, Kiro) to GitHub Codespaces over SSH through the GitHub CLI. Extension ID: nirbhay-hiwse.antigravity-codespaces. Latest version 5.2.0 on Open VSX and GitHub releases; the VS Code Marketplace lists 4.3.0.
+
+## Docs
+- [Documentation](https://nir-bhay.github.io/antigravity-codespaces/docs.html): install, sign-in scopes, Cloud Hub, SSH config, keepalive, usage analytics, settings and limitations
+- [Errors and alerts](https://nir-bhay.github.io/antigravity-codespaces/docs.html#errors): every error message the extension shows, with cause and fix
+- [IDE setup guide](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/docs/IDE_SETUP.md): per-IDE marketplace, CLI and Remote-SSH extension, with sources
+- [Agent setup instructions](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/AGENT_SETUP.md): steps an AI coding agent follows to install and configure the extension
+
+## Guides
+- [Why Codespaces is hard outside VS Code](https://nir-bhay.github.io/antigravity-codespaces/guide-why-hard.html): Open VSX gap, Remote-SSH differences, exit codes 255 and 127
+- [Codespaces in Google Antigravity](https://nir-bhay.github.io/antigravity-codespaces/guide-antigravity.html): step-by-step SSH setup
+- [Codespaces in Cursor](https://nir-bhay.github.io/antigravity-codespaces/guide-cursor.html): step-by-step SSH setup with anysphere.remote-ssh
+- [Keeping AI agent sessions alive](https://nir-bhay.github.io/antigravity-codespaces/guide-ai-agents.html): SSH keepalive and codespace idle timeout
+- [Quotas explained](https://nir-bhay.github.io/antigravity-codespaces/guide-quota.html): core-hours, GB-month and machine size
+
+## Source
+- [GitHub repository](https://github.com/Nir-Bhay/antigravity-codespaces): source code, issues and releases
+- [Open VSX listing](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces): install page
+
+## Optional
+- [Changelog](https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/CHANGELOG.md): release history
