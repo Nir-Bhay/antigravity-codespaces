@@ -216,7 +216,7 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | `serverAliveInterval` | `30` | Interval in seconds for SSH keepalive pings (prevents disconnects) |
 | `serverAliveCountMax` | `10` | Maximum missed keepalive pings before considering connection dropped |
 | `defaultRemoteFolder` | `/workspaces/${repo}` | Default folder to open on remote connection (`${repo}` or `${name}`) |
-| `strictHostKeyChecking` | `accept-new` | Host key mode written as `StrictHostKeyChecking`. `accept-new` stores new keys and rejects changes. `yes` asks every time. `no` skips verification |
+| `strictHostKeyChecking` | `accept-new` | Host key mode written as `StrictHostKeyChecking`. `accept-new` stores new keys and rejects changes. `yes` only connects to hosts whose key is already saved. `no` skips verification |
 | `sshLogLevel` | `error` | SSH verbosity written as `LogLevel`. `error` (default) is `LogLevel ERROR`. Also `quiet`, `info`, and `verbose` |
 
 ---
