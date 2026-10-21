@@ -1147,6 +1147,15 @@ function ok(name, fn) {
         assert.ok(!/Bearer|token/i.test(us.toJson(u)));
         assert.ok(Math.abs(j.repositories.reduce((t, r) => t + r.amount, 0) - 7.42) < 0.02);
     });
+    await ok('toCsv neutralises formula injection (= + - @ tab CR) but keeps numbers', () => {
+        const row = (repo) => ({ date: '2026-10-01', repository: repo, sku: 's', unitType: 'u', quantity: -1.5, coreHours: null, gbMonths: null, grossAmount: 0, discountAmount: -0.2, netAmount: 0 });
+        const cell = (repo) => us.toCsv({ rows: [row(repo)] }).split('\r\n')[1];
+        assert.ok(cell('=HYPERLINK("x")').startsWith('2026-10-01,"\'=HYPERLINK(""x"")"'));
+        for (const p of ['+1', '-1', '@SUM(A1)', '\tx']) assert.ok(cell(p).split(',')[1].startsWith("'" + p[0]), p);
+        assert.ok(cell('\rx').split(',')[1].startsWith('"\'\r'));
+        assert.strictEqual(cell('repo-a').split(',')[1], 'repo-a');
+        assert.ok(cell('repo-a').includes(',-1.5,'), 'numeric negatives untouched');
+    });
     await ok('pendingAlerts: configurable thresholds, once per month/quota, not for closed months', () => {
         const u = { mode: 'live', isCurrent: true, login: 'octocat', period: { year: 2026, month: 10 }, compute: { used: 140, quota: 180 }, storage: { used: 19, quota: 20 } };
         const a = us.pendingAlerts(u, [75, 90], {});

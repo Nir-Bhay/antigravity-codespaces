@@ -367,7 +367,9 @@ function pendingAlerts(u, thresholds, shown = {}) {
 
 function csvCell(v) {
     if (v == null) return '';
-    const s = String(v);
+    let s = String(v);
+    // Formula-injection guard: text starting with = + - @ tab or CR is prefixed with '. Numbers are left as numbers.
+    if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
