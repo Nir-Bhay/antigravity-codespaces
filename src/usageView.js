@@ -18,7 +18,25 @@ function fmtDate(iso) {
 }
 function n1(v) { return (Math.round((Number(v) || 0) * 10) / 10).toString(); }
 function money(v) { return '$' + (Number(v) || 0).toFixed(2); }
-function hasData(u) { return !!(u && u.stats && (u.mode === 'live' || u.mode === 'estimated')); }
+function hasData(u) { return !!(u && u.stats && u.mode === 'live'); }
+function levelOf(used, quota) { const p = quota > 0 ? (used / quota) * 100 : 0; return p >= 90 ? 'red' : p >= 75 ? 'amber' : 'ok'; }
+function pctOf(used, quota) { return quota > 0 ? Math.min(100, (used / quota) * 100) : 0; }
+/** Two separate quota bars (compute, storage). Quotas are not interchangeable, so no combined total. */
+function quotaBarsHtml(u) {
+    const c = u.compute || { used: u.stats.used, quota: u.stats.quota };
+    const st = u.storage || {};
+    const row = (label, used, quota, unit, amount, value) => `<div class="usage-qrow"><div class="usage-qhead"><span class="usage-qlabel">${label}</span><span class="usage-qfig"><b>${n1(used)}</b> / ${quota} ${unit}${amount != null && value != null ? ` <small>(${money(amount)} of ${money(value)})</small>` : ''}</span></div><div class="usage-bar"><div class="usage-fill ${levelOf(used, quota)}" style="width:${pctOf(used, quota)}%"></div></div></div>`;
+    return row('Compute', c.used, c.quota, 'core-hrs', c.amount, c.quotaValue)
+        + (st.used != null ? row('Storage', st.used, st.quota, 'GB-month', st.amount, st.quotaValue) : '');
+}
+function billingLineHtml(u) {
+    const d = u.dollars;
+    if (!d) return '';
+    return `<div class="usage-muted">Billing this cycle: ${money(d.consumed)} consumed · −${money(d.discount)} included discount · <b>${money(d.billable)} billable</b></div>`;
+}
+function errorBodyHtml(u) {
+    return `<div class="usage-hero-figure">Usage unavailable <small>${escapeHtml(u.error || 'Unknown error')}</small></div>${u.fix ? `<div class="usage-muted">Fix: <code>${escapeHtml(u.fix)}</code></div>` : ''}`;
+}
 function daysLeftShort(s) {
     if (!s) return '—';
     if (s.daysLeftLabel.startsWith('about')) return '~' + Math.max(0, Math.floor(s.daysLeft)) + ' days left';
@@ -53,8 +71,7 @@ function sidebarSummaryHtml(u, nonce) {
     if (!u) return '';
     const acc = escapeHtml(u.account);
     const plan = u.plan ? ` · ${escapeHtml(u.plan.label)}` : '';
-    const tags = (u.mode === 'estimated' ? `<span class="usage-mini-tag" title="${escapeHtml(u.estimatedReason || 'Estimated')}">Estimated</span>` : '')
-        + (u.offline ? `<span class="usage-mini-tag" title="Network unavailable">offline · ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '');
+    const tags = (u.offline ? `<span class="usage-mini-tag" title="Network unavailable">offline · ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '');
     const top = `<div class="usage-mini-top"><span>Usage${plan}</span>${tags}</div>`;
     let body;
     if (u.mode === 'needsPermission') {
@@ -66,7 +83,7 @@ function sidebarSummaryHtml(u, nonce) {
         body = `<div class="usage-mini-bar"><div class="usage-mini-fill ${s.level}" style="width:${Math.min(100, s.pct)}%"></div></div>
 <div class="usage-mini-line">${n1(s.used)} / ${s.quota} core-hrs · ${escapeHtml(daysLeftShort(s))}</div>`;
     } else {
-        body = `<div class="usage-mini-line">Usage unavailable</div>`;
+        body = `<div class="usage-mini-line" title="${escapeHtml(u.error || '')}">Usage unavailable${u.status ? ' (' + escapeHtml(String(u.status)) + ')' : ''}</div>`;
     }
     return `<style nonce="${nonce}">${SIDEBAR_CSS}</style><div class="usage-mini" data-usage-open="${acc}" title="Open Codespaces usage in Cloud Hub">${top}${body}</div>`;
 }
@@ -90,6 +107,7 @@ const HUB_CSS = `
 .usage-fill{height:100%;background:var(--hub-accent);border-radius:3px}
 .usage-fill.amber{background:var(--hub-warning)}
 .usage-fill.red{background:var(--hub-danger)}
+.usage-qrow{display:flex;flex-direction:column;gap:3px;max-width:560px}.usage-qhead{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--hub-text-main)}.usage-qlabel{font-weight:600;color:var(--hub-text-muted)}.usage-qfig small{color:var(--hub-text-muted)}.usage-hero code,.usage-page code{font-family:var(--mono-font);font-size:11px;background:var(--hub-accent-soft);padding:1px 5px;border-radius:4px}
 .usage-hero-figure{font-size:15px;font-weight:700;color:var(--hub-text-main)}
 .usage-hero-figure small{font-size:12px;font-weight:500;color:var(--hub-text-muted)}
 .usage-hero-side{display:flex;gap:22px;flex-shrink:0}
@@ -103,7 +121,7 @@ const HUB_CSS = `
 .main-canvas.show-usage > .usage-page{display:flex}
 .usage-panel{background:var(--hub-bg-card);border:1px solid var(--hub-border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-card)}
 .usage-panel h3{font-size:12px;font-weight:600;color:var(--hub-text-muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 10px}
-.usage-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.usage-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}
 .usage-tile{background:var(--hub-bg-card);border:1px solid var(--hub-border);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:2px}
 .usage-tile .kpi-value{font-size:20px}
 .usage-table{width:100%;border-collapse:collapse;font-size:12px}
@@ -116,8 +134,7 @@ const HUB_CSS = `
 `;
 
 function tagsHtml(u) {
-    return (u.mode === 'estimated' ? `<span class="usage-tag" title="${escapeHtml(u.estimatedReason || 'Estimated')}">Estimated</span>` : '')
-        + (u.offline ? `<span class="usage-tag off">offline · last updated ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '');
+    return (u.offline ? `<span class="usage-tag off">offline · last updated ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '');
 }
 
 /** Full-width usage card shown above the Cloud Hub KPI grid. */
@@ -132,13 +149,14 @@ function hubUsageCardHtml(u, icon = '') {
         return `<section class="usage-hero" id="usageHero">${iconBox}<div class="usage-hero-main">${head}<div class="usage-hero-figure">Billed to ${escapeHtml((u.orgBilled || []).join(', ') || 'organization')}</div></div></section>`;
     }
     if (!hasData(u)) {
-        return `<section class="usage-hero" id="usageHero">${iconBox}<div class="usage-hero-main">${head}<div class="usage-hero-figure">Usage unavailable <small>${escapeHtml(u.error || '')}</small></div></div></section>`;
+        return `<section class="usage-hero" id="usageHero">${iconBox}<div class="usage-hero-main">${head}${errorBodyHtml(u)}</div></section>`;
     }
     const s = u.stats;
     return `<section class="usage-hero" id="usageHero" title="Open usage details">${iconBox}
 <div class="usage-hero-main">${head}
-<div class="usage-bar"><div class="usage-fill ${s.level}" style="width:${Math.min(100, s.pct)}%"></div></div>
-<div class="usage-hero-figure">${n1(s.used)} / ${s.quota} <small>core-hrs this cycle · resets ${escapeHtml(fmtDate(u.resetDate))}</small></div></div>
+${quotaBarsHtml(u)}
+<div class="usage-muted">Resets ${escapeHtml(fmtDate(u.resetDate))}</div>
+${billingLineHtml(u)}</div>
 <div class="usage-hero-side">
 <div class="usage-stat"><span class="kpi-label">HOURS LEFT</span><span class="kpi-value">${n1(s.remaining)}</span></div>
 <div class="usage-stat"><span class="kpi-label">DAYS LEFT</span><span class="kpi-value" title="${escapeHtml(s.daysLeftLabel)}${s.avgPerDay ? ' at ' + n1(s.avgPerDay) + ' core-hrs/day' : ''}">${escapeHtml(daysLeftValue(s))}</span></div>
@@ -147,7 +165,7 @@ function hubUsageCardHtml(u, icon = '') {
 
 /** Value for the existing Storage Tier KPI card. */
 function storageTierText(u) {
-    if (hasData(u) && u.storage && u.storage.quota) return `${n1(u.storage.used)} / ${u.storage.quota} GB-month`;
+    if (hasData(u) && u.storage && u.storage.quota && u.storage.used != null) return `${n1(u.storage.used)} / ${u.storage.quota} GB-month`;
     return '15 GB Free Tier';
 }
 
@@ -181,7 +199,7 @@ function hubUsagePageHtml(u) {
         return `<section class="usage-page" id="usagePage">${head(title)}<div class="usage-panel" style="display:flex;justify-content:space-between;align-items:center;gap:12px;"><div><b>Usage needs permission.</b> <span class="usage-muted">GitHub's billing API needs the "user" scope for ${escapeHtml(u.account)}.</span></div><button class="btn-new-cs" data-usage-grant="${escapeHtml(u.account)}">Grant access</button></div></section>`;
     }
     if (u.mode === 'orgBilled' || !hasData(u)) {
-        return `<section class="usage-page" id="usagePage">${head(title)}<div class="usage-panel">${u.mode === 'orgBilled' ? 'Billed to ' + escapeHtml((u.orgBilled || []).join(', ')) : 'Usage unavailable' + (u.error ? ': ' + escapeHtml(u.error) : '')}</div></section>`;
+        return `<section class="usage-page" id="usagePage">${head(title)}<div class="usage-panel">${u.mode === 'orgBilled' ? 'Billed to ' + escapeHtml((u.orgBilled || []).join(', ')) : '<b>Usage unavailable.</b> ' + escapeHtml(u.error || '') + (u.fix ? `<div class="usage-muted" style="margin-top:6px;">Fix: run <code>${escapeHtml(u.fix)}</code> in a terminal, then Refresh usage.</div>` : '')}</div></section>`;
     }
     const s = u.stats;
     const tiles = [
@@ -189,15 +207,23 @@ function hubUsagePageHtml(u) {
         ['REMAINING', n1(s.remaining)],
         ['AVG / DAY', n1(s.avgPerDay)],
         ['DAYS LEFT', escapeHtml(daysLeftValue(s))],
+        ['STORAGE', u.storage && u.storage.used != null ? `${n1(u.storage.used)} / ${u.storage.quota}` : '—'],
         ['RESETS', escapeHtml(fmtDate(u.resetDate))]
     ].map(([k, v]) => `<div class="usage-tile"><span class="kpi-label">${k}</span><span class="kpi-value">${v}</span></div>`).join('');
-    const rows = (u.machines || []).map(m => `<tr><td>${escapeHtml(m.name)}</td><td>${escapeHtml(m.repo || '')}</td><td data-v="${m.cores || 0}">${m.cores ? m.cores + '-core' : escapeHtml(m.machine || '—')}</td><td class="num" data-v="${m.coreHours}">${n1(m.coreHours)}</td><td class="num" data-v="${m.share}">${n1(m.share)}%</td><td class="num" data-v="${m.estCost}">${money(m.estCost)}</td></tr>`).join('') || '<tr><td colspan="6" class="usage-muted">No usage recorded this cycle yet.</td></tr>';
-    const storage = (u.storageRows || []).map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.repo || '')}</td><td class="num">${r.storageGb != null ? n1(r.storageGb) + ' GB' : '—'}</td></tr>`).join('') || '<tr><td colspan="3" class="usage-muted">No codespaces.</td></tr>';
+    const repos = u.repos || [];
+    const rows = repos.map(r => `<tr><td>${escapeHtml(r.repo)}</td><td class="num" data-v="${r.coreHours}">${n1(r.coreHours)}</td><td class="num" data-v="${r.storageGbMonths == null ? -1 : r.storageGbMonths}">${r.storageGbMonths == null ? '—' : (Math.round(r.storageGbMonths * 100) / 100)}</td><td class="num" data-v="${r.share}">${n1(r.share)}%</td><td class="num" data-v="${r.amount}">${money(r.amount)}</td></tr>`).join('') || '<tr><td colspan="5" class="usage-muted">No usage recorded this cycle yet.</td></tr>';
+    // Use the API total (avoids $0.01 drift from summing rounded per-repo amounts).
+    const total = u.dollars ? u.dollars.consumed : repos.reduce((t, r) => t + (Number(r.amount) || 0), 0);
+    const foot = repos.length ? `<tfoot><tr><td><b>Total</b></td><td class="num">${n1(repos.reduce((t, r) => t + r.coreHours, 0))}</td><td class="num"></td><td class="num"></td><td class="num"><b>${money(total)}</b></td></tr></tfoot>` : '';
+    const storageNote = u.storage && u.storage.used != null
+        ? `${n1(u.storage.used)} / ${u.storage.quota} GB-month (from GitHub billing)`
+        : 'Not available — GitHub billing API did not return storage';
     return `<section class="usage-page" id="usagePage">${head(title)}
 <div class="usage-tiles">${tiles}</div>
-<div class="usage-panel"><h3>Daily usage</h3>${chartSvg(u)}<div class="usage-muted">Bars: core-hours per day · dashed line: pace that uses the quota exactly at reset</div></div>
-<div class="usage-panel"><h3>Per machine</h3><table class="usage-table sortable"><thead><tr><th>Codespace</th><th>Repo</th><th>Machine</th><th class="num">Core-hours</th><th class="num">Share</th><th class="num">Est. $</th></tr></thead><tbody>${rows}</tbody></table></div>
-<div class="usage-panel"><h3>Storage · ${n1(u.storage && u.storage.used)} / ${u.storage ? u.storage.quota : 0} GB-month · ${money(u.billed)} billed</h3><table class="usage-table"><thead><tr><th>Codespace</th><th>Repo</th><th class="num">Size</th></tr></thead><tbody>${storage}</tbody></table>${u.orgBilled && u.orgBilled.length ? `<div class="usage-muted" style="margin-top:6px;">Some codespaces are billed to ${escapeHtml(u.orgBilled.join(', '))} and are not counted.</div>` : ''}</div>
+<div class="usage-panel"><h3>Included quotas</h3><div style="display:flex;flex-direction:column;gap:10px;">${quotaBarsHtml(u)}</div><div style="margin-top:8px;">${billingLineHtml(u)}</div></div>
+<div class="usage-panel"><h3>Daily usage</h3>${chartSvg(u)}<div class="usage-muted">Bars: core-hours per day · dashed line: pace that uses the quota exactly at reset${u.dailyError ? ' · ' + escapeHtml(u.dailyError) : ''}</div></div>
+<div class="usage-panel"><h3>Per repository</h3><table class="usage-table sortable"><thead><tr><th>Repository</th><th class="num">Core-hours</th><th class="num">Storage GB-mo</th><th class="num">Share</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody>${foot}</table></div>
+<div class="usage-panel"><h3>Storage · ${escapeHtml(storageNote)}</h3>${u.orgBilled && u.orgBilled.length ? `<div class="usage-muted">Some codespaces are billed to ${escapeHtml(u.orgBilled.join(', '))} and are not counted.</div>` : ''}</div>
 </section>`;
 }
 

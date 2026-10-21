@@ -6,10 +6,9 @@
  *  - GET /user/codespaces                        -> machine.cpus, billable_owner, last_used_at
  *  - GET /users/{u}/settings/billing/usage/summary?product=codespaces (preview, enhanced billing)
  *  - GET /users/{u}/settings/billing/usage        (daily usage lines, repositoryName)
- * The billing endpoints need the `user` scope (fine-grained: "Plan: read") and
- * answer 404 when the scope is missing OR the account is not on enhanced billing.
- * When they fail and the scope IS present we fall back to an "Estimated" mode
- * built from session start/stop times the extension records itself.
+ * The billing endpoints need the `user` scope (fine-grained: "Plan: read").
+ * No guessed figures: if they fail we show a clear error with the reason and
+ * the gh command; storage only ever comes from the billing API.
  *
  * Every account uses its OWN token (AuthManager.getToken(login) -> native OAuth,
  * stored PAT, or `gh auth token -u <login>`). The active gh account is never
@@ -34,6 +33,8 @@ const PLAN_QUOTAS = {
 // USD per clock hour, by core count.
 const PRICE_PER_HOUR = { 2: 0.18, 4: 0.36, 8: 0.72, 16: 1.44, 32: 2.88 };
 const STORAGE_PRICE_PER_GB_MONTH = 0.07;
+// Price per core-hour (2-core $0.18/h = 2 x $0.09). Used only to value the included compute quota.
+const CORE_HOUR_PRICE = 0.09;
 
 // ── Pure helpers (exported for tests) ──────────────────────────────────────
 
@@ -95,7 +96,12 @@ function isCodespacesItem(item) {
 
 /** cores encoded in a SKU like "Codespaces compute 4 core" / "codespaces_compute_4_core". */
 function coresFromSku(sku) {
-    const m = String(sku || '').match(/(\d+)[\s_-]*core/i);
+    const s = String(sku || '');
+    // "Codespaces compute 2-core", "codespaces_compute_4_core", "8 core"
+    let m = s.match(/(\d+)[\s_-]*cores?\b/i);
+    if (m) return Number(m[1]);
+    // "codespaces_compute_d2", "codespaces_compute_c4", "..._d16_v2"
+    m = s.match(/(?:^|[_\s-])[dc](\d+)(?=$|[_\s-])/i);
     return m ? Number(m[1]) : null;
 }
 
@@ -112,19 +118,27 @@ function itemCoreHours(item, qty) {
  */
 function parseSummary(json) {
     const items = (json && (json.usageItems || json.usage_items)) || [];
-    const out = { computeCoreHours: 0, includedCoreHours: 0, computeNet: 0, storageGbMonths: 0, includedStorage: 0, storageNet: 0, gross: 0, bySku: [], unknownSkus: [] };
+    const out = {
+        computeCoreHours: 0, includedCoreHours: 0, computeNet: 0,
+        storageGbMonths: 0, includedStorage: 0, storageNet: 0,
+        grossAmount: 0, discountAmount: 0, netAmount: 0, gross: 0, computeAmount: 0, storageAmount: 0,
+        bySku: [], unknownSkus: []
+    };
     for (const it of items) {
         if (!isCodespacesItem(it)) continue;
         const gross = Number(it.grossQuantity ?? it.quantity ?? 0);
         const disc = Number(it.discountQuantity ?? 0);
         const net = Number(it.netAmount ?? 0);
-        out.gross += Number(it.grossAmount ?? 0);
+        out.grossAmount += Number(it.grossAmount ?? 0);
+        out.discountAmount += Number(it.discountAmount ?? 0);
+        out.netAmount += net;
         if (isStorageItem(it)) {
-            // storage may be reported in GB-hours; normalise to GB-months (~730h)
-            const toMonths = /hour/i.test(it.unitType || '') ? 1 / 730 : 1;
-            out.storageGbMonths += gross * toMonths;
-            out.includedStorage += disc * toMonths;
+            // GitHub labels storage "gigabyte-hours" but the quantity is already GB-months
+            // (priced at $0.07/GB-month), so it is used as-is.
+            out.storageGbMonths += gross;
+            out.includedStorage += disc;
             out.storageNet += net;
+            out.storageAmount += Number(it.grossAmount ?? 0);
         } else {
             if (itemCoreHours(it, gross) == null) {
                 if (!out.unknownSkus.includes(String(it.sku))) out.unknownSkus.push(String(it.sku));
@@ -133,28 +147,39 @@ function parseSummary(json) {
             out.computeCoreHours += itemCoreHours(it, gross);
             out.includedCoreHours += itemCoreHours(it, disc);
             out.computeNet += net;
+            out.computeAmount += Number(it.grossAmount ?? 0);
             out.bySku.push({ sku: it.sku, cores: coresFromSku(it.sku), coreHours: itemCoreHours(it, gross), net });
         }
     }
+    out.gross = out.grossAmount;
     return out;
 }
 
-/** Daily usage lines -> { daily: {YYYY-MM-DD: coreHours}, byRepo: {repo: coreHours} } */
+/**
+ * Daily usage lines -> chart + per-repository breakdown.
+ * { daily: {YYYY-MM-DD: coreHours}, byRepo: {repo: coreHours}, repos: [{repo, coreHours, storageGbMonths, amount}] }
+ */
 function parseDaily(json, cycleStart) {
     const items = (json && (json.usageItems || json.usage_items)) || [];
-    const daily = {}, byRepo = {};
+    const daily = {}, byRepo = {}, repoMap = {};
     const startMs = cycleStart ? new Date(cycleStart).getTime() : 0;
     for (const it of items) {
-        if (!isCodespacesItem(it) || isStorageItem(it)) continue;
+        if (!isCodespacesItem(it)) continue;
         const date = String(it.date || '').slice(0, 10);
         if (!date || new Date(date + 'T00:00:00Z').getTime() < startMs) continue;
-        const ch = itemCoreHours(it, Number(it.quantity ?? it.grossQuantity ?? 0));
+        const repo = it.repositoryName || '(unknown)';
+        const r = repoMap[repo] || (repoMap[repo] = { repo, coreHours: 0, storageGbMonths: 0, amount: 0 });
+        r.amount += Number(it.grossAmount ?? 0);
+        const qty = Number(it.quantity ?? it.grossQuantity ?? 0);
+        if (isStorageItem(it)) { r.storageGbMonths += qty; continue; }
+        const ch = itemCoreHours(it, qty);
         if (ch == null) continue;
         daily[date] = (daily[date] || 0) + ch;
-        const repo = it.repositoryName || '(unknown)';
         byRepo[repo] = (byRepo[repo] || 0) + ch;
+        r.coreHours += ch;
     }
-    return { daily, byRepo };
+    const repos = Object.values(repoMap).sort((a, b) => b.amount - a.amount);
+    return { daily, byRepo, repos };
 }
 
 /**
@@ -377,29 +402,32 @@ class UsageService {
 
         let parsed = summary.ok ? parseSummary(summary.body) : null;
         if (parsed && parsed.unknownSkus.length) {
-            this._log(`Usage: unrecognised Codespaces compute SKU(s) for ${login}: ${parsed.unknownSkus.join(', ')}; showing estimated usage.`);
+            this._log(`Usage: unrecognised Codespaces compute SKU(s) for ${login}: ${parsed.unknownSkus.join(', ')}; showing an error instead of guessed numbers.`);
             parsed = null;
         }
         if (parsed) {
             const s = parsed;
-            let daily = {}, byRepo = {};
+            let daily = {}, repos = [], dailyError = null;
             try {
                 const d = await this._get(`${GITHUB_API_BASE}/users/${u}/settings/billing/usage?year=${now.getUTCFullYear()}&month=${now.getUTCMonth() + 1}`, token);
-                if (d.ok) ({ daily, byRepo } = parseDaily(d.body, start));
-            } catch {}
+                if (d.ok) ({ daily, repos } = parseDaily(d.body, start));
+                else dailyError = `Daily usage API returned ${d.status}`;
+            } catch (e) { dailyError = 'Daily usage API unreachable'; }
             // remaining = quota - included usage (discountQuantity); usage beyond the quota is billed
             const used = Math.max(s.includedCoreHours, s.computeCoreHours);
             const stats = computeStats({ quota: plan.coreHours, used, daily, now, reset });
             stats.includedUsed = round(s.includedCoreHours);
-            const est = estimateFromSessions((this._state.get(SESSIONS_KEY, {}) || {})[account], start, nowMs, login);
-            const machines = machineRows(est.machines.length ? est.machines :
-                Object.entries(byRepo).map(([repo, ch]) => ({ name: repo, repo, machine: '', cores: 0, coreHours: ch })));
+            const totalAmount = repos.reduce((t, r) => t + r.amount, 0);
             return {
-                ...base, mode: 'live', stats, daily,
-                storage: { used: round(s.storageGbMonths, 2), quota: plan.storageGb },
-                billed: round(s.computeNet + s.storageNet, 2),
-                machines,
-                storageRows: personalCs.map(c => ({ name: c.display_name || c.name, repo: c.repository && c.repository.full_name, storageGb: c.machine && c.machine.storage_in_bytes ? round(c.machine.storage_in_bytes / 1e9) : null }))
+                ...base, mode: 'live', stats, daily, dailyError,
+                // Separate quotas (not interchangeable): compute value = core-hrs x $0.09, storage = GB-month x $0.07
+                compute: { used: round(used), quota: plan.coreHours, amount: round(s.computeAmount, 2), quotaValue: round(plan.coreHours * CORE_HOUR_PRICE, 2) },
+                storage: { used: round(s.storageGbMonths, 2), quota: plan.storageGb, amount: round(s.storageAmount, 2), quotaValue: round(plan.storageGb * STORAGE_PRICE_PER_GB_MONTH, 2) },
+                dollars: { consumed: round(s.grossAmount, 2), discount: round(s.discountAmount, 2), billable: round(s.netAmount, 2) },
+                billed: round(s.netAmount, 2),
+                repos: repos.map(r => ({ repo: r.repo, coreHours: round(r.coreHours), storageGbMonths: round(r.storageGbMonths, 2), amount: round(r.amount, 2), share: totalAmount > 0 ? round((r.amount / totalAmount) * 100) : 0 })),
+                machines: [],
+                storageRows: repos.filter(r => r.storageGbMonths > 0).map(r => ({ name: r.repo, repo: r.repo, storageGbMonths: round(r.storageGbMonths, 2) }))
             };
         }
 
@@ -408,29 +436,18 @@ class UsageService {
             return { ...base, mode: 'needsPermission', status, reason: 'The billing API needs the "user" scope.' };
         }
 
-        // Scope present (or other error): estimate from extension-tracked sessions
-        const est = estimateFromSessions((this._state.get(SESSIONS_KEY, {}) || {})[account], start, nowMs, login);
-        const stats = computeStats({ quota: plan.coreHours, used: est.used, daily: est.daily, now, reset });
-        const storageGb = personalCs.reduce((s, c) => s + ((c.machine && c.machine.storage_in_bytes) || 0) / 1e9, 0);
-        const estBilled = Math.max(0, est.used - plan.coreHours) * 0.09;
-        return {
-            ...base, mode: 'estimated', status,
-            estimatedReason: status === 404 || status === 403
-                ? 'This account is not on GitHub\'s enhanced billing platform, so the billing API returned ' + status + '. Numbers are estimated from codespace sessions this extension has seen (browser-only sessions are missed).'
-                : status === 'unknown-sku'
-                    ? 'GitHub reported a Codespaces machine type this extension does not recognise yet, so numbers are estimated from tracked sessions.'
-                    : 'GitHub\'s billing API was unavailable. Numbers are estimated from codespace sessions this extension has seen.',
-            stats, daily: est.daily,
-            storage: { used: round(storageGb, 2), quota: plan.storageGb },
-            billed: round(estBilled, 2),
-            machines: machineRows(est.machines),
-            storageRows: personalCs.map(c => ({ name: c.display_name || c.name, repo: c.repository && c.repository.full_name, storageGb: c.machine && c.machine.storage_in_bytes ? round(c.machine.storage_in_bytes / 1e9) : null }))
-        };
+        // No guessed figures: every other failure is a clear error state with the reason.
+        const fix = 'gh auth refresh -h github.com -s user';
+        let error;
+        if (status === 'unknown-sku') error = `GitHub returned a Codespaces SKU this version can't read (${(summary.ok && parseSummary(summary.body).unknownSkus.join(', ')) || 'unknown'}). Update the extension.`;
+        else if (status === 404 || status === 403) error = `GitHub billing API returned ${status}. This account may not be on GitHub's enhanced billing platform, or the token lacks the "user" scope.`;
+        else error = `GitHub billing API returned ${status}${summary.body && summary.body.message ? ': ' + summary.body.message : ''}.`;
+        return { ...base, mode: 'error', status, error, fix };
     }
 }
 
 module.exports = {
-    UsageService, PLAN_QUOTAS, PRICE_PER_HOUR, STORAGE_PRICE_PER_GB_MONTH, CACHE_TTL_MS, SESSIONS_KEY,
+    UsageService, PLAN_QUOTAS, PRICE_PER_HOUR, STORAGE_PRICE_PER_GB_MONTH, CORE_HOUR_PRICE, CACHE_TTL_MS, SESSIONS_KEY,
     coreHoursFor, pricePerHour, resolvePlan, billingCycle, parseSummary, parseDaily, computeStats,
     isOrgBilled, recordObservation, estimateFromSessions, machineRows, coresFromSku
 };

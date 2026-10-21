@@ -14,10 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Cloud Hub**: a full-width usage card above the KPI grid (plan, core-hours bar that turns orange at 75% and red at 90%, hours left, days left). The Storage Tier card now shows real `x / 15 GB-month`. A new **Usage** page in the left rail has tiles (used, remaining, avg/day, days left, reset date), a daily chart with an ideal-pace line, a sortable per-machine table and storage rows. It shows "Updated hourly · last fetched HH:MM".
   - **Sidebar**: one compact usage line under the account picker. Clicking it opens the Cloud Hub Usage page.
   - "Usage needs permission" + **Grant access** (`gh auth refresh -h github.com -s user`) when the billing API returns 403/404 without the `user` scope.
-  - **Estimated** mode from extension-tracked sessions when GitHub's billing API isn't available, or when it reports an unrecognised machine SKU (logged to the Codespaces output channel). Org-billed codespaces show as "Billed to {org}".
+  - Numbers come only from GitHub's billing API. The card shows separate Compute (core-hrs, $ of included value) and Storage (GB-month) bars, a billing line (consumed / discount / billable) and a per-repository table. If the API fails, it shows a clear error with the reason and the gh command, never estimated figures. Org-billed codespaces show as "Billed to {org}".
   - An **offline** note keeps the last good numbers when the network drops.
 - Settings: `usage.plan` (auto/free/pro/custom), `usage.monthlyCoreHours`, `usage.monthlyStorageGb`. Commands: Refresh Usage and Grant Usage Access.
-- Research notes in `docs/USAGE_ANALYTICS_RESEARCH.md`.
+- Research notes and an API-vs-billing-page POC in `docs/USAGE_ANALYTICS_RESEARCH.md` (`scripts/usage-poc.js`), plus real API fixtures in `test/fixtures/`.
 
 ## [5.1.0] - 2026-10-21
 

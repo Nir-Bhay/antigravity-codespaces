@@ -839,24 +839,22 @@ function ok(name, fn) {
             assert.match(uv.sidebarSummaryHtml(u, 'n'), /Grant access to see usage/);
         }
     });
-    await ok('404 with user scope -> Estimated from tracked sessions; org-billed excluded', async () => {
-        const state = { m: {}, get(k, d) { return k in this.m ? this.m[k] : d; }, update(k, v) { this.m[k] = v; return Promise.resolve(); } };
-        let now = NOW - 10 * 3600000;
-        const fetchImpl = makeFetch([
+    await ok('404 with user scope -> clear error with reason + gh command, no guessed numbers', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
             [/\/user$/, () => fakeResp(200, userBody('carol', 'free'), 'repo, codespace, user')],
             [/\/user\/codespaces/, () => fakeResp(200, csList('carol'))],
             [/usage\/summary/, () => fakeResp(404, { message: 'Not Found' })]
-        ]);
-        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl, state });
-        await svc.getAccountUsage('carol'); // records session start for both codespaces
-        now = NOW; svc.clearCache();
+        ]) });
         const u = await svc.getAccountUsage('carol');
-        assert.strictEqual(u.mode, 'estimated');
-        assert.strictEqual(Math.round(u.stats.used), 40, '4-core x 10h, org 8-core excluded');
-        assert.strictEqual(u.machines.length, 1);
-        assert.match(uv.hubUsageCardHtml(u), /Estimated/);
-        assert.match(uv.sidebarSummaryHtml(u, 'n'), /Estimated/);
-        assert.match(uv.hubUsagePageHtml(u), /billed to acme/);
+        assert.strictEqual(u.mode, 'error');
+        assert.strictEqual(u.stats, undefined, 'no figures');
+        assert.match(u.error, /404/);
+        const card = uv.hubUsageCardHtml(u);
+        assert.match(card, /Usage unavailable/);
+        assert.match(card, /gh auth refresh -h github\.com -s user/);
+        assert.ok(!/core-hrs|Estimated/.test(card));
+        assert.ok(!/core-hrs|Estimated/.test(uv.sidebarSummaryHtml(u, 'n')));
+        assert.strictEqual(uv.storageTierText(u), '15 GB Free Tier');
     });
     await ok('org plan with only org-billed codespaces -> "Billed to {org}" with no bar', async () => {
         const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
@@ -885,7 +883,7 @@ function ok(name, fn) {
         const m = calls.length; await svc.refresh(); await svc.getAccountUsage('eve');
         assert.ok(calls.length > m, 'refresh clears cache');
     });
-    await ok('unknown compute SKU core count -> Estimated (no 1-core guess) and SKU logged', async () => {
+    await ok('unknown compute SKU core count -> error state (no 1-core guess) and SKU logged', async () => {
         assert.strictEqual(us.parseSummary({ usageItems: [{ product: 'codespaces', sku: 'Codespaces compute premium', grossQuantity: 10 }] }).computeCoreHours, 0);
         const logs = [];
         const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, log: (m) => logs.push(m), fetchImpl: makeFetch([
@@ -894,7 +892,8 @@ function ok(name, fn) {
             [/usage\/summary/, () => fakeResp(200, { usageItems: [{ product: 'codespaces', sku: 'Codespaces compute premium', grossQuantity: 10, discountQuantity: 10 }] })]
         ]) });
         const u = await svc.getAccountUsage('gus');
-        assert.strictEqual(u.mode, 'estimated');
+        assert.strictEqual(u.mode, 'error');
+        assert.match(u.error, /Codespaces compute premium/);
         assert.ok(logs.some(l => l.includes('Codespaces compute premium')));
     });
     await ok('offline: network failure keeps last good result with offline note', async () => {
@@ -916,6 +915,65 @@ function ok(name, fn) {
         const fresh = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: async () => { throw new Error('offline'); } });
         const [e] = await fresh.getAllUsage(['nobody']);
         assert.strictEqual(e.mode, 'error');
+    });
+    await ok('real billing fixtures: summary + daily parse to GitHub billing page numbers', async () => {
+        const sumFx = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'billing-usage-summary.json'), 'utf8'));
+        const dayFx = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'billing-usage-daily.json'), 'utf8'));
+        assert.strictEqual(us.coresFromSku('codespaces_compute_d2'), 2);
+        assert.strictEqual(us.coresFromSku('codespaces_compute_c4'), 4);
+        assert.strictEqual(us.coresFromSku('Codespaces compute 2-core'), 2);
+        assert.strictEqual(us.coresFromSku('codespaces_compute_16_core'), 16);
+        assert.strictEqual(us.coresFromSku('codespaces_storage'), null);
+        const p = us.parseSummary(sumFx);
+        assert.deepStrictEqual(p.unknownSkus, []);
+        assert.ok(Math.abs(p.computeCoreHours - 76.48) < 0.01, 'core-hours ' + p.computeCoreHours);
+        assert.ok(Math.abs(p.storageGbMonths - 7.64) < 0.01, 'storage ' + p.storageGbMonths);
+        assert.ok(Math.abs(p.computeAmount - 6.88) < 0.01);
+        assert.ok(Math.abs(p.storageAmount - 0.53) < 0.01);
+        assert.ok(Math.abs(p.grossAmount - 7.42) < 0.01, 'consumed ' + p.grossAmount);
+        assert.strictEqual(p.netAmount, 0);
+        const d = us.parseDaily(dayFx, '2026-10-01T00:00:00Z');
+        const amt = Object.fromEntries(d.repos.map(r => [r.repo, Math.round(r.amount * 100) / 100]));
+        assert.strictEqual(amt.Samyoj, 6.92);
+        assert.strictEqual(amt.RACE, 0.35);
+        assert.strictEqual(amt['AI-Companion'], 0.16);
+        assert.ok(Object.keys(d.daily).length >= 3);
+
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => Date.UTC(2026, 9, 21, 12), fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('abhayhiwse-hub', 'pro'), 'user, codespace')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [{ name: 'x', state: 'Shutdown', machine: { cpus: 2, storage_in_bytes: 103e9 }, billable_owner: { login: 'abhayhiwse-hub' } }] })],
+            [/usage\/summary/, () => fakeResp(200, sumFx)],
+            [/settings\/billing\/usage\?/, () => fakeResp(200, dayFx)]
+        ]) });
+        const u = await svc.getAccountUsage('abhayhiwse-hub');
+        assert.strictEqual(u.mode, 'live');
+        assert.deepStrictEqual(u.compute, { used: 76.5, quota: 180, amount: 6.88, quotaValue: 16.2 });
+        assert.deepStrictEqual(u.storage, { used: 7.64, quota: 20, amount: 0.53, quotaValue: 1.4 });
+        assert.deepStrictEqual(u.dollars, { consumed: 7.42, discount: 7.42, billable: 0 });
+        assert.strictEqual(Math.round(us.resolvePlan('free').coreHours * us.CORE_HOUR_PRICE * 100) / 100, 10.8);
+        assert.strictEqual(u.repos[0].repo, 'Samyoj');
+        const card = uv.hubUsageCardHtml(u);
+        assert.ok(!/Estimated/.test(card));
+        assert.match(card, /76\.5<\/b> \/ 180 core-hrs <small>\(\$6\.88 of \$16\.20\)/);
+        assert.match(card, /7\.6<\/b> \/ 20 GB-month <small>\(\$0\.53 of \$1\.40\)/);
+        assert.match(card, /\$7\.42 consumed · −\$7\.42 included discount · <b>\$0\.00 billable/);
+        assert.ok(!/of \$17\.60/.test(card), 'no combined quota');
+        const page = uv.hubUsagePageHtml(u);
+        assert.match(page, /Per repository/);
+        assert.match(page, /Samyoj/);
+        assert.match(page, /\$6\.92/);
+        assert.strictEqual(uv.storageTierText(u), '7.6 / 20 GB-month');
+    });
+    await ok('billing API 5xx -> real error state with reason', async () => {
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, fetchImpl: makeFetch([
+            [/\/user$/, () => fakeResp(200, userBody('ivy', 'free'), 'user')],
+            [/\/user\/codespaces/, () => fakeResp(200, { codespaces: [] })],
+            [/usage\/summary/, () => fakeResp(502, { message: 'Bad Gateway' })]
+        ]) });
+        const u = await svc.getAccountUsage('ivy');
+        assert.strictEqual(u.mode, 'error');
+        assert.match(u.error, /502: Bad Gateway/);
+        assert.match(uv.hubUsagePageHtml(u), /Usage unavailable/);
     });
     await ok('only the active gh account is fetched (follows account switches)', async () => {
         const calls = []; let active = 'alice';
@@ -945,7 +1003,7 @@ function ok(name, fn) {
         const u = mk(30);
         const card = uv.hubUsageCardHtml(u, '');
         assert.match(card, /USAGE · a · Free/);
-        assert.match(card, /30 \/ 120/);
+        assert.match(card, /30<\/b> \/ 120 core-hrs/);
         assert.match(card, /HOURS LEFT/);
         assert.match(card, /DAYS LEFT/);
         assert.match(uv.hubUsageCardHtml(mk(95)), /usage-fill amber/);
