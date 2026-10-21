@@ -57,7 +57,6 @@ async function activate(context) {
     const statusBar = new StatusBarManager(context, authManager, githubApi);
     const usageService = new UsageService({
         authManager,
-        state: context.globalState,
         log: (msg) => codespacesChannel.appendLine(`[usage] ${msg}`),
         // Usage follows the active gh CLI account (re-read on every refresh).
         getActiveAccount: async () => {
@@ -896,7 +895,6 @@ async function activate(context) {
                 async () => {
                     try {
                         await githubApi.startCodespace(cs.name, cs.account);
-                        usageService.observe(cs.account, [{ ...cs, state: 'Available' }]).catch(() => {});
                         vscode.window.showInformationMessage(`${cs.displayName || cs.name} is starting!`);
                         sidebarProvider.refresh();
                         dashboardProvider.refreshHtml();
@@ -917,7 +915,6 @@ async function activate(context) {
             if (!cs) return;
             try {
                 await githubApi.stopCodespace(cs.name, cs.account);
-                usageService.observe(cs.account, [{ ...cs, state: 'Shutdown' }]).catch(() => {});
                 vscode.window.showInformationMessage(`Stopped ${cs.displayName || cs.name}.`);
                 sidebarProvider.refresh();
                 dashboardProvider.refreshHtml();

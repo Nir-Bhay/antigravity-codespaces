@@ -23,7 +23,6 @@ const API_HEADERS = {
 };
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const SESSIONS_KEY = 'antigravity.usageSessions.v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const PLAN_QUOTAS = {
@@ -226,72 +225,6 @@ function isOrgBilled(cs, login) {
     return !!owner && !!login && owner.toLowerCase() !== String(login).toLowerCase();
 }
 
-/**
- * Record codespace state transitions into a sessions store.
- * store: { [account]: { [csName]: { open?:ms, sessions:[[startMs,endMs]], cores, machine, repo } } }
- */
-function recordObservation(store, account, codespaces, nowMs = Date.now()) {
-    const acc = store[account] || (store[account] = {});
-    for (const cs of codespaces || []) {
-        const e = acc[cs.name] || (acc[cs.name] = { sessions: [] });
-        e.cores = (cs.machine && cs.machine.cpus) || e.cores || 2;
-        e.machine = (cs.machine && (cs.machine.display_name || cs.machine.name)) || e.machine || '';
-        e.repo = (cs.repository && cs.repository.full_name) || cs.repository || e.repo || '';
-        e.billableOwner = cs.billable_owner && cs.billable_owner.login;
-        if (cs.state === 'Available') {
-            if (!e.open) e.open = nowMs;
-        } else if (e.open) {
-            e.sessions.push([e.open, nowMs]);
-            e.open = null;
-        }
-        // keep ~45 days
-        e.sessions = e.sessions.filter(s => s[1] > nowMs - 45 * DAY_MS);
-    }
-    return store;
-}
-
-/** Estimated usage from recorded sessions for the current cycle. */
-function estimateFromSessions(accStore = {}, cycleStart, nowMs = Date.now(), login = '') {
-    const startMs = new Date(cycleStart).getTime();
-    const daily = {}, machines = [];
-    let total = 0;
-    for (const [name, e] of Object.entries(accStore)) {
-        if (e.billableOwner && login && e.billableOwner.toLowerCase() !== login.toLowerCase()) continue;
-        const spans = e.sessions.slice();
-        if (e.open) spans.push([e.open, nowMs]);
-        let ch = 0;
-        for (let [a, b] of spans) {
-            a = Math.max(a, startMs); if (b <= a) continue;
-            // split across UTC days
-            let t = a;
-            while (t < b) {
-                const dayEnd = Math.min(b, Math.floor(t / DAY_MS) * DAY_MS + DAY_MS);
-                const h = coreHoursFor(e.cores, (dayEnd - t) / 3600000);
-                const key = new Date(t).toISOString().slice(0, 10);
-                daily[key] = (daily[key] || 0) + h;
-                ch += h; t = dayEnd;
-            }
-        }
-        total += ch;
-        machines.push({ name, repo: e.repo, machine: e.machine, cores: e.cores, coreHours: ch });
-    }
-    return { used: total, daily, machines };
-}
-
-/** Per-machine table rows with share % and estimated $ (clock hours x price). */
-function machineRows(machines, totalCoreHours) {
-    const total = totalCoreHours || machines.reduce((s, m) => s + (m.coreHours || 0), 0);
-    return machines.map(m => {
-        const hours = m.cores ? m.coreHours / m.cores : 0;
-        return {
-            ...m,
-            coreHours: round(m.coreHours),
-            share: total > 0 ? round((m.coreHours / total) * 100) : 0,
-            estCost: round(hours * pricePerHour(m.cores), 2)
-        };
-    }).sort((a, b) => b.coreHours - a.coreHours);
-}
-
 // ── Service ────────────────────────────────────────────────────────────────
 
 class UsageService {
@@ -299,16 +232,14 @@ class UsageService {
      * @param {object} opts
      * @param {{getToken:(acc:string)=>Promise<string|null>}} opts.authManager
      * @param {Function} [opts.fetchImpl]   defaults to global fetch
-     * @param {{get:Function, update:Function}} [opts.state]  vscode globalState
      * @param {() => object} [opts.getConfig] returns { plan, monthlyCoreHours, monthlyStorageGb }
      * @param {() => number} [opts.now]
      */
-    constructor({ authManager, fetchImpl, state, getConfig, now, log, getActiveAccount } = {}) {
+    constructor({ authManager, fetchImpl, getConfig, now, log, getActiveAccount } = {}) {
         this._getActive = typeof getActiveAccount === 'function' ? getActiveAccount : async () => (authManager && authManager.getActiveAccount ? authManager.getActiveAccount() : null);
         this._log = typeof log === 'function' ? log : () => {};
         this._auth = authManager;
         this._fetch = fetchImpl || ((...a) => fetch(...a));
-        this._state = state || { _m: {}, get(k, d) { return k in this._m ? this._m[k] : d; }, update(k, v) { this._m[k] = v; return Promise.resolve(); } };
         this._getConfig = getConfig || (() => ({}));
         this._now = now || (() => Date.now());
         this._cache = new Map();
@@ -330,14 +261,6 @@ class UsageService {
         return { status: res.status, ok: res.ok, body, scopes };
     }
 
-    /** Observe codespace lists (called whenever the sidebar refreshes) to build session history. */
-    async observe(account, codespaces) {
-        const store = this._state.get(SESSIONS_KEY, {}) || {};
-        recordObservation(store, account, codespaces, this._now());
-        await this._state.update(SESSIONS_KEY, store);
-    }
-
-    /** Usage for the currently active gh account only (re-read on every call, so it follows account switches). */
     async getActiveUsage() {
         const account = await this._getActive();
         if (!account) return null;
@@ -388,7 +311,6 @@ class UsageService {
         } catch {}
         const orgBilled = [...new Set(codespaces.filter(c => isOrgBilled(c, login)).map(c => c.billable_owner.login))];
         const personalCs = codespaces.filter(c => !isOrgBilled(c, login));
-        try { await this.observe(account, codespaces); } catch {}
         base.orgBilled = orgBilled;
         base.codespaceCount = personalCs.length;
 
@@ -426,7 +348,6 @@ class UsageService {
                 dollars: { consumed: round(s.grossAmount, 2), discount: round(s.discountAmount, 2), billable: round(s.netAmount, 2) },
                 billed: round(s.netAmount, 2),
                 repos: repos.map(r => ({ repo: r.repo, coreHours: round(r.coreHours), storageGbMonths: round(r.storageGbMonths, 2), amount: round(r.amount, 2), share: totalAmount > 0 ? round((r.amount / totalAmount) * 100) : 0 })),
-                machines: [],
                 storageRows: repos.filter(r => r.storageGbMonths > 0).map(r => ({ name: r.repo, repo: r.repo, storageGbMonths: round(r.storageGbMonths, 2) }))
             };
         }
@@ -447,7 +368,7 @@ class UsageService {
 }
 
 module.exports = {
-    UsageService, PLAN_QUOTAS, PRICE_PER_HOUR, STORAGE_PRICE_PER_GB_MONTH, CORE_HOUR_PRICE, CACHE_TTL_MS, SESSIONS_KEY,
+    UsageService, PLAN_QUOTAS, PRICE_PER_HOUR, STORAGE_PRICE_PER_GB_MONTH, CORE_HOUR_PRICE, CACHE_TTL_MS,
     coreHoursFor, pricePerHour, resolvePlan, billingCycle, parseSummary, parseDaily, computeStats,
-    isOrgBilled, recordObservation, estimateFromSessions, machineRows, coresFromSku
+    isOrgBilled, coresFromSku
 };

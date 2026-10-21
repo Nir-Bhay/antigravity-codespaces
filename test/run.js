@@ -999,7 +999,7 @@ function ok(name, fn) {
     await ok('Cloud Hub usage card + page: bar colours, tiles, sortable table, svg chart, last fetched', () => {
         const mk = (used) => ({ account: 'a', login: 'a', plan: { label: 'Free' }, mode: 'live', fetchedAt: NOW, cycleStart: new Date(Date.UTC(2026, 9, 1)).toISOString(), resetDate: new Date(RESET).toISOString(),
             stats: us.computeStats({ quota: 120, used, daily: daysOf(5, 6), now: NOW, reset: RESET }), daily: daysOf(5, 6), storage: { used: 2, quota: 15 }, billed: 0,
-            machines: us.machineRows([{ name: 'cs1', repo: 'a/x', cores: 2, coreHours: 30 }]), storageRows: [] });
+            repos: [{ repo: 'a/x', coreHours: 30, storageGbMonths: 1, amount: 2.7, share: 100 }], storageRows: [] });
         const u = mk(30);
         const card = uv.hubUsageCardHtml(u, '');
         assert.match(card, /USAGE · a · Free/);
@@ -1017,8 +1017,7 @@ function ok(name, fn) {
         assert.match(page, /stroke-dasharray/);
         assert.match(page, /class="usage-table sortable"/);
         assert.match(page, /Updated hourly · last fetched/);
-        assert.strictEqual(u.machines[0].estCost, 2.7);
-        assert.strictEqual(u.machines[0].share, 100);
+        assert.match(page, /\$2\.70/);
     });
     await ok('Cloud Hub dashboard integrates usage (rail item, card, page) and no separate usage webview', () => {
         const src = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
