@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.1.0] - 2026-10-21
+
+### Added
+- **Setup Doctor Command (issue #4)**: New `antigravity-codespaces.setupDoctor` command runs comprehensive environment diagnostics — checks GitHub CLI installation, SSH client, Remote-SSH extensions, and authentication state with one-click fix actions.
+- **Sidebar gh CLI Status Indicator (issue #4)**: Real-time gh CLI auth status displayed in the sidebar header; shows logged-in user or "signed out" with quick-fix links.
+- **First-Run Welcome Card (issue #4)**: Three-step onboarding card (Sign In → Install gh CLI → Connect) persisted via globalState; auto-dismisses after first successful connection.
+- **Connect Progress Indicator (issue #4)**: Connection operations now show a progress notification with the target Codespace name.
+- **Real Remote Folder Detection (issue #4)**: Connect resolves the actual workspace folder from `recentFolders` or devcontainer metadata instead of always defaulting to `/workspaces/${repo}`.
+- **"Connect Now" Button (issue #4)**: Available state cards show a prominent Connect button alongside Start/Stop.
+- **Reconnect Command (issue #4)**: New `antigravity-codespaces.reconnect` command re-establishes SSH tunnel to the most recently connected Codespace.
+- **Diagnostic Report with Token Redaction (issue #4)**: Setup Doctor can generate a shareable diagnostic report; OAuth tokens (`gho_*`), GitHub App tokens (`ghu_*`, `ghs_*`, `ghr_*`), and PATs (`ghp_*`) are automatically redacted.
+
+### Changed
+- **Shared gh CLI Preflight (issue #3)**: Connect, Quick Connect, and Test SSH now share a unified preflight that detects all four gh CLI auth failure states (missing, logged out, scope missing, user mismatch) with one-click terminal fixes before attempting SSH.
+- **Auto-Fix `remote.SSH.remotePlatform` (issue #3)**: Connect automatically sets `remote.SSH.remotePlatform[<host>]` to `"linux"` for Codespace hosts, preventing exit-127 failures when Remote-SSH defaults to Windows/macOS.
+- **Bare Exit-127 Detection on Codespace Hosts (issue #3)**: `isPlatformMismatchError` now treats a bare exit code 127 (no powershell text) as a platform mismatch when the host alias starts with `cs.`.
+- **Smarter gh auth switch Fallback (issue #3)**: When `gh auth switch` fails, the terminal command offered depends on the error — fresh login for zero/unknown accounts, re-switch for transient failures.
+
+### Security
+- **SSH Host Key Verification (issue #5)**: Replaced `StrictHostKeyChecking no` + `UserKnownHostsFile /dev/null` with `StrictHostKeyChecking accept-new` and an extension-managed `~/.antigravity-codespaces/known_hosts` file. Host keys are stored persistently (TOFU model); subsequent key changes trigger warnings.
+- **Configurable `StrictHostKeyChecking` (issue #5)**: New setting `antigravity-codespaces.strictHostKeyChecking` (`accept-new` | `yes` | `no`).
+- **Configurable SSH Log Level (issue #5)**: New setting `antigravity-codespaces.sshLogLevel` (`quiet` | `error` | `info` | `verbose`); default changed from `quiet` to `error` so fatal conditions surface.
+- **Shared "Codespaces" Output Channel (issue #5)**: Every `~/.ssh/config` mutation and `remote.SSH.remotePlatform` change is logged with timestamps. No tokens or secrets are logged.
+
+### Fixed
+- Exit-255 "nonexistent pipe" errors now surface actionable gh CLI auth guidance instead of opaque SSH failures (issue #3).
+- Tunnel stderr is captured and parsed for known failure signatures (gh auth, scope missing, platform mismatch) with context-specific fix buttons (issue #3).
+- Multi-account `gh auth status` scope parsing now anchors to the exact account block, preventing scope leakage between accounts (issue #3).
+- Scope parsing fails open (proceeds with connection) when scopes are unparseable (fine-grained PAT, GH_TOKEN env var) instead of blocking (issue #3).
+
+---
+
 ## [5.0.9] - 2026-10-20
 
 ### Security
