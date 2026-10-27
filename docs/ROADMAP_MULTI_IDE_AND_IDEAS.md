@@ -1,129 +1,46 @@
-# Future Roadmap: Multi-IDE Connector Strategy + New Ideas (Research Doc — No Code Changed)
+# Product roadmap and improvement opportunities
 
-Date: 2026-09-05 | Status: research + proposal only. Nothing implemented.
+This document is a set of recommendations, not a promise or a list of implemented features. Priorities reflect likely user value and risk reduction; validate them with user feedback and issue activity before committing to larger work. Compatibility and performance claims should be backed by reproducible checks, not assumed from a successful build.
 
-## 0. Executive answer to your idea
+## Product direction
 
-**You do NOT need a separate "Codespace Connector" extension for Cursor.**
-Research shows one adaptive extension beats N per-IDE extensions:
+Help developers manage GitHub Codespaces from VS Code-based editors and let coding agents use a separate MCP server for controlled remote command execution. Keep onboarding understandable, make account and cost effects visible before lifecycle actions, and describe editor support according to evidence.
 
-| Fact (with source) | Implication |
-|---|---|
-| Cursor moved to the **OpenVSX Registry in June 2025** (rapidevelopers.com, 2026 guide; Cursor docs) | Our extension is **already published on OpenVSX as v5.0.1** → Cursor users can likely discover + install it from inside Cursor today, zero extra work. Verify by searching "Antigravity Codespaces" in Cursor's Extensions panel. |
-| Manual VSIX install works in Cursor: `Extensions: Install from VSIX…`, drag-drop into Extensions tab, `cursor --install-extension x.vsix` (Cursor forum, testers.ai guide) | Fallback distribution path already exists; our GitHub Release VSIX covers it. |
-| Remote connect works the same: `cursor --remote ssh-remote+host path` and `cursor --folder-uri vscode-remote://ssh-remote+host/path` (StackOverflow, Messa) | Our Tier-3 launcher design already fits Cursor — only the binary discovery list (`findAntigravityExecutable`) lacks `cursor`/`windsurf` entries. |
-| In-IDE `vscode.openFolder` with `vscode-remote` authority resolves inside Cursor's own remote stack (Harvard FASRC docs; KodeKloud guide) | Our Tier-1 connect path should work in Cursor **unmodified**. |
-| ⚠️ Known Cursor bug (Feb 2026): `--folder-uri vscode-remote://…` **hangs when Cursor is already running** (Cursor forum #153009) | For Cursor hosts, prefer Tier-2 (in-IDE remote-SSH command) over Tier-3 CLI spawn. Our tiered fallback already supports this ordering — it just needs host-aware ordering. |
-| ⚠️ Cursor replaced Microsoft's Remote-SSH with **Anysphere's Remote-SSH**; extensions probing `ms-vscode-remote.*` command IDs break (Cursor forum, AWS Toolkit thread) | Our Tier-2 already probes multiple command IDs (`open-remote-ssh.*`, `vsx-remote-ssh.*`, `remote-ssh.*`) — needs Anysphere's IDs added to the probe list (verification step below). |
-| `vscode.env.appName` / `vscode.env.uriScheme` expose the host at runtime on every fork | Host detection is ~20 lines: no separate extension, no fork of the codebase. |
+## Recommended next steps
 
-**Verdict:** implement a **Multi-IDE Adapter layer** inside the existing extension
-(~150–250 lines + docs + per-IDE test matrix), not a new extension. Estimated effort:
-S–M. A separate "connector" would duplicate 95% of the code (auth, API, SSH, webviews)
-for zero benefit and 2× maintenance forever.
+### P0 — Improve trust and first-run success
 
-## 1. Proposed design: IDE Adapter (future work, not started)
+1. **Publish a tested editor compatibility matrix.** Record editor/version, extension distribution source, Remote-SSH provider, install result, connect result, and known caveats. Mark rows as tested, community-reported, or unverified. Re-test after editor API or marketplace changes.
+2. **Add a short demo and guided first-run path.** Show install, sign-in distinction (extension auth vs `gh` auth), Setup Doctor, and one connection. Include captions and a text alternative; keep the demo free of personal account data.
+3. **Add an explicit cost/safety checkpoint for lifecycle actions.** Clarify that starting uses compute, stopping retains storage, and deletion is permanent. For future batch actions, preview selected workspaces and expected effects before confirmation.
+4. **Test the MCP server with real clients using a disposable Codespace.** Record client/version, tool discovery, auth source, command result, startup/cleanup behavior, and billing effects. Do not describe live interoperability as proven until this is complete.
+5. **Make permission requests understandable.** Explain that `user` permission is only for usage analytics and declining it leaves core Codespaces access intact; distinguish extension sign-in from GitHub CLI credentials in every setup flow.
 
-### 1.1 Host detection (runtime, no config needed)
+### P1 — Reduce friction for regular users
 
-```js
-// Proposed: src/ideAdapter.js (new file, ~120 lines)
-const IDE_PROFILES = {
-  'cursor':     { label: 'Cursor',        binaries: ['cursor', 'cursor.cmd'],        remoteCmds: ['anysphere-remote-ssh.connect', 'open-remote-ssh.connectToHostInNewWindow', ...], preferInIdeConnect: true },
-  'antigravity':{ label: 'Antigravity IDE', binaries: ['antigravity-ide', 'antigravity'], remoteCmds: ['open-remote-ssh.connectToHostInNewWindow', 'vsx-remote-ssh.connectHost', 'remote-ssh.connectHost'] },
-  'vscode':     { label: 'VS Code',       binaries: ['code', 'code.cmd'],            remoteCmds: ['remote-ssh.connectHost', ...] },
-  'vscodium':   { label: 'VSCodium',      binaries: ['codium'],                      remoteCmds: ['vsx-remote-ssh.connectHost', ...] },
-  'windsurf':   { label: 'Windsurf',      binaries: ['windsurf'],                    remoteCmds: [...] }, // IDs TBD — research item
-};
-// Detect: vscode.env.appName (+ uriScheme as tiebreak). Unknown host → generic profile (current behavior).
-```
+1. **Improve empty, loading, stale, and error states.** Keep the last successful list visible with its age, distinguish refresh failure from an empty account, and give each actionable error one suggested fix.
+2. **Add lifecycle safeguards and recovery feedback.** Show which account owns the selected Codespace, require deliberate confirmation for destructive actions, and surface partial failure/cleanup outcomes without implying success.
+3. **Make support diagnostics more actionable.** Offer a concise copyable report with editor/version, extension version, CLI health, selected account identity (not credentials), and relevant sanitized failure details. State what the report omits and remind users to review before sharing.
+4. **Broaden automated test coverage around real user journeys.** Add UI state tests where practical, authentication/account-switch cases, API pagination and timeout cases, and MCP failure/cleanup paths. Keep integration tests opt-in and cost-aware.
+5. **Improve discovery and documentation.** Keep the README focused on use cases and setup, link separate task-specific guides, and add screenshots/demo assets only when they reflect the current UI.
 
-Detection inputs to verify per host (test matrix §1.4): `vscode.env.appName`,
-`vscode.env.uriScheme`, presence of remote-SSH command IDs, CLI binary names.
+### P2 — Explore after evidence and maintenance capacity
 
-### 1.2 "Open In…" target picker (your "switch IDE" idea, concrete shape)
+- **Bulk lifecycle actions:** valuable for users with many Codespaces, but add only with a clear selection summary, per-item outcomes, cancellation behavior, and confirmation for deletion.
+- **Idle-cost assistance:** explain GitHub auto-stop settings and identify long-running workspaces before inventing a second scheduler; any new automation should be opt-in, visible, and reversible.
+- **Localization:** measure demand and establish a string catalog before translating. Start with onboarding and error actions, then validate layout and accessibility in each language.
+- **Team workflows:** investigate shared visibility and org permissions only with a clear least-privilege model; do not imply that personal account switching provides team governance.
+- **Usage history:** offer locally stored trends only with an explicit retention/clear-data policy and clearly label estimates separately from GitHub-reported billing totals.
 
-- Dashboard card + sidebar menu gain **"Open In…"** submenu listing IDEs **detected as installed**
-  on the machine (PATH scan of known binaries: `cursor`, `antigravity-ide`, `code`, `windsurf`, `codium`).
-- User picks target per connection; choice remembered per workspace (`globalState`).
-- Status bar tooltip + dashboard header show **current host IDE** ("Running in Cursor · target: Antigravity").
-- This delivers your vision — "user can see/manage across IDEs" — without leaving the extension.
+## UX polish checklist
 
-### 1.3 Changes to existing code (when we do it)
+- Show the active GitHub CLI account wherever it determines Codespace selection or usage data.
+- Distinguish extension authentication (dashboard/API) from `gh` authentication (SSH/MCP) in onboarding and errors.
+- Label stale/cached data with its last refresh time and disable mutations when state is not trustworthy.
+- Use consistent names for start/wake, stop, rebuild, and delete; explain irreversible actions immediately beside the action.
+- Make keyboard navigation, focus visibility, screen-reader labels, color contrast, and reduced-motion behavior part of UI acceptance checks.
+- Avoid “one click,” “universal,” “first-class,” and performance guarantees unless tests support the specific claim and supported versions.
 
-1. `findAntigravityExecutable()` → generalized `findIdeExecutable(profile)` (+ `cursor`, `windsurf`, `codium` candidates).
-2. Tier-2 probe list becomes profile-driven (add Anysphere IDs; keep generic fallbacks).
-3. Tier ordering becomes host-aware (Cursor: Tier-2 before Tier-3, per the CLI-hang bug).
-4. New `antigravity-codespaces.targetIde` setting (`auto` default) + `Open In…` menu wiring.
-5. Docs: per-IDE install section in README (Cursor: OpenVSX search or VSIX; Windsurf: VSIX).
+## How to choose the next item
 
-### 1.4 Verification matrix (must pass before claiming support)
-
-| Host | Install via | Connect Tier-1 | Tier-2 cmd IDs | Tier-3 CLI | Notes |
-|---|---|---|---|---|---|
-| Antigravity IDE | OpenVSX / VSIX | ✅ (current) | probed | ✅ | baseline |
-| Cursor | OpenVSX search ❓ verify | verify | Anysphere IDs ❓ verify | ⚠️ hang bug → deprioritize | check marketplace visibility first |
-| VS Code | Marketplace (roadmap) / VSIX | verify | `ms-vscode-remote.*` | ✅ | needs Marketplace listing for 1-click |
-| VSCodium | OpenVSX | verify | `vsx-remote-ssh.*` | ✅ | |
-| Windsurf | VSIX (marketplace ❓ research) | verify | IDs ❓ research | verify | |
-
-Research items still open: exact Anysphere remote-SSH command IDs; Windsurf marketplace
-policy + remote command IDs; whether our OpenVSX listing is already searchable inside
-Cursor (5-minute manual check).
-
-### 1.5 Risks (honest)
-
-- Cursor/Anysphere can change command IDs or restrict third-party remote flows at any time
-  (precedent: AWS Toolkit breakage, Oct 2025 thread). Mitigation: generic fallbacks first,
-  profile overrides second; never hard-depend on one ID.
-- The Cursor CLI-hang bug is upstream; our workaround is ordering, not a fix.
-- Microsoft-proprietary extensions are blocked on forks — irrelevant to us (zero deps, pure JS).
-
-## 2. More roadmap ideas (mine) — impact × effort
-
-### P0 — Do next (small effort, visible payoff)
-
-1. **Demo GIF in README + OpenVSX page** — single biggest conversion lever; 30-sec
-   record of sidebar → Alt+C → connect. (README checklist still has this unchecked.)
-2. **VS Code Marketplace listing** — unlocks 1-click install for the largest audience;
-   needs `VSCE_PAT` (same 5-minute secret flow as `OVSX_PAT`).
-3. **Bulk actions** — multi-select cards (Start/Stop/Delete N at once). Dashboard state
-   model already supports selection; medium UI work, high user value for 8+ workspaces.
-4. **Cost estimator** — hours × machine rate per codespace from `lastUsedAt`/state;
-   read-only math, no new API. Pairs with your billing-widget roadmap item.
-
-### P1 — High value, medium work
-
-5. **Auto-stop scheduler** — per-workspace idle timeout override + "stop all at 20:00"
-   rule; saves real money, differentiates from the browser tab.
-6. **Port visibility + share** — toggle public/private, copy URL, QR for mobile testing.
-7. **Offline action queue** — Start/Stop tapped offline execute on reconnect (auth layer
-   already tolerates offline; extend to mutations with explicit pending UI).
-8. **Chat participant `@codespaces`** — natural-language "stop everything except X";
-   cheap on our command layer, big demo factor.
-9. **Hindi + Hinglish UI strings (i18n)** — you think in Hindi; a large share of new
-   coders do too. `vscode.l10n` bundle, start with hi + en. Unique among Codespaces tools.
-
-### P2 — Strategic (larger bets)
-
-10. **Team/org mode** — shared workspace directory (who runs what, on which repo),
-    read-only org view via `gh api`. Turns a personal tool into a team tool.
-11. **Dotfiles + template picker** — new-Codespace wizard gains dotfiles repo +
-    devcontainer templates (already on your roadmap; bundle together).
-12. **Usage insights** — hours/machine history chart from cached snapshots; local-only,
-    privacy-safe (aligns with our no-telemetry posture — make that a selling point).
-13. **Corporate proxy pack** — documented `HTTP_PROXY`/`NODE_EXTRA_CA_CERTS` support +
-    PAT-first onboarding; unlocks enterprise users behind firewalls.
-14. **Windows ARM + remote-SSH server check** — extend SystemDoctor; cheap, widens hardware coverage.
-
-### My top-5 recommended order
-
-1. Demo GIF (growth) → 2. Marketplace listing (growth) → 3. Multi-IDE adapter §1
-   (your Cursor idea, S–M) → 4. Bulk actions (power users) → 5. Auto-stop scheduler
-   (money saver = retention). Then cost estimator + i18n as differentiators.
-
-## 3. Suggested roadmap file update (for later)
-
-When approved, fold §1 + P0–P2 into README Roadmap as Now / Next / Later columns and
-mirror them as GitHub issues with `effort:S/M/L` labels. Not done in this pass
-(doc-only by your instruction).
+Use issue frequency and severity, user onboarding feedback, support requests, and measured completion failures. For each candidate, define: target user/problem, smallest useful change, security/cost implications, acceptance criteria, automated coverage, and a manual test on each claimed editor. Prioritize trust and successful first connection before adding more dashboard surface area.
