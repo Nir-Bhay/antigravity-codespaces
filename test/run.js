@@ -32,8 +32,19 @@ function ok(name, fn) {
         assert.match(workflow, /^permissions:\n  contents: read$/m, 'default workflow token is read-only');
         assert.match(workflow, /^  build:\n    name: Build & Validate VSIX\n    permissions:\n      contents: read\n/m, 'build job is read-only');
         assert.match(workflow, /^      - name: Checkout Repository\n        uses: actions\/checkout@v5\n        with:\n          persist-credentials: false$/m, 'build checkout does not persist its token');
-        assert.match(workflow, /^  release:\n    name: Publish GitHub Release\n    needs: build\n    if: .+\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n/m, 'only release receives contents:write');
+        assert.match(workflow, /^  release:\n    name: Publish GitHub Release\n    needs: build\n    if: .+\n    environment: production-release\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n/m, 'only release receives contents:write and uses the release environment');
         assert.match(workflow, /^      - name: Checkout Repository\n        uses: actions\/checkout@v4\n        with:\n          persist-credentials: false$/m, 'release checkout does not persist its token');
+    });
+
+    await ok('manual publishing is restricted to the protected version-tag environment', () => {
+        const releaseWorkflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'build-and-release.yml'), 'utf8');
+        const ovsxWorkflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'open-vsx-publish.yml'), 'utf8');
+        assert.ok(releaseWorkflow.includes("    if: startsWith(github.ref, 'refs/tags/v')\n"), 'GitHub Release is gated to version tags only');
+        assert.doesNotMatch(releaseWorkflow, /github.event_name\s*==\s*'workflow_dispatch'/, 'manual dispatch cannot bypass the version-tag gate');
+        assert.ok(releaseWorkflow.includes('    environment: production-release'), 'GitHub Release requires the protected release environment');
+        assert.ok(ovsxWorkflow.includes("    if: startsWith(github.ref, 'refs/tags/v')\n"), 'Open VSX publishing is gated to version tags only');
+        assert.doesNotMatch(ovsxWorkflow, /github.event_name\s*==\s*'workflow_dispatch'/, 'manual dispatch cannot bypass the version-tag gate');
+        assert.ok(ovsxWorkflow.includes('    environment: production-release'), 'Open VSX publishing requires the protected release environment');
     });
 
     await ok('Open VSX publisher is integrity-pinned before the publishing secret is injected', () => {
