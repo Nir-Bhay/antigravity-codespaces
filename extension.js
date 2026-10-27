@@ -768,14 +768,6 @@ async function activate(context) {
             const account = cs.account || authManager.getActiveAccount();
 
             try {
-                // Store last connected codespace for quick reconnect (Issue #4 §G)
-                await context.globalState.update(LAST_CODESPACE_KEY, {
-                    name: cs.name,
-                    displayName: cs.displayName || cs.name,
-                    account: account,
-                    repository: cs.repository
-                });
-
                 await vscode.window.withProgress(
                     { location: vscode.ProgressLocation.Notification, title: `Connecting to ${cs.displayName || cs.name}...`, cancellable: false },
                     async (progress) => {
@@ -918,6 +910,20 @@ async function activate(context) {
                                 sidebarProvider.refresh();
                                 dashboardProvider.refreshHtml();
                                 showOpError(ux.title, `connect ${cs.name}`, null, { ux, sshCommand: `gh cs ssh -c ${cs.name}` });
+                            }
+                        }
+
+                        // Save only after one of the connection launch paths succeeded.
+                        if (connected) {
+                            try {
+                                await context.globalState.update(LAST_CODESPACE_KEY, {
+                                    name: cs.name,
+                                    displayName: cs.displayName || cs.name,
+                                    account: account,
+                                    repository: cs.repository
+                                });
+                            } catch (e) {
+                                logger.warn(`connect: unable to save last Codespace ${cs.name}`, e && e.message);
                             }
                         }
 
