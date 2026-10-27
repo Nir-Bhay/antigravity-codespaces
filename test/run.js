@@ -769,6 +769,19 @@ function ok(name, fn) {
         assert.ok(src.includes('globalState.get(LAST_CODESPACE_KEY)'), 'reads last codespace from globalState');
         assert.ok(src.includes('globalState.update(LAST_CODESPACE_KEY'), 'stores last codespace in globalState');
     });
+    await ok('connect updates the last Codespace only after a successful launch', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const connectStart = src.indexOf("registerCommand('antigravity-codespaces.connect'");
+        const connectEnd = src.indexOf('// ── Command: Start', connectStart);
+        const connect = src.slice(connectStart, connectEnd);
+        const preflight = connect.indexOf('if (!(await ghPreflight(cs, account)))');
+        const successGate = connect.indexOf('if (connected) {', preflight);
+        const save = connect.indexOf('globalState.update(LAST_CODESPACE_KEY');
+        assert.ok(connectStart >= 0 && connectEnd > connectStart, 'connect handler source is present');
+        assert.ok(preflight >= 0, 'preflight occurs in the connect handler');
+        assert.ok(successGate > preflight, 'last-target persistence is gated by successful connection');
+        assert.ok(save > successGate, 'last Codespace is stored only after the success gate');
+    });
     await ok('extension.js connect shows staged progress (§E)', () => {
         const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
         assert.ok(src.includes("'Step 1/4: Checking gh CLI...'"), 'step 1 progress');
