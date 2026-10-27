@@ -68,7 +68,25 @@ test('calls the documented start, stop, logs, ports, and status commands', async
   ]);
 });
 
-test('surfaces a sanitized failure on nonzero GitHub CLI exit', async () => {
+test('maps rate limits, Codespaces quota errors, and start failures to actionable messages', async () => {
+  const rateLimited = createGhClient({ runProcessImpl: fakeProcess([{
+    exitCode: 1, stdout: '', stderr: 'HTTP 403: API rate limit exceeded', timedOut: false, outputTruncated: false
+  }]).run });
+  await assert.rejects(rateLimited.listCodespaces(), /GitHub API rate limit reached/);
+
+  const overQuota = createGhClient({ runProcessImpl: fakeProcess([
+    '12345',
+    { exitCode: 1, stdout: '', stderr: 'Codespaces quota exceeded for this account', timedOut: false, outputTruncated: false }
+  ]).run });
+  await assert.rejects(overQuota.createCodespace('octocat/hello-world', 'main'), /Codespaces quota or billing limit/);
+
+  const startFailed = createGhClient({ runProcessImpl: fakeProcess([{
+    exitCode: 1, stdout: '', stderr: 'HTTP 409: Codespace failed to start', timedOut: false, outputTruncated: false
+  }]).run });
+  await assert.rejects(startFailed.startCodespace('octocat-space'), /Could not start Codespace octocat-space/);
+});
+
+test('preserves sanitized details for other GitHub CLI failures', async () => {
   const process = fakeProcess([{ exitCode: 1, stdout: '', stderr: 'authentication failed', timedOut: false, outputTruncated: false }]);
   const gh = createGhClient({ runProcessImpl: process.run });
   await assert.rejects(gh.listCodespaces(), /gh codespace list failed with exit code 1: authentication failed/);

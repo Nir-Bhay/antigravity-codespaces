@@ -18,15 +18,19 @@ export function validateCodespaceName(codespaceName) {
   return codespaceName;
 }
 
-export function validateRunInput({ codespaceName, command, timeoutMs = DEFAULT_TIMEOUT_MS }) {
-  validateCodespaceName(codespaceName);
+export function validateCommandInput({ command, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   if (typeof command !== 'string' || command.trim().length === 0 || command.length > MAX_REMOTE_SCRIPT_CHARS) {
     throw new TypeError(`command must be a non-empty script of at most ${MAX_REMOTE_SCRIPT_CHARS} characters.`);
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > MAX_TIMEOUT_MS) {
     throw new TypeError(`timeoutMs must be an integer between 1000 and ${MAX_TIMEOUT_MS}.`);
   }
-  return { codespaceName, command, timeoutMs };
+  return { command, timeoutMs };
+}
+
+export function validateRunInput({ codespaceName, command, timeoutMs } = {}) {
+  validateCodespaceName(codespaceName);
+  return { codespaceName, ...validateCommandInput({ command, timeoutMs }) };
 }
 
 export function redactSensitiveText(text) {

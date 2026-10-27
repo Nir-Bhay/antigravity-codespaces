@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createCodespaceManager, findMatchingCodespace, withRepositoryLock } from '../src/codespace-manager.mjs';
+import { validateRunInput } from '../src/process-runner.mjs';
 import { detectRepositoryContext, parseGitHubRepository } from '../src/git-context.mjs';
 
 function context(repository = 'octocat/hello-world', branch = 'feature/test') {
@@ -123,6 +124,26 @@ test('creates a Codespace only after an exact repo/branch match is absent', asyn
   assert.equal(gh.calls.stop, 1);
 });
 
+test('validates repository commands and timeouts before Codespace lifecycle calls', async () => {
+  const gh = fakeGh();
+  let detectCalls = 0;
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => { detectCalls++; return context(); },
+    lock: async (_key, operation) => operation(),
+    runCommand: async ({ codespaceName, command, timeoutMs }) => {
+      validateRunInput({ codespaceName: codespaceName || 'octocat-space', command, timeoutMs });
+      return { exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, outputTruncated: false };
+    },
+    startupTimeoutMs: 1_000
+  });
+
+  await assert.rejects(manager.runRepositoryCommand({ command: '  ' }), /non-empty script/);
+  await assert.rejects(manager.runRepositoryCommand({ command: 'npm test', timeoutMs: 999 }), /timeoutMs/);
+  assert.equal(detectCalls, 0);
+  assert.deepEqual(gh.calls, { list: 0, create: 0, start: 0, stop: 0 });
+});
+
 test('serializes concurrent requests across server processes to prevent duplicate creation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'codespaces-mcp-lock-'));
   const gh = fakeGh();
@@ -144,6 +165,7 @@ test('serializes concurrent requests across server processes to prevent duplicat
       second.runRepositoryCommand({ command: 'npm run check' })
     ]);
     assert.equal(gh.calls.create, 1);
+    assert.equal(results[0].codespaceName, results[1].codespaceName);
     assert.deepEqual(results.map(result => result.created), [true, false]);
     assert.equal(gh.calls.start, 1);
   } finally {

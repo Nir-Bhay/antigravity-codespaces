@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectRepositoryContext } from './git-context.mjs';
 import { createGhClient } from './gh-client.mjs';
-import { runCodespaceCommand, validateCodespaceName } from './process-runner.mjs';
+import { runCodespaceCommand, validateCodespaceName, validateCommandInput } from './process-runner.mjs';
 import { buildLocalPatch, buildRemoteWorktreeCommand } from './local-sync.mjs';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15 * 60 * 1000;
@@ -188,20 +188,21 @@ export function createCodespaceManager({
       return gh.getCodespacePorts(name);
     },
 
-    async runRepositoryCommand({ cwd, command, timeoutMs, onOutput, syncLocalChanges = false }) {
+    async runRepositoryCommand({ cwd, command, timeoutMs, onOutput, syncLocalChanges = false } = {}) {
+      const validated = validateCommandInput({ command, timeoutMs });
       const context = await detectContext({ cwd });
       const localSnapshot = syncLocalChanges ? await buildLocalPatch(context.cwd) : null;
+      const remoteCommand = localSnapshot
+        ? buildRemoteWorktreeCommand({ repository: context.repository, head: localSnapshot.head, command: validated.command, runId: randomUUID() })
+        : validated.command;
       const key = `${context.repository.toLowerCase()}\0${context.branch}`;
       return lock(key, async () => {
         const resource = await ensureAvailable(context);
         let result;
         let runError;
         try {
-          const remoteCommand = localSnapshot
-            ? buildRemoteWorktreeCommand({ repository: context.repository, head: localSnapshot.head, command, runId: randomUUID() })
-            : command;
           result = await runCommand(
-            { codespaceName: resource.codespace.name, command: remoteCommand, timeoutMs, input: localSnapshot?.patch },
+            { codespaceName: resource.codespace.name, command: remoteCommand, timeoutMs: validated.timeoutMs, input: localSnapshot?.patch },
             { onOutput }
           );
         } catch (error) {

@@ -35,6 +35,7 @@ The server uses MCP over stdio. Protocol messages use stdout; diagnostics must g
 - Set `syncLocalChanges: true` to transfer staged/unstaged tracked changes and non-ignored untracked files (up to 5 MiB) into a detached temporary Git worktree in the Codespace. The local and remote HEAD commits must match. The temporary worktree is removed after the command, so remote file changes are not retained.
 - `run_codespace_command` runs a shell command or script in an explicitly named, existing Codespace.
 - `list_codespaces`, `get_codespace_status`, `start_codespace`, `stop_codespace`, `get_codespace_logs`, and `get_codespace_ports` expose basic lifecycle and status operations. There is intentionally no delete tool.
+- GitHub CLI failures are sanitized, with actionable messages for API rate limits, Codespaces quota or billing limits, and Codespace start failures.
 
 Commands execute remotely and can change files or consume Codespaces compute. Creating or starting a Codespace can incur compute charges; stopping it ends compute usage but does not remove storage charges. The server does not promise zero cost. Local-change sync is opt-in because untracked files may contain private data; ignored files are excluded. It refuses to patch when the local and remote HEAD commits differ. Logs and forwarded URLs may contain sensitive information; review them before sharing.
 

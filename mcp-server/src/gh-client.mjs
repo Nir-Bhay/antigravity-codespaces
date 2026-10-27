@@ -7,6 +7,23 @@ const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 function cliError(args, result) {
   const detail = (result.stderr || result.stdout || '').trim().slice(0, MAX_ERROR_CHARS);
   const verb = args.slice(0, 2).join(' ');
+  const lowerDetail = detail.toLowerCase();
+  if (/api rate limit exceeded|secondary rate limit|rate limit exceeded/.test(lowerDetail)) {
+    return new Error(`GitHub API rate limit reached while running gh ${verb}; retry after the limit resets.${detail ? ` ${detail}` : ''}`);
+  }
+  if (/quota|billing|spending limit/.test(lowerDetail) && /codespace/i.test(args.join(' '))) {
+    return new Error(`Codespaces quota or billing limit blocked the request. Check GitHub Codespaces usage and billing.${detail ? ` ${detail}` : ''}`);
+  }
+
+  const startPath = args.find(argument => /^\/user\/codespaces\/[^/]+\/start$/.test(argument));
+  const cliNameIndex = args[0] === 'codespace' && args[1] === 'start' ? args.indexOf('--codespace') : -1;
+  const encodedName = startPath?.split('/').at(-2) || (cliNameIndex >= 0 ? args[cliNameIndex + 1] : null);
+  if (encodedName) {
+    let name = encodedName;
+    try { name = decodeURIComponent(encodedName); } catch {}
+    return new Error(`Could not start Codespace ${name}${detail ? `: ${detail}` : '.'}`);
+  }
+
   return new Error(`gh ${verb} failed with exit code ${result.exitCode}${detail ? `: ${detail}` : '.'}`);
 }
 
