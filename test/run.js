@@ -335,6 +335,72 @@ function ok(name, fn) {
         }
     });
 
+    await ok('ensureSSHConfigEntry propagates SSH config directory write failures', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-write-failure-'));
+        const configDir = path.join(tmp, 'blocked');
+        const cfg = path.join(configDir, 'config');
+        const knownHosts = path.join(tmp, 'known_hosts');
+        const originalMkdirSync = fs.mkdirSync;
+        const originalConsoleError = console.error;
+        process.env.ANTIGRAVITY_SSH_CONFIG = cfg;
+        process.env.ANTIGRAVITY_KNOWN_HOSTS = knownHosts;
+        fs.mkdirSync = function (target, ...args) {
+            if (target === configDir) {
+                const err = new Error('EACCES: permission denied, mkdir');
+                err.code = 'EACCES';
+                throw err;
+            }
+            return originalMkdirSync.call(this, target, ...args);
+        };
+        console.error = () => {};
+        try {
+            assert.throws(
+                () => sshManager.ensureSSHConfigEntry({ name: 'blocked-cs' }, 'octo'),
+                (err) => err.code === 'EACCES'
+            );
+            assert.strictEqual(fs.existsSync(cfg), false, 'failed write must not leave a successful-looking config');
+        } finally {
+            fs.mkdirSync = originalMkdirSync;
+            console.error = originalConsoleError;
+            delete process.env.ANTIGRAVITY_SSH_CONFIG;
+            delete process.env.ANTIGRAVITY_KNOWN_HOSTS;
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+
+    await ok('ensureSSHConfigEntry propagates managed known_hosts setup failures', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-known-hosts-failure-'));
+        const knownHostsDir = path.join(tmp, 'blocked-known-hosts');
+        const cfg = path.join(tmp, 'config');
+        const knownHosts = path.join(knownHostsDir, 'known_hosts');
+        const originalMkdirSync = fs.mkdirSync;
+        const originalConsoleError = console.error;
+        process.env.ANTIGRAVITY_SSH_CONFIG = cfg;
+        process.env.ANTIGRAVITY_KNOWN_HOSTS = knownHosts;
+        fs.mkdirSync = function (target, ...args) {
+            if (target === knownHostsDir) {
+                const err = new Error('EACCES: permission denied, mkdir');
+                err.code = 'EACCES';
+                throw err;
+            }
+            return originalMkdirSync.call(this, target, ...args);
+        };
+        console.error = () => {};
+        try {
+            assert.throws(
+                () => sshManager.ensureSSHConfigEntry({ name: 'blocked-known-hosts-cs' }, 'octo'),
+                (err) => err.code === 'EACCES'
+            );
+            assert.strictEqual(fs.existsSync(cfg), false, 'must not report success when managed known_hosts setup fails');
+        } finally {
+            fs.mkdirSync = originalMkdirSync;
+            console.error = originalConsoleError;
+            delete process.env.ANTIGRAVITY_SSH_CONFIG;
+            delete process.env.ANTIGRAVITY_KNOWN_HOSTS;
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+
     await ok('same-name Codespaces keep distinct account-scoped SSH entries', () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-account-test-'));
         const cfg = path.join(tmp, 'config');
@@ -638,6 +704,27 @@ function ok(name, fn) {
         assert.ok(dash.includes("listEl.textContent = 'Repository list unavailable: ' + error + ' Try manual entry below.'"),
             'repository picker must display the incomplete-list error as text and preserve manual entry');
     });
+
+
+    await ok('SSH config write failures abort Connect and are excluded from Sync All count', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const connectAt = src.indexOf("registerCommand('antigravity-codespaces.connect'");
+        const connectEnd = src.indexOf('// ── Command: Start', connectAt);
+        const connect = src.slice(connectAt, connectEnd);
+        const writeAt = connect.indexOf('const hostAlias = ensureSSHConfigEntry(cs, account);');
+        const openAt = connect.indexOf("'vscode.openFolder'");
+        assert.ok(writeAt >= 0 && openAt > writeAt, 'SSH config must be written before Connect opens the remote folder');
+        assert.match(connect, /catch \(err\) \{\s*await showOpError\(/);
+        assert.ok(connect.includes('Connection error:'), 'Connect must surface the propagated write error');
+
+        const syncAt = src.indexOf("registerCommand('antigravity-codespaces.syncAllSSH'");
+        const syncEnd = src.indexOf('// ── Startup Auto-Sync', syncAt);
+        const sync = src.slice(syncAt, syncEnd);
+        assert.match(sync, /try \{\s*ensureSSHConfigEntry\(cs, acc\.account\);\s*n\+\+;\s*\} catch \(err\) \{\s*failedSync\.push/);
+        assert.match(sync, /if \(failedSync\.length && n === 0\)/);
+        assert.match(sync, /msg \+= .*failed:/);
+    });
+
 
 
     console.log('connectPreflight (issue #3/#4 §C)');

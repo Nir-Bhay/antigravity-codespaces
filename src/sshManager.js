@@ -70,7 +70,7 @@ function ensureManagedKnownHosts() {
         return knownHostsPath;
     } catch (err) {
         console.error('Failed to create managed known_hosts:', err);
-        return knownHostsPath;
+        throw err;
     }
 }
 
@@ -509,7 +509,7 @@ function ensureSSHConfigEntry(cs, account) {
         return exactHost;
     } catch (err) {
         console.error('SSH config generation error:', err);
-        return exactHost;
+        throw err;
     }
 }
 

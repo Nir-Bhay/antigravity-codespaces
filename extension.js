@@ -570,15 +570,23 @@ async function activate(context) {
                             ...buttons
                         );
                         if (act === 'Fix Remote Platform') {
-                            const alias = ensureSSHConfigEntry(cs, cs.account || authManager.getActiveAccount());
-                            const r = await ensureLinuxRemotePlatform(alias, {
-                                config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
-                                target: vscode.ConfigurationTarget.Global,
-                                log: (m) => logger.info(m)
-                            });
-                            vscode.window.showInformationMessage(r.error
-                                ? `Couldn't update remote.SSH.remotePlatform — set "${alias}": "linux" in settings manually.`
-                                : `remote.SSH.remotePlatform["${alias}"] is now "linux". Reconnect to apply.`);
+                            try {
+                                const alias = ensureSSHConfigEntry(cs, cs.account || authManager.getActiveAccount());
+                                const r = await ensureLinuxRemotePlatform(alias, {
+                                    config: vscode.workspace.getConfiguration(PLATFORM_SETTING_SECTION),
+                                    target: vscode.ConfigurationTarget.Global,
+                                    log: (m) => logger.info(m)
+                                });
+                                vscode.window.showInformationMessage(r.error
+                                    ? `Couldn't update remote.SSH.remotePlatform — set "${alias}": "linux" in settings manually.`
+                                    : `remote.SSH.remotePlatform["${alias}"] is now "linux". Reconnect to apply.`);
+                            } catch (err) {
+                                await showOpError(
+                                    `Couldn't configure SSH for ${cs.name}: ${friendlyError(err)}`,
+                                    `testSSH config ${cs.name}`,
+                                    err
+                                );
+                            }
                         } else if (act === 'Remove Host Key') {
                             if (removeHostFromManagedKnownHosts(exactHost)) {
                                 vscode.window.showInformationMessage(`Removed host key for ${exactHost}. Try connecting again.`);
@@ -1141,7 +1149,15 @@ async function activate(context) {
                     await Promise.all(accounts.map(async (acc) => {
                         try {
                             const list = await githubApi.listCodespaces(acc.account);
-                            list.forEach(cs => { ensureSSHConfigEntry(cs, acc.account); n++; });
+                            for (const cs of list) {
+                                try {
+                                    ensureSSHConfigEntry(cs, acc.account);
+                                    n++;
+                                } catch (err) {
+                                    failedSync.push(`${acc.account}/${cs.name} (${friendlyError(err)})`);
+                                    logger.warn(`syncAllSSH: write failed for ${cs.name} on ${acc.account}`, err.message);
+                                }
+                            }
                         } catch (err) {
                             failedSync.push(`${acc.account} (${friendlyError(err)})`);
                             logger.warn(`syncAllSSH: list failed for ${acc.account}`, err.message);
@@ -1149,7 +1165,7 @@ async function activate(context) {
                     }));
                     if (failedSync.length && n === 0) {
                         await showOpError(
-                            `Sync failed for every account: ${failedSync.join('; ')}. Check connection and sign-in, then retry.`,
+                            `Sync failed: no Codespace SSH entries were written. ${failedSync.join('; ')}`,
                             'syncAllSSH'
                         );
                     } else {
@@ -1157,7 +1173,7 @@ async function activate(context) {
                             ((cleaned.removedBlocks || cleaned.removedKeys)
                                 ? ` (cleaned ${cleaned.removedBlocks || 0} stale blocks, ${cleaned.removedKeys || 0} phantom keys)`
                                 : '');
-                        if (failedSync.length) msg += ` — skipped: ${failedSync.join('; ')}`;
+                        if (failedSync.length) msg += ` — failed: ${failedSync.join('; ')}`;
                         vscode.window.showInformationMessage(msg);
                     }
                     sidebarProvider.refresh();
@@ -1178,7 +1194,13 @@ async function activate(context) {
                 await Promise.all(accounts.map(async (acc) => {
                     try {
                         const list = await githubApi.listCodespaces(acc.account);
-                        list.forEach(cs => ensureSSHConfigEntry(cs, acc.account));
+                        for (const cs of list) {
+                            try {
+                                ensureSSHConfigEntry(cs, acc.account);
+                            } catch (e) {
+                                logger.warn(`startup SSH sync: ${acc.account}/${cs.name} skipped`, e && e.message);
+                            }
+                        }
                     } catch (e) { logger.warn(`startup SSH sync: ${acc.account} skipped`, e && e.message); }
                 }));
                 await statusBar.update();
