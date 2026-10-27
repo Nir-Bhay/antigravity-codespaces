@@ -737,6 +737,29 @@ function ok(name, fn) {
         const result = await sshManager.checkRemoteFolderExists('cs.test', '/workspaces/missing', { runCommandWithDetails: mockRunner });
         assert.strictEqual(result.exists, false, 'folder does not exist');
     });
+    await ok('checkRemoteFolderExists passes hostile paths as one POSIX-quoted remote command', async () => {
+        const sshManager = require('../src/sshManager');
+        const paths = [
+            '/workspaces/proj; printf POC >&2',
+            '/workspaces/$(printf POC >&2)',
+            '/workspaces/proj > /tmp/poc',
+            '/workspaces/proj\nprintf POC >&2',
+            "/workspaces/O'Reilly"
+        ];
+        for (const folderPath of paths) {
+            let capturedArgs;
+            const result = await sshManager.checkRemoteFolderExists('cs.test', folderPath, {
+                runCommandWithDetails: async (_cmd, args) => {
+                    capturedArgs = args;
+                    return { stdout: 'exists\n', stderr: '', exitCode: 0 };
+                }
+            });
+            assert.strictEqual(result.exists, true);
+            const remoteArgs = capturedArgs.slice(capturedArgs.indexOf('cs.test') + 1);
+            const quotedPath = "'" + folderPath.replace(/'/g, "'\\''") + "'";
+            assert.deepStrictEqual(remoteArgs, [`test -d ${quotedPath} && echo exists`]);
+        }
+    });
     await ok('extension.js connect uses GithubApi.getBestFolder and checkRemoteFolderExists', () => {
         const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
         assert.ok(src.includes('GithubApi.getBestFolder'), 'uses getBestFolder');
