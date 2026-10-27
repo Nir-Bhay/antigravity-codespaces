@@ -107,6 +107,22 @@ test('starts a matching stopped Codespace and stops it after the command', async
   assert.equal(gh.calls.stop, 1);
 });
 
+test('stops a Codespace it started even when the remote command exits nonzero', async () => {
+  const gh = fakeGh({ codespaces: [{ name: 'octocat-stopped', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Shutdown' }], state: 'Shutdown' });
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => context(),
+    lock: async (_key, operation) => operation(),
+    runCommand: async () => ({ exitCode: 2, stdout: '', stderr: 'failed', timedOut: false, outputTruncated: false }),
+    sleep: async () => {},
+    startupTimeoutMs: 1_000
+  });
+  const result = await manager.runRepositoryCommand({ command: 'npm test' });
+  assert.equal(result.result.exitCode, 2);
+  assert.equal(result.stoppedAfterRun, true);
+  assert.equal(gh.calls.stop, 1);
+});
+
 test('creates a Codespace only after an exact repo/branch match is absent', async () => {
   const gh = fakeGh({ codespaces: [{ name: 'different-branch', repository: 'octocat/hello-world', gitStatus: { ref: 'main' }, state: 'Available' }] });
   const manager = createCodespaceManager({
