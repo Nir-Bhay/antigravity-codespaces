@@ -62,7 +62,7 @@
   },
   "icon": "icon.png",
   "scripts": {
-    "test": "node test/run.js",
+    "test": "node test/run.js && npm --prefix mcp-server test",
     "check": "node -c extension.js"
   },
   "activationEvents": [

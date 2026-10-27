@@ -1,6 +1,8 @@
 name: Build & Release VSIX
 
 on:
+  pull_request:
+    branches: [ main ]
   push:
     branches: [ main ]
     tags:
@@ -29,6 +31,9 @@ jobs:
 
       - name: Validate Extension Syntax
         run: node -c extension.js
+
+      - name: Install MCP Server Dependencies
+        run: npm ci --prefix mcp-server
 
       - name: Run Unit Tests
         run: npm test

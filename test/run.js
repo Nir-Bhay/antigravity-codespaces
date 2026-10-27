@@ -36,6 +36,12 @@ function ok(name, fn) {
         assert.match(workflow, /^      - name: Checkout Repository\n        uses: actions\/checkout@v4\n        with:\n          persist-credentials: false$/m, 'release checkout does not persist its token');
     });
 
+    await ok('pull requests run the validation build while publishing remains tag-only', () => {
+        const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'build-and-release.yml'), 'utf8');
+        assert.match(workflow, /^  pull_request:\n    branches: \[ main \]$/m, 'pull requests targeting main run CI');
+        assert.ok(workflow.includes("    if: startsWith(github.ref, 'refs/tags/v')\n"), 'the release job remains limited to version tags');
+    });
+
     await ok('manual publishing is restricted to the protected version-tag environment', () => {
         const releaseWorkflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'build-and-release.yml'), 'utf8');
         const ovsxWorkflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'open-vsx-publish.yml'), 'utf8');
