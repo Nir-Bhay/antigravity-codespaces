@@ -36,6 +36,33 @@ function ok(name, fn) {
         assert.match(workflow, /^      - name: Checkout Repository\n        uses: actions\/checkout@v4\n        with:\n          persist-credentials: false$/m, 'release checkout does not persist its token');
     });
 
+    await ok('Open VSX publisher is integrity-pinned before the publishing secret is injected', () => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+        const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+        const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'open-vsx-publish.yml'), 'utf8');
+        const pin = pkg.devDependencies && pkg.devDependencies.ovsx;
+        assert.strictEqual(typeof pin, 'string', 'ovsx must be a development dependency');
+        assert.ok(
+            pin.split('.').length === 3 && pin.split('.').every(part => part && Number.isInteger(Number(part))),
+            'ovsx must be an exact version, not a semver range'
+        );
+        assert.strictEqual(lock.packages[''].devDependencies.ovsx, pin, 'lockfile must match the exact manifest pin');
+        const publisher = lock.packages['node_modules/ovsx'];
+        assert.strictEqual(publisher.version, pin);
+        assert.strictEqual(publisher.engines.node, '>=22.0.0');
+        assert.ok(workflow.includes('node-version: 22'), 'publisher workflow must meet the locked tool runtime');
+        assert.ok(publisher.resolved.startsWith('https://registry.npmjs.org/ovsx/-/ovsx-') && publisher.resolved.endsWith('.tgz'));
+        assert.match(publisher.integrity, /^sha512-[A-Za-z0-9+/]+={0,2}$/, 'publisher lock entry must have SHA-512 integrity');
+        const install = workflow.indexOf('npm ci --ignore-scripts');
+        const verify = workflow.indexOf('node scripts/check-ovsx-pin.js');
+        const publish = workflow.indexOf('      - name: Publish to Open VSX Registry');
+        assert.ok(install >= 0 && verify > install && publish > verify, 'locked install and pin verification must precede the secret-bearing publish step');
+        assert.ok(workflow.includes('./node_modules/.bin/ovsx publish '), 'publish must use the locally installed, locked binary');
+        assert.ok(!workflow.includes('npx ovsx publish'), 'publish must not resolve ovsx at runtime');
+        assert.ok(!workflow.includes('--pat'), 'token must not be passed as a command-line argument');
+        assert.ok(workflow.includes('OVSX_PAT: ${{ secrets.OVSX_PAT }}'), 'token should be scoped to the publish step environment');
+    });
+
     console.log('utils');
     await ok('escapeHtml escapes all five entities', () => {
         assert.strictEqual(escapeHtml('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');

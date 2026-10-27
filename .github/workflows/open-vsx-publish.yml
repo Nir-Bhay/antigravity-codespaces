@@ -20,13 +20,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Validate Extension Syntax
         run: node -c extension.js
 
       - name: Run Unit Tests
         run: npm test
+
+      - name: Install locked publishing tool
+        run: npm ci --ignore-scripts
+
+      - name: Verify locked Open VSX publisher
+        run: node scripts/check-ovsx-pin.js
 
       - name: Package Extension (VSIX)
         run: npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
@@ -37,6 +43,6 @@ jobs:
             echo "OVSX_PAT secret is not set — add it in Settings → Secrets → Actions."
             exit 1
           fi
-          npx ovsx publish *.vsix --pat "$OVSX_PAT"
+          ./node_modules/.bin/ovsx publish *.vsix
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
