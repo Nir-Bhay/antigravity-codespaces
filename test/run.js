@@ -1449,6 +1449,18 @@ function ok(name, fn) {
         await assert.rejects(() => gapi.ghFetch('https://api.github.com/x', {}, { fetchImpl: hang, timeoutMs: 50 }), (e) => e.kind === 'timeout' && /GitHub isn't responding/.test(e.message));
         assert.strictEqual(gapi.FETCH_TIMEOUT_MS, 15000);
     });
+    await ok('ghFetch: timeout covers a response body that never settles', async () => {
+        let signal;
+        const api = new gapi.GithubApi({ getToken: async () => 't' }, {
+            timeoutMs: 30,
+            fetchImpl: async (_url, options) => {
+                signal = options.signal;
+                return { status: 200, ok: true, headers: { get: () => null }, json: () => new Promise(() => {}) };
+            }
+        });
+        await assert.rejects(() => api.fetchUserRepos('alice'), (e) => e.kind === 'timeout' && /GitHub isn't responding/.test(e.message));
+        assert.strictEqual(signal.aborted, true);
+    });
     await ok('ghFetch: 503 retried once, then "GitHub is having trouble right now." (server kind)', async () => {
         let n = 0;
         await assert.rejects(() => gapi.ghFetch('u', {}, { fetchImpl: async () => { n++; return resp(503); }, retryDelayMs: 0 }), (e) => e.kind === 'server' && e.status === 503 && /having trouble/.test(e.message));
@@ -1462,7 +1474,7 @@ function ok(name, fn) {
         const src = fs.readFileSync(path.join(ROOT, 'src', 'githubApi.js'), 'utf8');
         assert.strictEqual((src.match(/await fetch\(/g) || []).length, 0);
         assert.strictEqual((src.match(/await this\._fetch\(/g) || []).length, 6);
-        assert.ok(src.includes('new AbortController()') && src.includes('clearTimeout(timer)'));
+        assert.ok(src.includes('new AbortController()') && src.includes('clearTimeout(requestTimer)') && src.includes('clearTimeout(bodyTimer)'));
     });
     await ok('listCodespaces: a timeout surfaces immediately (no slow CLI fallback)', async () => {
         const api = new gapi.GithubApi({ getToken: async () => 't', getActiveAccount: () => 'octocat' }, { fetchImpl: hang, timeoutMs: 30 });

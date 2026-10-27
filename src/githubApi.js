@@ -11,6 +11,7 @@ const API_HEADERS = {
 const FETCH_TIMEOUT_MS = 15000;
 const RETRY_5XX_DELAY_MS = 5000;
 const GITHUB_STATUS_URL = 'https://www.githubstatus.com/';
+const BODY_READERS = new Set(['arrayBuffer', 'blob', 'formData', 'json', 'text']);
 
 /** Error with a machine-readable kind ('timeout' | 'server' | 'network') for the UI. */
 class GithubRequestError extends Error {
@@ -26,20 +27,64 @@ async function ghFetch(url, opts = {}, deps = {}) {
     const timeoutMs = deps.timeoutMs || FETCH_TIMEOUT_MS;
     const retryDelay = deps.retryDelayMs == null ? RETRY_5XX_DELAY_MS : deps.retryDelayMs;
     const once = async () => {
-        // Own controller + ref'd timer (AbortSignal.timeout's timer is unref'd and can't be cleared).
+        // Bound the full request, including response-body reads, to one deadline.
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(Object.assign(new Error('timeout'), { name: 'TimeoutError' })), timeoutMs);
+        const deadline = Date.now() + timeoutMs;
+        const timeoutError = () => new GithubRequestError('timeout', `GitHub isn't responding (${Math.round(timeoutMs / 1000)}s).`);
+        const abortForTimeout = () => ctrl.abort(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+        let rejectRequestTimeout;
+        const requestTimeout = new Promise((_, reject) => { rejectRequestTimeout = reject; });
+        requestTimeout.catch(() => {});
+        const requestTimer = setTimeout(() => {
+            abortForTimeout();
+            rejectRequestTimeout(timeoutError());
+        }, timeoutMs);
+        const request = Promise.resolve()
+            .then(() => fetchImpl(url, { ...opts, signal: ctrl.signal }))
+            .catch(err => {
+                if (ctrl.signal.aborted || (err && (err.name === 'TimeoutError' || err.name === 'AbortError'))) {
+                    throw timeoutError();
+                }
+                throw new GithubRequestError('network', "Couldn't reach GitHub. Check your internet connection.");
+            });
+        let res;
         try {
-            return await fetchImpl(url, { ...opts, signal: ctrl.signal });
+            res = await Promise.race([request, requestTimeout]);
         } catch (err) {
-            if (ctrl.signal.aborted) throw new GithubRequestError('timeout', `GitHub isn't responding (${Math.round(timeoutMs / 1000)}s).`);
-            if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-                throw new GithubRequestError('timeout', `GitHub isn't responding (${Math.round(timeoutMs / 1000)}s).`);
-            }
+            clearTimeout(requestTimer);
+            if (err && (err.kind === 'timeout' || err.kind === 'network')) throw err;
+            if (ctrl.signal.aborted || (err && (err.name === 'TimeoutError' || err.name === 'AbortError'))) throw timeoutError();
             throw new GithubRequestError('network', "Couldn't reach GitHub. Check your internet connection.");
-        } finally {
-            clearTimeout(timer);
         }
+        clearTimeout(requestTimer);
+
+        return new Proxy(res, {
+            get(target, property) {
+                const value = Reflect.get(target, property, target);
+                if (BODY_READERS.has(property) && typeof value === 'function') {
+                    return (...args) => {
+                        const remainingMs = deadline - Date.now();
+                        if (remainingMs <= 0) {
+                            abortForTimeout();
+                            return Promise.reject(timeoutError());
+                        }
+                        let rejectBodyTimeout;
+                        const bodyTimeout = new Promise((_, reject) => { rejectBodyTimeout = reject; });
+                        bodyTimeout.catch(() => {});
+                        const bodyTimer = setTimeout(() => {
+                            abortForTimeout();
+                            rejectBodyTimeout(timeoutError());
+                        }, remainingMs);
+                        const bodyRead = Promise.resolve().then(() => value.apply(target, args)).catch(err => {
+                            if (ctrl.signal.aborted || (err && (err.name === 'TimeoutError' || err.name === 'AbortError'))) throw timeoutError();
+                            throw err;
+                        });
+                        return Promise.race([bodyRead, bodyTimeout]).finally(() => clearTimeout(bodyTimer));
+                    };
+                }
+                return typeof value === 'function' ? value.bind(target) : value;
+            }
+        });
     };
     let res = await once();
     if (res.status >= 500) {
