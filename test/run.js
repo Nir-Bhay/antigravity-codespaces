@@ -135,6 +135,45 @@ function ok(name, fn) {
         assert.ok(calls.length >= 5);
         assert.ok(calls.every(call => call.token === 'alice-test-token'), 'all CLI fallback invocations must carry the selected account token');
     });
+    await ok('fetchUserRepos rejects partial results when a later API page fails', async () => {
+        const requested = [];
+        let cliCalls = 0;
+        const api = new GithubApi({ getToken: async () => 'test-token' }, {
+            fetchImpl: async (url) => {
+                requested.push(url);
+                const page = Number(new URL(url).searchParams.get('page'));
+                if (page === 1) return {
+                    status: 200, ok: true, headers: { get: () => null },
+                    json: async () => Array.from({ length: 100 }, (_, i) => ({ name: `repo-${i}`, full_name: `alice/repo-${i}` }))
+                };
+                return { status: 403, ok: false, headers: { get: () => null }, json: async () => ({ message: 'Forbidden' }) };
+            },
+            runCommand: async () => { cliCalls++; return '[]'; }
+        });
+
+        await assert.rejects(api.fetchUserRepos('alice'), /repository list is incomplete.*HTTP 403/i);
+        assert.strictEqual(requested.length, 2, 'the failed second page is observed');
+        assert.strictEqual(cliCalls, 0, 'partial API results are not presented via the CLI fallback');
+    });
+    await ok('fetchUserRepos reports a full final page at the 500-repository cap as incomplete', async () => {
+        const requested = [];
+        let cliCalls = 0;
+        const api = new GithubApi({ getToken: async () => 'test-token' }, {
+            fetchImpl: async (url) => {
+                requested.push(url);
+                const page = Number(new URL(url).searchParams.get('page'));
+                return {
+                    status: 200, ok: true, headers: { get: () => null },
+                    json: async () => Array.from({ length: 100 }, (_, i) => ({ name: `repo-${page}-${i}`, full_name: `alice/repo-${page}-${i}` }))
+                };
+            },
+            runCommand: async () => { cliCalls++; return '[]'; }
+        });
+
+        await assert.rejects(api.fetchUserRepos('alice'), /repository list is incomplete.*500-repository pagination limit/i);
+        assert.strictEqual(requested.length, 5, 'pagination stops at the configured five-page cap');
+        assert.strictEqual(cliCalls, 0, 'the capped partial result is not presented via the CLI fallback');
+    });
     await ok('logger works without vscode (console fallback)', () => {
         const logger = require('../src/logger');
         logger.info('test info');
@@ -516,6 +555,8 @@ function ok(name, fn) {
         }
         const dash = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
         assert.ok(dash.includes('vscode.getState()') && dash.includes('vscode.setState('), 'dashboard must preserve UI state');
+        assert.ok(dash.includes("listEl.textContent = 'Repository list unavailable: ' + error + ' Try manual entry below.'"),
+            'repository picker must display the incomplete-list error as text and preserve manual entry');
     });
 
 

@@ -2451,9 +2451,10 @@ window.addEventListener('message', event => {
   } else if (msg.command === 'reposLoaded') {
     renderWizardRepos(msg.repos);
   } else if (msg.command === 'reposError') {
-    showToast('Could not load repositories: ' + (msg.error || 'unknown error'));
+    const error = msg.error || 'unknown error';
+    showToast('Could not load repositories: ' + error);
     const listEl = document.getElementById('wizardRepoList');
-    if (listEl) listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--hub-text-muted);">Could not load repositories. Try manual entry below.</div>';
+    if (listEl) listEl.textContent = 'Repository list unavailable: ' + error + ' Try manual entry below.';
     const box = document.getElementById('manualRepoBox');
     if (box) box.style.display = 'block';
   } else if (msg.command === 'createSuccess') {
