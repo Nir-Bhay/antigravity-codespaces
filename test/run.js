@@ -666,8 +666,108 @@ function ok(name, fn) {
         const accs = await auth.getAccounts();
         assert.ok(Array.isArray(accs));
     });
+    await ok('native OAuth core discovery, token, and login request only Codespaces scopes', async () => {
+        const Module = require('module');
+        const authPath = require.resolve('../src/authManager');
+        const priorAuth = require.cache[authPath];
+        const priorVscode = require.cache.vscode;
+        const originalResolve = Module._resolveFilename;
+        const childProcess = require('child_process');
+        const originalExec = childProcess.exec;
+        const calls = [];
+        Module._resolveFilename = function (request, ...args) {
+            return request === 'vscode' ? 'vscode' : originalResolve.call(this, request, ...args);
+        };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: {
+            authentication: { getSession: async (provider, scopes, options) => {
+                calls.push({ provider, scopes, options });
+                return { account: { label: 'alice' }, accessToken: 'native-token' };
+            } },
+            window: { showInformationMessage: async () => {}, showWarningMessage: async () => 'Cancel' }
+        } };
+        childProcess.exec = (_command, _options, callback) => callback(new Error('gh unavailable'), '', '');
+        delete require.cache[authPath];
+        try {
+            const { AuthManager: MockAuthManager } = require('../src/authManager');
+            const auth = new MockAuthManager({
+                subscriptions: [],
+                globalState: { get: () => '', update: () => {} },
+                secrets: { get: async () => '[]', store: async () => {} }
+            });
+            await auth.getAccounts();
+            assert.strictEqual(await auth.getToken('alice'), 'native-token');
+            assert.strictEqual(await auth.login(), 'alice');
+            assert.strictEqual(calls.length, 3);
+            for (const call of calls) {
+                assert.strictEqual(call.provider, 'github');
+                assert.deepStrictEqual(call.scopes, ['repo', 'codespace']);
+            }
+        } finally {
+            Module._resolveFilename = originalResolve;
+            childProcess.exec = originalExec;
+            delete require.cache[authPath];
+            if (priorAuth) require.cache[authPath] = priorAuth;
+            if (priorVscode) require.cache.vscode = priorVscode;
+            else delete require.cache.vscode;
+        }
+    });
+    await ok('usage OAuth lookup is noninteractive; explicit grant may be declined without losing core auth', async () => {
+        const Module = require('module');
+        const authPath = require.resolve('../src/authManager');
+        const priorAuth = require.cache[authPath];
+        const priorVscode = require.cache.vscode;
+        const originalResolve = Module._resolveFilename;
+        const childProcess = require('child_process');
+        const originalExec = childProcess.exec;
+        const calls = [];
+        let grantApproved = false;
+        Module._resolveFilename = function (request, ...args) {
+            return request === 'vscode' ? 'vscode' : originalResolve.call(this, request, ...args);
+        };
+        require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: {
+            authentication: { getSession: async (provider, scopes, options) => {
+                calls.push({ provider, scopes, options });
+                if (scopes.includes('user')) {
+                    return grantApproved ? { account: { label: 'alice' }, accessToken: 'usage-token' } : null;
+                }
+                return { account: { label: 'alice' }, accessToken: 'core-token' };
+            } },
+            window: { showInformationMessage: async () => {} }
+        } };
+        childProcess.exec = (_command, _options, callback) => callback(new Error('gh unavailable'), '', '');
+        delete require.cache[authPath];
+        try {
+            const { AuthManager: MockAuthManager } = require('../src/authManager');
+            const auth = new MockAuthManager({ globalState: { get: () => 'alice', update: () => {} }, secrets: { get: async () => '[]', store: async () => {} } });
+            auth._accounts = [{ account: 'alice', type: 'native' }];
+            assert.strictEqual(await auth.getUsageToken('alice'), 'core-token');
+            assert.ok(!calls.some(c => c.scopes.includes('user') && c.options.createIfNone), 'background usage lookup must not prompt for the broader scope');
+            assert.strictEqual(await auth.grantUsageAccess('alice'), false, 'declined grant is a recoverable outcome');
+            assert.strictEqual(await auth.getToken('alice'), 'core-token', 'core Codespaces auth remains usable after decline');
+            grantApproved = true;
+            assert.strictEqual(await auth.grantUsageAccess('alice'), true, 'explicit grant can add the usage scope');
+            assert.strictEqual(await auth.getUsageToken('alice'), 'usage-token', 'usage retries with the granted session');
+            assert.ok(calls.some(c => c.scopes.includes('user') && c.options.createIfNone), 'the user scope is prompted only by the explicit grant method');
+        } finally {
+            Module._resolveFilename = originalResolve;
+            childProcess.exec = originalExec;
+            delete require.cache[authPath];
+            if (priorAuth) require.cache[authPath] = priorAuth;
+            if (priorVscode) require.cache.vscode = priorVscode;
+            else delete require.cache.vscode;
+        }
+    });
 
     console.log('contracts (static)');
+    await ok('usage access command upgrades native OAuth only from the explicit grant action', () => {
+        const ext = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const start = ext.indexOf("registerCommand('antigravity-codespaces.usageGrantAccess'");
+        const end = ext.indexOf('}),', start);
+        const command = ext.slice(start, end);
+        assert.ok(command.includes('authManager.grantUsageAccess(target.account)'), 'native OAuth grant should be requested from the user action');
+        assert.ok(command.includes("target.type === 'pat'"), 'PAT users should get token-specific guidance');
+        assert.ok(command.includes('gh auth refresh -h github.com -s user'), 'CLI scope refresh remains explicit');
+    });
     await ok('every contributed command is registered in extension.js', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
         const ext = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
@@ -1128,6 +1228,17 @@ function ok(name, fn) {
         assert.strictEqual(p.computeCoreHours, 40);
         assert.strictEqual(p.includedCoreHours, 40);
         assert.strictEqual(p.storageGbMonths, 3.5);
+    });
+    await ok('usage service prefers the scope-aware token and preserves the permission-recovery state', async () => {
+        let usageAccount = null, coreTokenRequested = false;
+        const svc = new us.UsageService({ authManager: {
+            getUsageToken: async (account) => { usageAccount = account; return null; },
+            getToken: async () => { coreTokenRequested = true; return 'core-token'; }
+        }, now: () => NOW });
+        const usage = await svc.getAccountUsage('alice');
+        assert.strictEqual(usageAccount, 'alice');
+        assert.strictEqual(coreTokenRequested, false, 'usage must not silently fall back to an unscoped token');
+        assert.strictEqual(usage.mode, 'needsPermission');
     });
     await ok('usage API never-resolving fetch aborts at the deadline and returns offline state', async () => {
         let signal;

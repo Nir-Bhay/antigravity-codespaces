@@ -103,7 +103,7 @@ the codespace list, and anything that failed. Then tell me to reload the window 
 - [ ] `gh cs list` shows your codespaces.
 - [ ] **Codespaces: Setup Doctor** shows all checks green.
 - [ ] **Quick Connect to Codespace...** opens a remote window under `/workspaces/<repo>`.
-- [ ] *(Optional)* Usage analytics work after **Codespaces: Grant Usage Access (gh user scope)**.
+- [ ] *(Optional)* Usage analytics work after **Codespaces: Grant Usage Access (user permission)**.
 
 ## Why the agent never touches your token
-The extension relies entirely on the GitHub CLI's own sign-in, and SSH goes through `gh cs ssh --stdio`. Your credentials stay in the GitHub CLI's secure storage, so neither the agent nor this prompt needs to see them.
+The extension can use VS Code's native GitHub sign-in, a securely stored PAT, or GitHub CLI authentication; SSH goes through `gh cs ssh --stdio`. Core sign-in requests only the `repo` and `codespace` scopes. Usage billing's additional `user` permission is requested only after the user chooses **Grant access**, and credentials are never shown to the agent or prompt.

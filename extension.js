@@ -327,12 +327,31 @@ async function activate(context) {
             await usageService.refresh();
         }),
         vscode.commands.registerCommand('antigravity-codespaces.usageGrantAccess', async (account) => {
-            // Adds the `user` scope for the billing API. Never switches the active gh account.
+            // Native OAuth scope upgrades happen only from this explicit Grant Access action.
+            const accounts = await authManager.getAccounts();
+            const target = accounts.find(a => a.account === account) || accounts.find(a => a.active);
+            if (target && target.type === 'native') {
+                const granted = await authManager.grantUsageAccess(target.account);
+                if (granted) await usageService.refresh();
+                else vscode.window.showInformationMessage(`Usage access was not granted for ${target.account}. Core Codespaces access is unchanged; you can try again from Usage.`);
+                return;
+            }
+            if (target && target.type === 'pat') {
+                const choice = await vscode.window.showInformationMessage(
+                    `Update the saved token for ${target.account} with the GitHub billing permission required by Usage, then refresh. Core Codespaces access is unchanged.`,
+                    'Open Token Settings',
+                    'Refresh Usage'
+                );
+                if (choice === 'Open Token Settings') await vscode.env.openExternal(vscode.Uri.parse('https://github.com/settings/tokens'));
+                else if (choice === 'Refresh Usage') await usageService.refresh();
+                return;
+            }
+            // CLI accounts receive the optional scope only through this explicit action.
             const t = vscode.window.createTerminal('gh auth refresh (usage)');
             t.show();
             t.sendText('gh auth refresh -h github.com -s user');
-            if (account) {
-                vscode.window.showInformationMessage(`If gh asks, approve the "user" scope for ${account} in the browser, then run "Codespaces: Refresh Usage".`);
+            if (target) {
+                vscode.window.showInformationMessage(`If gh asks, approve the "user" scope for ${target.account} in the browser, then run "Codespaces: Refresh Usage".`);
             }
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
