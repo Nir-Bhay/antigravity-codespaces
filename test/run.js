@@ -874,6 +874,43 @@ function ok(name, fn) {
         assert.ok(src.includes('lastTunnelStderr'), 'includes last tunnel stderr');
         assert.ok(src.includes('setLastTunnelStderr'), 'has method to store tunnel stderr');
     });
+    await ok('systemDoctor report uses the installed extension package version', async () => {
+        const Module = require('module');
+        const originalResolve = Module._resolveFilename;
+        const doctorPath = path.join(ROOT, 'src', 'systemDoctor.js');
+        const originalDoctorModule = require.cache[doctorPath];
+        Module._resolveFilename = function (request, ...args) {
+            return request === 'vscode' ? 'vscode' : originalResolve.call(this, request, ...args);
+        };
+        require.cache.vscode = {
+            id: 'vscode', filename: 'vscode', loaded: true,
+            exports: { window: {}, commands: {}, env: { appName: 'Test IDE' }, version: '1.2.3', extensions: { all: [] }, Uri: {}, ViewColumn: {}, workspace: { getConfiguration: () => ({ get: (k, d) => d }) } }
+        };
+        delete require.cache[doctorPath];
+        try {
+            const mod = require(doctorPath);
+            const Doctor = mod.SystemDoctor || mod;
+            const originalDiagnose = Doctor.diagnose;
+            Doctor.diagnose = async () => ({
+                ghAuthHealth: { state: 'ok', user: 'octocat' }, ghInstalled: false, ghVersion: '', ghPath: '',
+                hasOpenSsh: true, hasRemoteSsh: true, sshConfigIssues: [], remotePlatformIssues: [],
+                accountCount: 1, activeAccount: 'octocat', checks: []
+            });
+            try {
+                const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+                const report = await Doctor.generateReport({}, { lastTunnelStderr: 'No recent tunnel errors' });
+                assert.ok(report.includes(`- Extension: Antigravity Codespaces Pro v${version}`), `report should show package version ${version}`);
+                assert.ok(!report.includes('v5.0.8'), 'report must not retain the old hardcoded version');
+            } finally {
+                Doctor.diagnose = originalDiagnose;
+            }
+        } finally {
+            Module._resolveFilename = originalResolve;
+            if (originalDoctorModule) require.cache[doctorPath] = originalDoctorModule;
+            else delete require.cache[doctorPath];
+            delete require.cache.vscode;
+        }
+    });
     await ok('systemDoctor._redactAuthStatus removes all token types (source check)', () => {
         const src = fs.readFileSync(path.join(ROOT, 'src', 'systemDoctor.js'), 'utf8');
         assert.ok(src.includes("gho_[A-Za-z0-9_]+"), 'redacts gho_ tokens (OAuth)');

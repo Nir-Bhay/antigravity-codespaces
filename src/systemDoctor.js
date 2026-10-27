@@ -5,6 +5,7 @@ const os = require('os');
 const { execFile } = require('child_process');
 const { findGhExecutable, getGhAuthHealth, getSshConfigPath } = require('./sshManager');
 const { ensureLinuxRemotePlatform, switchFallbackCommand, PLATFORM_SETTING_SECTION, PLATFORM_SETTING_KEY } = require('./connectPreflight');
+const extensionPackage = require('../package.json');
 
 class SystemDoctor {
     /**
@@ -298,7 +299,7 @@ class SystemDoctor {
             '## Environment',
             `- OS: ${osType} ${osRelease} (${osPlatform}/${osArch})`,
             `- IDE: ${vscode.env.appName} ${vscode.version}`,
-            `- Extension: Antigravity Codespaces Pro v5.0.8`,
+            `- Extension: Antigravity Codespaces Pro v${extensionPackage.version}`,
             `- Node: ${process.version}`,
             '',
             '## GitHub CLI',
