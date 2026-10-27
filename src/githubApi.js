@@ -150,6 +150,9 @@ class GithubApi {
             const items = Array.isArray(data) ? data : (data.codespaces || []);
             out.push(...items);
             if (items.length < 100) break;
+            if (page === maxPages) {
+                return { items: out, incomplete: true, status: 200, limitReached: true };
+            }
         }
         return { items: out, incomplete: false, status: 200 };
     }
@@ -170,7 +173,7 @@ class GithubApi {
         // 1. Direct REST API (Zero CLI dependency!)
         if (token) {
             try {
-                const { items, incomplete, status } = await this._fetchAllPages(
+                const { items, incomplete, status, limitReached } = await this._fetchAllPages(
                     `${GITHUB_API_BASE}/user/codespaces`, token, 5);
                 if (!incomplete) {
                     const list = items.map(cs => ({
@@ -197,9 +200,11 @@ class GithubApi {
                     this._setFresh(this._csCache, cacheKey, list);
                     return list;
                 }
-                restErr = new Error(status === 403
-                    ? 'Access denied (HTTP 403). The account token may lack the "codespace" OAuth permission.'
-                    : `GitHub REST API returned HTTP ${status}`);
+                restErr = new Error(limitReached
+                    ? 'GitHub REST API reached the 500-Codespace pagination limit; results may be incomplete.'
+                    : status === 403
+                        ? 'Access denied (HTTP 403). The account token may lack the "codespace" OAuth permission.'
+                        : `GitHub REST API returned HTTP ${status}`);
             } catch (err) {
                 // Auth/rate-limit errors must surface, not silently fall back.
                 if (err && err.kind || /authentication expired|rate limit/i.test(err.message || '')) throw err;
@@ -547,19 +552,27 @@ class GithubApi {
     async fetchUserRepos(account) {
         const token = await this._authManager.getToken(account);
         if (token) {
+            let pages = null;
             try {
-                const { items, incomplete } = await this._fetchAllPages(
+                pages = await this._fetchAllPages(
                     `${GITHUB_API_BASE}/user/repos?sort=updated`, token, 5);
-                if (!incomplete || items.length > 0) {
-                    return items.map(r => ({
-                        name: r.name,
-                        nameWithOwner: r.full_name,
-                        isPrivate: r.private,
-                        description: r.description || ''
-                    }));
-                }
             } catch (err) {
                 if (err && err.kind || /authentication expired|rate limit/i.test(err.message || '')) throw err;
+            }
+            if (pages) {
+                const { items, incomplete, status, limitReached } = pages;
+                if (incomplete) {
+                    const reason = limitReached
+                        ? 'the 500-repository pagination limit was reached, so additional results may be missing'
+                        : `GitHub stopped pagination with HTTP ${status}`;
+                    throw new Error(`Repository list is incomplete: ${reason}. Please retry or enter the repository manually.`);
+                }
+                return items.map(r => ({
+                    name: r.name,
+                    nameWithOwner: r.full_name,
+                    isPrivate: r.private,
+                    description: r.description || ''
+                }));
             }
         }
 
