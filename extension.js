@@ -13,6 +13,7 @@ const {
     findGhExecutable,
     findAntigravityExecutable,
     ensureSSHConfigEntry,
+    getCodespaceIdentity,
     testSshTunnel,
     probeSshTunnelVerbose,
     cleanSshConfigFile,
@@ -551,7 +552,7 @@ async function activate(context) {
                         // exit-255 notification (issues #3, #4, #5 §E).
                         const detail = friendlyTunnelError(e);
                         const rawLine = sniffTunnelStderr(e.stderr) ? '' : ` (${e.message})`;
-                        const exactHost = `cs.${cs.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+                        const exactHost = getCodespaceIdentity(cs, cs.account || authManager.getActiveAccount()).hostAlias;
                         
                         // Build action buttons based on error type
                         const mapped = mapTunnelError(e.stderr || e.message, e.exitCode || e.code, exactHost);
@@ -759,13 +760,13 @@ async function activate(context) {
                 return;
             }
 
-            if (connectingSet.has(cs.name)) {
+            const account = cs.account || authManager.getActiveAccount();
+            const connectIdentity = getCodespaceIdentity(cs, account);
+            if (connectingSet.has(connectIdentity.key)) {
                 vscode.window.showInformationMessage(`Already connecting to ${cs.displayName || cs.name}...`);
                 return;
             }
-            connectingSet.add(cs.name);
-
-            const account = cs.account || authManager.getActiveAccount();
+            connectingSet.add(connectIdentity.key);
 
             try {
                 await vscode.window.withProgress(
@@ -774,7 +775,7 @@ async function activate(context) {
                         // Stage 1: Preflight checks
                         progress.report({ message: 'Step 1/4: Checking gh CLI...' });
                         if (!(await ghPreflight(cs, account))) {
-                            connectingSet.delete(cs.name);
+                            connectingSet.delete(connectIdentity.key);
                             return;
                         }
 
@@ -832,7 +833,7 @@ async function activate(context) {
                             });
                             
                             if (!pick) {
-                                connectingSet.delete(cs.name);
+                                connectingSet.delete(connectIdentity.key);
                                 return;
                             }
                             
@@ -843,7 +844,7 @@ async function activate(context) {
                                     validateInput: (v) => v && v.startsWith('/') ? null : 'Path must start with /'
                                 });
                                 if (!custom) {
-                                    connectingSet.delete(cs.name);
+                                    connectingSet.delete(connectIdentity.key);
                                     return;
                                 }
                                 remoteFolder = custom;
@@ -937,7 +938,7 @@ async function activate(context) {
                 sidebarProvider.refresh();
                 dashboardProvider.refreshHtml();
             } finally {
-                connectingSet.delete(cs.name);
+                connectingSet.delete(connectIdentity.key);
             }
         })
     );

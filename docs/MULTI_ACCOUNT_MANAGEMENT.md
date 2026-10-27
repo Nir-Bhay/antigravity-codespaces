@@ -58,11 +58,12 @@ You can mix and match authentication strategies across your accounts:
 ## 5. Security & Isolation Guarantees
 
 - **Zero Disk Credential Dumping**: OAuth tokens and PATs are never written to plain text files, logs, or workspace settings.
-- **Strict Host Aliasing**: Each Codespace gets a unique, collision-proof host alias in `~/.ssh/config`:
+- **Strict Host Aliasing**: Each account-and-Codespace pair gets its own SSH block and canonical host alias in `~/.ssh/config`:
   ```ssh
-  Host cs.<codespace-name> cs-<account>-<owner>-<repo>
+  # CS_ENTRY:<account>:<codespace-name>
+  Host cs.<account>.<codespace-name> cs-<account>-<owner>-<repo>
   ```
-  This guarantees that OpenSSH connects to the exact container intended without cross-account contamination.
+  The account-qualified alias keeps same-name Codespaces from different GitHub accounts independent.
 
 ---
 

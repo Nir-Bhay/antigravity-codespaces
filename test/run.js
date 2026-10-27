@@ -304,29 +304,71 @@ function ok(name, fn) {
     await ok('ensureSSHConfigEntry writes golden block, dedupes, migrates legacy', () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-test-'));
         const cfg = path.join(tmp, 'config');
+        const knownHosts = path.join(tmp, 'known_hosts');
         process.env.ANTIGRAVITY_SSH_CONFIG = cfg;
+        process.env.ANTIGRAVITY_KNOWN_HOSTS = knownHosts;
         try {
             const cs = { name: 'test-cs-123', repository: 'octo/app', account: 'octo' };
             const host = sshManager.ensureSSHConfigEntry(cs, 'octo');
-            assert.strictEqual(host, 'cs.test-cs-123');
+            assert.strictEqual(host, 'cs.octo.test-cs-123');
             let content = fs.readFileSync(cfg, 'utf8');
-            assert.match(content, /Host cs\.test-cs-123 cs-octo-octo-app cs-octo-octo-app test-cs-123/);
+            assert.match(content, /Host cs\.octo\.test-cs-123 cs-octo-octo-app cs-octo-octo-app/);
             assert.match(content, /ProxyCommand ".*" cs ssh -c "test-cs-123" --stdio/);
-            assert.match(content, /# END_CS_ENTRY:test-cs-123/);
-            // Idempotent re-run: exactly one block.
+            assert.match(content, /# END_CS_ENTRY:octo:test-cs-123/);
+            // Idempotent re-run: exactly one account-scoped block.
             sshManager.ensureSSHConfigEntry(cs, 'octo');
             content = fs.readFileSync(cfg, 'utf8');
-            assert.strictEqual(content.split('# CS_ENTRY:test-cs-123').length - 1, 1);
-            // Legacy block (no end marker) migrates to the new format.
+            assert.strictEqual(content.split('# CS_ENTRY:octo:test-cs-123').length - 1, 1);
+            // Legacy name-only blocks (with or without an end marker) migrate to the account-scoped format.
             fs.writeFileSync(cfg, `# CS_ENTRY:test-cs-123\nHost cs.test-cs-123\n  TCPKeepAlive yes\n`, 'utf8');
             sshManager.ensureSSHConfigEntry(cs, 'octo');
             content = fs.readFileSync(cfg, 'utf8');
-            assert.strictEqual(content.split('# CS_ENTRY:test-cs-123').length - 1, 1);
-            assert.match(content, /# END_CS_ENTRY:test-cs-123/);
+            assert.strictEqual(content.split('# CS_ENTRY:octo:test-cs-123').length - 1, 1);
+            assert.doesNotMatch(content, /^# CS_ENTRY:test-cs-123$/m);
+            assert.match(content, /# END_CS_ENTRY:octo:test-cs-123/);
             // Malicious name throws before any write.
             assert.throws(() => sshManager.ensureSSHConfigEntry({ name: 'x"\nHost evil' }, 'octo'));
         } finally {
             delete process.env.ANTIGRAVITY_SSH_CONFIG;
+            delete process.env.ANTIGRAVITY_KNOWN_HOSTS;
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    });
+
+    await ok('same-name Codespaces keep distinct account-scoped SSH entries', () => {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agcs-account-test-'));
+        const cfg = path.join(tmp, 'config');
+        const knownHosts = path.join(tmp, 'known_hosts');
+        process.env.ANTIGRAVITY_SSH_CONFIG = cfg;
+        process.env.ANTIGRAVITY_KNOWN_HOSTS = knownHosts;
+        try {
+            const cs = { name: 'shared-name', repository: 'octo/app' };
+            const aliceHost = sshManager.ensureSSHConfigEntry(cs, 'alice');
+            const bobHost = sshManager.ensureSSHConfigEntry(cs, 'bob');
+            sshManager.ensureSSHConfigEntry(cs, 'alice');
+            const content = fs.readFileSync(cfg, 'utf8');
+            assert.strictEqual(aliceHost, 'cs.alice.shared-name');
+            assert.strictEqual(bobHost, 'cs.bob.shared-name');
+            assert.notStrictEqual(aliceHost, bobHost, 'canonical SSH aliases must include the account');
+            assert.strictEqual(sshManager.getCodespaceIdentity(cs, 'Alice').key, sshManager.getCodespaceIdentity(cs, 'alice').key);
+            assert.match(content, /# CS_ENTRY:alice:shared-name/);
+            assert.match(content, /# CS_ENTRY:bob:shared-name/);
+            assert.match(content, /Host cs\.alice\.shared-name/);
+            assert.match(content, /Host cs\.bob\.shared-name/);
+            assert.strictEqual((content.match(/^# CS_ENTRY:/gm) || []).length, 2, 'both account blocks must remain');
+            const cleaned = sshManager.purgeLegacyBlocks(content);
+            assert.strictEqual(cleaned.removedBlocks, 0, 'cleanup must preserve both account-scoped blocks');
+            assert.match(cleaned.cfg, /# CS_ENTRY:alice:shared-name/);
+            assert.match(cleaned.cfg, /# CS_ENTRY:bob:shared-name/);
+            const extension = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+            assert.match(extension, /const connectIdentity = getCodespaceIdentity\(cs, account\);/);
+            assert.match(extension, /connectingSet\.has\(connectIdentity\.key\)/);
+            assert.match(extension, /connectingSet\.add\(connectIdentity\.key\)/);
+            assert.match(extension, /connectingSet\.delete\(connectIdentity\.key\)/);
+            assert.doesNotMatch(extension, /connectingSet\.(?:has|add|delete)\(cs\.name\)/);
+        } finally {
+            delete process.env.ANTIGRAVITY_SSH_CONFIG;
+            delete process.env.ANTIGRAVITY_KNOWN_HOSTS;
             fs.rmSync(tmp, { recursive: true, force: true });
         }
     });

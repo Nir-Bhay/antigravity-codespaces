@@ -75,7 +75,7 @@ STEP 5 - Install Antigravity Codespaces
 
 STEP 6 - remote.SSH.remotePlatform
 - Codespaces are always Linux. In the IDE's user settings.json, if "remote.SSH.remotePlatform"
-  has any entry for a codespace host (cs.<name>, cs-<account>-<repo>, or a codespace name) whose value
+  has any entry for a Codespace host (cs.<account>.<name>, cs-<account>-<repo>, or a legacy cs.<name>/name alias) whose value
   is not "linux", tell me and, after I agree, set it to "linux". Don't touch other hosts.
   (The extension's "Codespaces: Setup Doctor" can also fix this.)
 
