@@ -8,15 +8,19 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     name: Build & Validate VSIX
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -43,9 +47,13 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Download VSIX Artifact
         uses: actions/download-artifact@v4
