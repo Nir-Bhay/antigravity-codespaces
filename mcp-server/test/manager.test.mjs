@@ -166,7 +166,7 @@ test('serializes concurrent requests across server processes to prevent duplicat
     ]);
     assert.equal(gh.calls.create, 1);
     assert.equal(results[0].codespaceName, results[1].codespaceName);
-    assert.deepEqual(results.map(result => result.created), [true, false]);
+    assert.deepEqual(results.map(result => result.created).sort(), [false, true]);
     assert.equal(gh.calls.start, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });

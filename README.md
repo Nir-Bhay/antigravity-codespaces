@@ -6,7 +6,7 @@
 
 ### Enterprise Multi-Account GitHub Codespaces Manager for Cursor IDE, Antigravity IDE, VS Code & Code-OSS
 
-**Connect, start, stop, rebuild, test, and monitor every cloud dev environment across all your GitHub accounts — with 1 click.**
+Manage GitHub Codespaces from a VS Code-based editor: browse accounts, connect over SSH, manage lifecycle, inspect usage, or run remote commands through the optional MCP server.
 
 [![Version](https://img.shields.io/open-vsx/v/nirbhay-hiwse/antigravity-codespaces?style=for-the-badge&logo=eclipse&color=A855F7&label=Open%20VSX)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
 [![Downloads](https://img.shields.io/open-vsx/dt/nirbhay-hiwse/antigravity-codespaces?style=for-the-badge&color=22C55E&label=Downloads)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
@@ -60,32 +60,26 @@
 
 ---
 
-## Why Developers Use This Extension
+## What this project does
 
-If you code in **Cursor IDE**, **Google Antigravity IDE**, **Windsurf**, or **VSCodium**, you already know the problem: **Microsoft's official GitHub Codespaces extension is closed-source and restricted only to official Microsoft VS Code.** It is completely absent from the Open VSX Registry.
+Antigravity Codespaces Pro is an open-source editor extension for managing GitHub Codespaces from VS Code-based editors. It combines a sidebar and dashboard with SSH setup helpers, multi-account browsing, lifecycle actions, and Codespaces billing-usage views. A separate Node.js MCP server is available for coding agents that need to run commands inside a Codespace.
 
-Without a dedicated extension, connecting your favorite AI editor to GitHub Codespaces is painful:
-- You have to copy CLI commands manually from browser tabs.
-- You have to hand-craft `~/.ssh/config` blocks and debug missing keys or password prompts.
-- When you run long autonomous AI agent sessions (**Cursor Agent**, **Antigravity Agent**, **Claude Code**, or **Aider**), idle SSH tunnels drop and kill your task.
-- You cannot easily manage multiple GitHub accounts (work, personal, client orgs) at the same time.
-
-**Antigravity Codespaces Pro is the universal, open solution.** It brings a first-class visual dashboard, keyboard launcher, automated SSH configuration, and multi-account cloud workspace management directly inside Cursor, Antigravity, VS Code, and open-source editors.
+It is intended to reduce repetitive setup and account switching—not to replace GitHub's Codespaces service, the GitHub CLI, or your editor's Remote-SSH implementation. Connection behavior depends on the host editor and its installed Remote-SSH support; see the [compatibility notes](docs/IDE_SETUP.md) and [MCP setup and limitations](mcp-server/README.md).
 
 ---
 
-## Editor Compatibility Matrix
+## Editor compatibility
 
-| Editor / Platform | Support Level | How to Install |
-|---|:---:|---|
-| **Cursor IDE** | Native / Full | Extensions panel (`Ctrl+Shift+X`) → Search **`Antigravity Codespaces Pro`** or **`Codespaces`** |
-| **Antigravity IDE** | Native / Full | Extensions panel (`Ctrl+Shift+X`) or 1-click VSIX install |
-| **VS Code & Code-OSS** | Full Support | Open VSX Registry or VSIX install |
-| **Windsurf & VSCodium** | Native / Full | Search **`Antigravity Codespaces Pro`** on Open VSX |
-| **Gitpod Desktop** | Full Support | Install via Open VSX extension view |
+The extension targets the VS Code extension API (`^1.85.0`) and is distributed through Open VSX and GitHub release VSIX assets. Compatibility of installation and Remote-SSH integration varies by editor and version; marketplace availability alone does not guarantee that the host's remote-window APIs behave identically.
 
+| Editor | Distribution / connection notes |
+|---|---|
+| Cursor | Open VSX / VSIX; uses Cursor's Remote-SSH integration when available. |
+| Google Antigravity | Open VSX / VSIX; use Setup Doctor to check remote support. |
+| VS Code and Code-OSS forks | Open VSX or VSIX; install a compatible Remote-SSH extension for your host. |
+| Windsurf, VSCodium, and other forks | See the editor-specific notes; support depends on each host's remote extension and command APIs. |
 
-Step-by-step instructions for each editor: **[docs/IDE_SETUP.md](docs/IDE_SETUP.md)** · or let your AI agent set it up: **[AGENT_SETUP.md](AGENT_SETUP.md)**
+The project does not claim that every listed fork/version has been validated end-to-end. Check the [IDE setup guide](docs/IDE_SETUP.md) for known marketplace differences and caveats, and the [agent setup prompt](AGENT_SETUP.md) for guided onboarding.
 
 ---
 
@@ -129,13 +123,10 @@ Inspect forwarded web ports (3000, 5173, 8080, etc.) on running containers direc
 3. Click **Install**.
 4. Click the Cloud icon in the Activity Bar or press `Alt+C` to connect to your Codespaces instantly.
 
-### For Antigravity IDE & VS Code Users
-1. Search **`Antigravity Codespaces Pro`** in the Extensions sidebar.
-2. Hit **Install**.
-3. Or install manually via CLI:
-   ```bash
-   antigravity-ide --install-extension antigravity-codespaces-5.1.0.vsix
-   ```
+### For other compatible editors
+1. Search for **Antigravity Codespaces Pro** in the editor's extension view, or download the latest `.vsix` from [GitHub Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest).
+2. Install the VSIX using the editor's **Install from VSIX** command or its documented CLI.
+3. Follow the editor-specific [IDE setup guide](docs/IDE_SETUP.md); marketplace catalogs and Remote-SSH support vary by host.
 
 ### First-run prerequisites
 
@@ -258,6 +249,26 @@ Any other failure shows **Usage unavailable** with the reason. This includes an 
 
 ---
 
+## Optional MCP server for coding agents
+
+The repository also contains a standalone Node.js stdio MCP server. It is separate from the editor extension and authenticates through the active GitHub CLI account on the machine running the MCP process; it does not reuse the extension's SecretStorage sign-in.
+
+The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse/start/create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP server guide](mcp-server/README.md) for setup and complete tool descriptions.
+
+**Review these effects before enabling it:** starting or creating a Codespace can incur compute charges; a stopped Codespace can continue to incur storage charges. Repository local-change sync is opt-in and may send staged/unstaged tracked files plus non-ignored untracked files (up to 5 MiB) to a temporary remote worktree. Inspect `git status` before enabling it. The server redacts common credential patterns from output, but cannot reliably identify arbitrary secrets; do not run commands that print secrets. Automated tests use mocked GitHub CLI operations, so live API, billing, SSH, and client interoperability still need a controlled manual test.
+
+### Run tests locally
+
+```bash
+npm test                 # Extension and MCP unit tests
+npm run check            # Extension syntax check
+node --check mcp-server/index.mjs
+```
+
+The MCP server requires Node.js 20 or later. For the extension's editor requirements and first-run GitHub CLI setup, see [Quickstart](#quickstart-guide) and [IDE setup](docs/IDE_SETUP.md).
+
+---
+
 ## Configuration Settings
 
 Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro**:
@@ -314,21 +325,11 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 
 ---
 
-## Feature Comparison
+## Support and verification boundaries
 
-| Feature | Browser GitHub Tab | Official MS Extension | Antigravity Codespaces Pro |
-|---|:---:|:---:|:---:|
-| **Cursor IDE Support** | ❌ | ❌ (Blocked/Unavailable) | ✅ **First-Class** |
-| **Antigravity IDE Support** | ❌ | ❌ (Unavailable) | ✅ **First-Class** |
-| **VSCodium / Windsurf Support** | ❌ | ❌ (Unavailable) | ✅ **First-Class** |
-| **Open VSX Registry** | ❌ | ❌ (Proprietary) | ✅ **Verified Publisher** |
-| **Multi-Account Switching** | ❌ (1 active session) | ⚠️ (Single account) | ✅ **Parallel Multi-Account** |
-| **Full Dashboard (Grid/List)** | ❌ | ❌ (Basic tree view) | ✅ **Bento Cloud Hub** |
-| **Fast Launcher** | ❌ | ❌ | ✅ **`Alt+C` Quick Connect** |
-| **AI Agent KeepAlive** | ❌ | ❌ (Drops on idle) | ✅ **Tuned Ping Engine** |
-| **SSH Key Auto-Injection** | ❌ | ❌ | ✅ **Zero-Password Auto Key** |
-| **First-Run Checks** | ❌ | ❌ | ✅ **Codespaces: Setup Doctor** |
-| **SSH Host Key Checking** | ⚠️ | ⚠️ | ✅ **`accept-new` + managed known_hosts** |
+Supported behavior depends on the editor, its Remote-SSH implementation, GitHub CLI authentication, and GitHub account permissions. This repository has automated tests for extension utilities and MCP server behavior, but those tests do not establish compatibility with every editor or prove live GitHub API/Codespaces behavior. The current MCP suite uses mocked GitHub CLI operations; a live Codespace should only be tested in an account/repository where the operator accepts possible compute and continuing storage charges.
+
+For feature scope and known limitations, see [MCP server documentation](mcp-server/README.md), [release notes](CHANGELOG.md), and [release process](docs/releasing.md).
 
 ---
 
@@ -406,21 +407,18 @@ Tools like Cursor Agent, Antigravity Agent, Claude Code, and Aider frequently pe
 
 ---
 
-## Deep-Dive Guides & Documentation
+## Guides and project direction
 
-Explore dedicated architecture and workflow guides:
+- [IDE setup guide](docs/IDE_SETUP.md) — editor-specific installation, Remote-SSH requirements, and troubleshooting.
+- [MCP server guide](mcp-server/README.md) — agent integration, tools, local-change sync, security and cost considerations.
+- [Agent setup prompt](AGENT_SETUP.md) — guided setup checklist for an IDE agent.
+- [Cursor walkthrough](docs/CURSOR_IDE_CODESPACES_GUIDE.md) — Cursor-focused connection guidance.
+- [KeepAlive guide](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md) — SSH keepalive behavior and configuration.
+- [Multi-account guide](docs/MULTI_ACCOUNT_MANAGEMENT.md) — account setup and switching.
+- [Roadmap and improvement ideas](docs/ROADMAP_MULTI_IDE_AND_IDEAS.md) — prioritized opportunities, dependencies, and acceptance signals.
+- [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Releasing](docs/releasing.md)
 
-- 🧭 **[Multi-IDE Setup Guide](docs/IDE_SETUP.md)** — Antigravity, Cursor, VS Code, Windsurf, VSCodium, Trae and more: the Remote-SSH extension each editor needs, OS notes and troubleshooting.
-- 🤖 **[Copy-paste Agent Setup Prompt](AGENT_SETUP.md)** — Paste one prompt into your IDE's AI agent and it installs and verifies everything (it never handles your token).
-- 📖 **[Connecting Cursor IDE to GitHub Codespaces (Step-by-Step)](docs/CURSOR_IDE_CODESPACES_GUIDE.md)** — Complete walkthrough for Cursor users, including Open VSX installation, GitHub CLI auth, and port forwarding.
-- 🤖 **[AI Agent KeepAlive & Session Persistence](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md)** — How to prevent idle SSH socket termination during long Cursor Agent and Antigravity Agent runs.
-- 🏢 **[Multi-Account GitHub Codespaces Management](docs/MULTI_ACCOUNT_MANAGEMENT.md)** — Isolate personal, employer, and client org tokens with zero credential cross-contamination.
 
----
-
-## Search & Discovery Keywords
-
-`cursor-codespaces` · `cursor-ide` · `cursor-remote-ssh` · `cursor-agent` · `github-codespaces` · `antigravity-ide` · `antigravity-codespaces` · `remote-development` · `multi-account-github` · `ssh-tunnel` · `devcontainer` · `vscodium` · `windsurf` · `code-oss` · `open-vsx` · `cloud-ide` · `codespace-manager` · `ai-agent-keepalive` · `remote-ssh-codespaces`
 
 ---
 
@@ -434,4 +432,4 @@ Explore dedicated architecture and workflow guides:
 
 ## License
 
-MIT License © 2026 [Nirbhay hiwse](https://github.com/Nir-Bhay). Built with pride for developers using modern AI and open-source editors.
+MIT. See [LICENSE](LICENSE) for the full terms.
