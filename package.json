@@ -292,7 +292,7 @@
       },
       {
         "command": "antigravity-codespaces.usageGrantAccess",
-        "title": "Codespaces: Grant Usage Access (gh user scope)",
+        "title": "Codespaces: Grant Usage Access (user permission)",
         "icon": "$(key)"
       }
     ],

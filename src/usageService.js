@@ -570,7 +570,9 @@ class UsageService {
         const base = { account, login: account, fetchedAt: nowMs, cycleStart: start.toISOString(), resetDate: reset.toISOString(), isCurrent,
             period: { year: period.year, month: period.month }, months: monthOptions(new Date(nowMs)) };
 
-        const token = await this._auth.getToken(account);
+        const token = this._auth.getUsageToken
+            ? await this._auth.getUsageToken(account)
+            : await this._auth.getToken(account);
         if (!token) return { ...base, mode: 'needsPermission', reason: 'No token for this account' };
 
         const user = await this._get(`${GITHUB_API_BASE}/user`, token);

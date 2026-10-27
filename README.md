@@ -252,13 +252,9 @@ Numbers come from GitHub's billing API: `GET /users/{user}/settings/billing/usag
 
 **Permission**
 
-The billing API needs the **`user`** scope on the active account's token:
+Core GitHub sign-in requests only the `repo` and `codespace` scopes. Billing analytics may also need the **`user`** scope (or the fine-grained token's **Plan: read** permission). No broader native OAuth permission is requested at sign-in. If billing access is missing, the card shows **Usage needs permission** with a **Grant access** action: native GitHub sign-in asks VS Code for the additional scope only after that click; GitHub CLI accounts open `gh auth refresh -h github.com -s user`; PAT accounts get token-settings guidance. Declining does not affect Codespaces access.
 
-```bash
-gh auth refresh -h github.com -s user
-```
-
-Without it, the card shows **Usage needs permission** with a **Grant access** button that runs this command in a terminal. Any other failure shows **Usage unavailable** with the reason. This includes an account not on GitHub's enhanced billing platform, or a machine type this version doesn't recognise. The extension never shows estimated or guessed figures.
+Any other failure shows **Usage unavailable** with the reason. This includes an account not on GitHub's enhanced billing platform, or a machine type this version doesn't recognise. The extension never shows estimated or guessed figures.
 
 ---
 
@@ -314,7 +310,7 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | **Codespaces: Setup Doctor** | — | First-run and SSH checks with one-click fixes. The panel button **Copy Diagnostic Report** redacts tokens |
 | **Reconnect to Last Codespace** | — | Wake and connect to the Codespace you opened last |
 | **Codespaces: Refresh Usage** | — | Re-fetch usage from the GitHub billing API |
-| **Codespaces: Grant Usage Access (gh user scope)** | — | Open a terminal with `gh auth refresh -h github.com -s user` |
+| **Codespaces: Grant Usage Access (user permission)** | — | Request the usage-only permission for the active authentication method |
 
 ---
 

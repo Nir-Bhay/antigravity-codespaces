@@ -38,7 +38,7 @@ The quota resets at the start of each billing cycle. Without a payment method on
 
 Docs: [Billing usage REST API](https://docs.github.com/en/rest/billing/usage), [Codespaces REST API](https://docs.github.com/en/rest/codespaces/codespaces), [Fine-grained PAT permissions](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens), [Enhanced billing platform](https://docs.github.com/en/billing/using-the-new-billing-platform/about-the-new-billing-platform).
 
-- **Permission:** the classic/OAuth `user` scope, or the fine-grained "Plan: read" permission. Fix: `gh auth refresh -h github.com -s user`.
+- **Permission:** the classic/OAuth `user` scope, or the fine-grained "Plan: read" permission. Core OAuth sign-in uses only `repo` and `codespace`; the broader usage permission is requested only from the explicit **Grant access** action. Native sessions use VS Code's scoped session consent, CLI accounts use `gh auth refresh -h github.com -s user`, and PAT accounts require updating token permissions.
 - **404** is returned both when the scope is missing and when the account isn't on enhanced billing. A live test on Nirbhay's PC returned 404 and "needs the user scope".
 - **Remaining quota is not returned by any endpoint.** It's computed as plan quota − included usage (`discountQuantity`, converted to core-hours using the SKU's core count).
 - Billing data updates **hourly**, not in real time.
@@ -84,6 +84,6 @@ GitHub billing page: $6.88 compute + $0.53 storage = **$7.42**. By repo: repo-a 
 
 1. Usage is shown for the **active gh account** only, using that account's own token.
 2. **Live:** the summary endpoint drives the compute and storage bars and the billing line. The daily endpoint drives the chart and the per-repository table.
-3. **Needs permission:** 403/404 when the token lacks `user` → the card shows **Grant access** (`gh auth refresh -h github.com -s user`).
+3. **Needs permission:** 403/404 when the token lacks `user` → the card shows **Grant access**. The explicit action requests the additional native OAuth scope, opens `gh auth refresh -h github.com -s user` for CLI accounts, or directs PAT users to update their token permissions. Declining leaves core Codespaces access unchanged.
 4. **Error:** any other failure, a 403/404 with the scope present, or an unrecognised SKU → a clear "Usage unavailable" with the reason and the gh command. **No estimated or guessed figures are ever shown.** Storage only ever comes from the billing API, never from disk size. Core-hours are never derived from dollars.
 5. Days left = remaining ÷ last-7-day average. Fewer than 3 days of data → "not enough data". Will last past reset → "lasts the full cycle". Remaining 0 → "quota used up".

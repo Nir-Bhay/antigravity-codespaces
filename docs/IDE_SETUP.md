@@ -58,7 +58,7 @@ gh auth refresh -h github.com -s codespace
 
 `gh auth status` should list `'codespace'` under **Token scopes**.
 
-*Optional, for usage analytics only:* run **Codespaces: Grant Usage Access (gh user scope)**. It runs `gh auth refresh -h github.com -s user`.
+*Optional, for usage analytics only:* use **Grant access** on the Usage card when prompted. Native GitHub sign-in requests the additional permission only after you choose it; GitHub CLI accounts run `gh auth refresh -h github.com -s user`, while PAT accounts need the billing permission added in token settings. Declining leaves Codespaces access unchanged.
 
 ### Step 3: Install a Remote-SSH extension
 
@@ -166,7 +166,7 @@ The extension sets this for its host aliases, and Setup Doctor fixes wrong entri
 | **exit code 255** / *"The process tried to write to a nonexistent pipe"* | The `gh` tunnel died immediately. Usually you're not signed in, the `codespace` scope is missing, the codespace is stopped, or `gh` isn't on PATH. | Run `gh auth status`, then `gh auth refresh -h github.com -s codespace`. **Turn ON** the codespace. Run **Test SSH Connectivity** and **Setup Doctor**. |
 | **exit code 127** / *command not found* | Platform mismatch: Remote-SSH treats the Linux codespace as Windows. | Set `remote.SSH.remotePlatform["cs.<account>.<name>"]` to `"linux"` or delete the entry. Setup Doctor can fix it. |
 | *needs the "codespace" scope* / HTTP 403 | The token lacks `codespace`. | `gh auth refresh -h github.com -s codespace` |
-| Usage page empty or asks for access | No `user` scope (needed only for billing analytics). | **Codespaces: Grant Usage Access (gh user scope)**, then **Codespaces: Refresh Usage** |
+| Usage page asks for access | No `user` scope (needed only for billing analytics). | Choose **Grant access**; native sign-in requests it from VS Code, CLI accounts run `gh auth refresh -h github.com -s user`, and PAT accounts need the billing permission in token settings. Then **Codespaces: Refresh Usage** |
 | Host key changed warning | The codespace was rebuilt or recreated. | Run **Sync SSH Config** and reconnect. The extension uses its own managed known_hosts file. |
 | Wrong account's codespaces shown | Multiple `gh` accounts | **Switch GitHub Account** |
 | Connect does nothing | No Remote-SSH extension | Install the one for your IDE (section 1) and re-run Setup Doctor. |

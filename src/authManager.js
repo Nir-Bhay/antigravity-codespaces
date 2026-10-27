@@ -5,6 +5,8 @@ const { findGhExecutable } = require('./sshManager');
 
 const PAT_SECRET_KEY_PREFIX = 'antigravity_github_pat_';  // per-account PAT key (fixes: single-key stomping)
 const PAT_SECRET_ACCOUNTS_KEY = 'antigravity_pat_accounts'; // index of accounts that have stored PATs
+const CORE_OAUTH_SCOPES = ['repo', 'codespace'];
+const USAGE_OAUTH_SCOPES = [...CORE_OAUTH_SCOPES, 'user'];
 
 class AuthManager {
     constructor(context = {}) {
@@ -85,7 +87,7 @@ class AuthManager {
         try {
             const nativeSession = await vscode.authentication.getSession(
                 'github',
-                ['repo', 'codespace', 'user'],
+                CORE_OAUTH_SCOPES,
                 { createIfNone: false }
             );
             if (nativeSession && nativeSession.account) {
@@ -211,7 +213,7 @@ class AuthManager {
         try {
             const nativeSession = await vscode.authentication.getSession(
                 'github',
-                ['repo', 'codespace', 'user'],
+                CORE_OAUTH_SCOPES,
                 { createIfNone: false }
             );
             if (nativeSession && nativeSession.account.label === target) {
@@ -243,6 +245,49 @@ class AuthManager {
     }
 
     /**
+     * Retrieves a token for usage analytics, preferring an already-authorized native
+     * session with the additional `user` scope. Looking it up never prompts; the
+     * explicit Grant Access action owns any scope upgrade.
+     */
+    async getUsageToken(account) {
+        const target = account || this._activeAccount;
+        if (!target) return null;
+        try {
+            const session = await vscode.authentication.getSession(
+                'github',
+                USAGE_OAUTH_SCOPES,
+                { createIfNone: false }
+            );
+            if (session && session.account.label === target) return session.accessToken;
+        } catch {}
+        return this.getToken(target);
+    }
+
+    /**
+     * Ask VS Code to grant the broader usage scope only after the user selects
+     * Grant Access. A declined or mismatched account leaves core auth untouched.
+     */
+    async grantUsageAccess(account) {
+        const target = account || this._activeAccount;
+        if (!target || !vscode?.authentication?.getSession) return false;
+        let accounts = this._accounts;
+        if (!accounts.some(a => a.account === target)) accounts = await this.getAccounts();
+        if (!accounts.some(a => a.account === target && a.type === 'native')) return false;
+        try {
+            const session = await vscode.authentication.getSession(
+                'github',
+                USAGE_OAUTH_SCOPES,
+                { createIfNone: true }
+            );
+            if (!session || session.account.label !== target) return false;
+            this._onAuthChangedEmitter.fire();
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Primary Login Flow: Native VS Code OAuth with PAT fallback. Zero terminal popups!
      */
     async login() {
@@ -250,7 +295,7 @@ class AuthManager {
             // 1. Native VS Code OAuth
             const session = await vscode.authentication.getSession(
                 'github',
-                ['repo', 'codespace', 'user'],
+                CORE_OAUTH_SCOPES,
                 { createIfNone: true }
             );
             if (session) {
