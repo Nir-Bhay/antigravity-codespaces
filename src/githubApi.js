@@ -72,6 +72,7 @@ class GithubApi {
     constructor(authManager, deps = {}) {
         this._authManager = authManager;
         this._fetchDeps = deps;
+        this._runCommand = deps.runCommand || runCommand;
         // Cache entries are { data, at } so entries expire instead of going stale.
         this._csCache = new Map();
         this._metaCache = new Map();
@@ -123,6 +124,15 @@ class GithubApi {
         this._csCache.delete(this._csKey(account));
     }
 
+    _requireAccountToken(token, account) {
+        if (token) return token;
+        const active = this._authManager && this._authManager.getActiveAccount
+            ? this._authManager.getActiveAccount()
+            : null;
+        const target = account || active || 'selected account';
+        throw new Error(`No account-bound GitHub token is available for "${target}". Sign in to that account before using Codespaces.`);
+    }
+
     /**
      * Follows REST pagination (per_page=100) up to maxPages pages.
      */
@@ -155,7 +165,7 @@ class GithubApi {
             return cached;
         }
 
-        const token = await this._authManager.getToken(account);
+        const token = this._requireAccountToken(await this._authManager.getToken(account), account);
 
         // 1. Direct REST API (Zero CLI dependency!)
         if (token) {
@@ -201,8 +211,8 @@ class GithubApi {
         // 2. CLI Fallback
         try {
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            const raw = await runCommand(ghExe, [
+            const envOpts = { env: { ...process.env, GH_TOKEN: token } };
+            const raw = await this._runCommand(ghExe, [
                 'codespace', 'list',
                 '--json', 'name,displayName,repository,gitStatus,state,lastUsedAt,machineName'
             ], 12000, envOpts);
@@ -249,7 +259,7 @@ class GithubApi {
      * Starts a stopped Codespace via direct REST call (sub-second response).
      */
     async startCodespace(name, account) {
-        const token = await this._authManager.getToken(account);
+        const token = this._requireAccountToken(await this._authManager.getToken(account), account);
         if (token) {
             try {
                 const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}/start`, {
@@ -276,16 +286,16 @@ class GithubApi {
         // CLI Fallback: use gh api POST endpoint (gh codespace start is not a native CLI command)
         try {
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            await runCommand(ghExe, ['api', '-X', 'POST', `/user/codespaces/${encodeURIComponent(name)}/start`], 120000, envOpts);
+            const envOpts = { env: { ...process.env, GH_TOKEN: token } };
+            await this._runCommand(ghExe, ['api', '-X', 'POST', `/user/codespaces/${encodeURIComponent(name)}/start`], 120000, envOpts);
             this._invalidateCs(account);
             return true;
         } catch (cliErr) {
             // Secondary CLI Fallback: ping via SSH (connecting automatically boots a stopped container)
             try {
                 const ghExe = findGhExecutable();
-                const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-                await runCommand(ghExe, ['cs', 'ssh', '-c', name, '--', 'echo', 'started'], 45000, envOpts);
+                const envOpts = { env: { ...process.env, GH_TOKEN: token } };
+                await this._runCommand(ghExe, ['cs', 'ssh', '-c', name, '--', 'echo', 'started'], 45000, envOpts);
                 this._invalidateCs(account);
                 return true;
             } catch (e) { console.warn(`start ${name}: SSH wake fallback failed:`, e && e.message); }
@@ -298,7 +308,7 @@ class GithubApi {
      * Stops a running Codespace.
      */
     async stopCodespace(name, account) {
-        const token = await this._authManager.getToken(account);
+        const token = this._requireAccountToken(await this._authManager.getToken(account), account);
         if (token) {
             try {
                 const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}/stop`, {
@@ -324,8 +334,8 @@ class GithubApi {
         // CLI Fallback
         try {
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            await runCommand(ghExe, ['codespace', 'stop', '-c', name], 30000, envOpts);
+            const envOpts = { env: { ...process.env, GH_TOKEN: token } };
+            await this._runCommand(ghExe, ['codespace', 'stop', '-c', name], 30000, envOpts);
             this._invalidateCs(account);
             return true;
         } catch (cliErr) {
@@ -338,7 +348,7 @@ class GithubApi {
      * Permanently deletes a Codespace.
      */
     async deleteCodespace(name, account) {
-        const token = await this._authManager.getToken(account);
+        const token = this._requireAccountToken(await this._authManager.getToken(account), account);
         if (token) {
             try {
                 const res = await this._fetch(`${GITHUB_API_BASE}/user/codespaces/${encodeURIComponent(name)}`, {
@@ -364,8 +374,8 @@ class GithubApi {
         // CLI Fallback
         try {
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            await runCommand(ghExe, ['codespace', 'delete', '-c', name, '--force'], 30000, envOpts);
+            const envOpts = { env: { ...process.env, GH_TOKEN: token } };
+            await this._runCommand(ghExe, ['codespace', 'delete', '-c', name, '--force'], 30000, envOpts);
             this._invalidateCs(account);
             return true;
         } catch (cliErr) {
@@ -380,12 +390,12 @@ class GithubApi {
      * long we wait for acknowledgement, and callers report "rebuild started".
      */
     async rebuildCodespace(name, account, full = false) {
-        const token = await this._authManager.getToken(account);
+        const token = this._requireAccountToken(await this._authManager.getToken(account), account);
         const ghExe = findGhExecutable();
-        const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
+        const envOpts = { env: { ...process.env, GH_TOKEN: token } };
         const args = ['codespace', 'rebuild', '-c', name, ...(full ? ['--full'] : [])];
         try {
-            await runCommand(ghExe, args, 180000, envOpts);
+            await this._runCommand(ghExe, args, 180000, envOpts);
         } catch (err) {
             console.warn('rebuildCodespace CLI failed:', err.message);
             throw err;
@@ -404,9 +414,9 @@ class GithubApi {
 
         const token = await this._authManager.getToken(account);
         try {
+            const envOpts = { env: { ...process.env, GH_TOKEN: this._requireAccountToken(token, account) } };
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            const raw = await runCommand(ghExe, ['codespace', 'ports', '-c', name, '--json', 'sourcePort,label,visibility,browseUrl'], 7000, envOpts);
+            const raw = await this._runCommand(ghExe, ['codespace', 'ports', '-c', name, '--json', 'sourcePort,label,visibility,browseUrl'], 7000, envOpts);
             const parsed = JSON.parse(raw || '[]');
             const p = Array.isArray(parsed) ? parsed : [];
             this._setFresh(this._portsCache, cacheKey, p);
@@ -485,9 +495,9 @@ class GithubApi {
         }
 
         try {
+            const envOpts = { env: { ...process.env, GH_TOKEN: this._requireAccountToken(token, account) } };
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            const raw = await runCommand(ghExe, [
+            const raw = await this._runCommand(ghExe, [
                 'codespace', 'view', '-c', name,
                 '--json', 'displayName,name,repository,state,gitStatus,machineDisplayName,machineName,createdAt,lastUsedAt,idleTimeoutMinutes,retentionPeriodDays,location,recentFolders,devcontainerPath'
             ], 8000, envOpts);
@@ -554,9 +564,9 @@ class GithubApi {
         }
 
         try {
+            const envOpts = { env: { ...process.env, GH_TOKEN: this._requireAccountToken(token, account) } };
             const ghExe = findGhExecutable();
-            const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
-            const raw = await runCommand(ghExe, [
+            const raw = await this._runCommand(ghExe, [
                 'repo', 'list', '--limit', '500',
                 '--json', 'name,nameWithOwner,isPrivate,description'
             ], 12000, envOpts);
@@ -598,6 +608,7 @@ class GithubApi {
         }
         const cleanBranch = (branch || '').trim();
         const chosenMachine = (machine || '').trim();
+        this._requireAccountToken(token, account);
 
         // Direct REST API
         if (token) {
@@ -641,13 +652,13 @@ class GithubApi {
         }
 
         const ghExe = findGhExecutable();
-        const envOpts = token ? { env: { ...process.env, GH_TOKEN: token } } : {};
+        const envOpts = { env: { ...process.env, GH_TOKEN: token } };
         const args = ['codespace', 'create', '-R', cleanRepo, '--default-permissions'];
         if (cleanBranch) args.push('-b', cleanBranch);
         args.push('-m', chosenMachine || 'basicLinux32gb');
 
         try {
-            const result = await runCommand(ghExe, args, 120000, envOpts);
+            const result = await this._runCommand(ghExe, args, 120000, envOpts);
             this._invalidateCs(account);
             return result;
         } catch (cliErr) {
@@ -655,7 +666,7 @@ class GithubApi {
             if (cliErr.message && cliErr.message.includes('basicLinux32gb')) {
                 const retryArgs = ['codespace', 'create', '-R', cleanRepo, '--default-permissions'];
                 if (cleanBranch) retryArgs.push('-b', cleanBranch);
-                const retryResult = await runCommand(ghExe, retryArgs, 120000, envOpts);
+                const retryResult = await this._runCommand(ghExe, retryArgs, 120000, envOpts);
                 this._invalidateCs(account);
                 return retryResult;
             }

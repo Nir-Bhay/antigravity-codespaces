@@ -90,19 +90,50 @@ function ok(name, fn) {
         assert.match(err.message, /Couldn't load Codespaces for "ghost"/);
         assert.match(err.message, /press Refresh/i);
 
-        // Null token (CLI-only fallback path) must NEVER throw ReferenceError: restErr is not defined
+        // Without a token scoped to the requested account, never use ambient gh auth.
         const nullApi = new GithubApi({ getActiveAccount: () => '', getToken: async () => null });
-        try {
-            const list = await nullApi.listCodespaces('ghost');
-            assert.ok(Array.isArray(list));
-        } catch (err) {
-            assert.match(err.message, /Couldn't load|missing the "codespace" permission/);
-            assert.ok(!err.message.includes('ReferenceError'));
-        }
+        await assert.rejects(nullApi.listCodespaces('ghost'), /account-bound GitHub token.*ghost/i);
 
         // Bogus token must reject (401-auth when online, aggregate when offline).
         const api = new GithubApi({ getActiveAccount: () => '', getToken: async () => 'bogus-invalid-token-xyz' });
         await assert.rejects(api.listCodespaces('ghost'), /expired|Couldn't load|missing the "codespace" permission/);
+    });
+    await ok('Codespaces CLI fallbacks never use ambient auth for a different account', async () => {
+        const calls = [];
+        const runCommand = async (_cmd, args, _timeout, options = {}) => {
+            calls.push({ args, token: options.env && options.env.GH_TOKEN });
+            return JSON.stringify([{ name: 'bob-space' }]);
+        };
+        const noTokenApi = new GithubApi({ getActiveAccount: () => 'bob', getToken: async () => null }, {
+            runCommand,
+            fetchImpl: async () => { throw new Error('network disabled in test'); }
+        });
+
+        await assert.rejects(noTokenApi.listCodespaces('alice'), /account-bound GitHub token.*alice/i);
+        await assert.rejects(noTokenApi.startCodespace('bob-space', 'alice'), /account-bound GitHub token.*alice/i);
+        await assert.rejects(noTokenApi.stopCodespace('bob-space', 'alice'), /account-bound GitHub token.*alice/i);
+        await assert.rejects(noTokenApi.deleteCodespace('bob-space', 'alice'), /account-bound GitHub token.*alice/i);
+        await assert.rejects(noTokenApi.rebuildCodespace('bob-space', 'alice'), /account-bound GitHub token.*alice/i);
+        await assert.rejects(noTokenApi.createCodespace('octocat/repo', 'main', 'alice'), /account-bound GitHub token.*alice/i);
+        assert.deepStrictEqual(await noTokenApi.fetchPorts('bob-space', 'alice'), []);
+        assert.deepStrictEqual(await noTokenApi.fetchMeta('bob-space', 'alice'), {});
+        assert.deepStrictEqual(await noTokenApi.fetchUserRepos('alice'), []);
+        assert.deepStrictEqual(calls, [], 'missing account token must prevent every CLI invocation');
+
+        const notFound = { status: 404, ok: false, headers: { get: () => null }, json: async () => ({ message: 'Not Found' }) };
+        const boundApi = new GithubApi({ getActiveAccount: () => 'bob', getToken: async (account) => account === 'alice' ? 'alice-test-token' : null }, {
+            runCommand,
+            fetchImpl: async () => notFound,
+            retryDelayMs: 0
+        });
+        const listed = await boundApi.listCodespaces('alice');
+        assert.strictEqual(listed[0].account, 'alice');
+        await boundApi.startCodespace('alice-space', 'alice');
+        await boundApi.stopCodespace('alice-space', 'alice');
+        await boundApi.deleteCodespace('alice-space', 'alice');
+        await boundApi.rebuildCodespace('alice-space', 'alice');
+        assert.ok(calls.length >= 5);
+        assert.ok(calls.every(call => call.token === 'alice-test-token'), 'all CLI fallback invocations must carry the selected account token');
     });
     await ok('logger works without vscode (console fallback)', () => {
         const logger = require('../src/logger');
