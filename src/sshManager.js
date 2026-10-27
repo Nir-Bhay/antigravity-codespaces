@@ -90,6 +90,25 @@ function sanitizeCsName(name) {
     return s;
 }
 
+/**
+ * Returns the stable, account-scoped identity used by managed SSH entries and connects.
+ * GitHub account names and Codespace names are case-insensitive identifiers.
+ */
+function getCodespaceIdentity(cs, account) {
+    const name = sanitizeCsName(cs && cs.name);
+    const accountKey = String(account || (cs && cs.account) || 'default')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '-')
+        .toLowerCase() || 'default';
+    const nameKey = name.toLowerCase();
+    return {
+        name,
+        accountKey,
+        key: `${accountKey}:${nameKey}`,
+        hostAlias: `cs.${accountKey}.${nameKey}`
+    };
+}
+
 function escapeRegExp(s) {
     return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -331,6 +350,7 @@ function findAntigravityExecutable() {
 function buildSshConfigBlock(opts) {
     const {
         codespace,
+        entryId = codespace,
         hostAliases,
         ghExePath,
         identityFile,
@@ -341,8 +361,8 @@ function buildSshConfigBlock(opts) {
         serverAliveCountMax = 10
     } = opts;
 
-    const blockId = `# CS_ENTRY:${codespace}`;
-    const endMarker = `# END_CS_ENTRY:${codespace}`;
+    const blockId = `# CS_ENTRY:${entryId}`;
+    const endMarker = `# END_CS_ENTRY:${entryId}`;
 
     const identityLine = identityFile ? `  IdentityFile "${identityFile}"\n` : '';
     const effectiveKnownHostsFile = knownHostsFile || getManagedKnownHostsPath().replace(/\\/g, '/');
@@ -372,14 +392,14 @@ ${endMarker}
  * Uses extension-managed known_hosts for host key verification (TOFU with accept-new).
  */
 function ensureSSHConfigEntry(cs, account) {
-    const safeName = sanitizeCsName(cs && cs.name);
+    const identity = getCodespaceIdentity(cs, account);
+    const { name: safeName, accountKey: safeAccount, key: entryId, hostAlias: exactHost } = identity;
     try {
         const sshDir = path.dirname(getSshConfigPath());
         if (!fs.existsSync(sshDir)) {
             fs.mkdirSync(sshDir, { recursive: true, mode: 0o700 });
         }
 
-        const safeAccount = (account || cs.account || 'default').replace(/[^a-zA-Z0-9_-]/g, '-');
         const repoFull = String(cs.repository || '');
         const repoParts = repoFull.split('/').filter(Boolean);
         const ownerShort = (repoParts.length >= 2 ? repoParts[0] : '').replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
@@ -387,22 +407,30 @@ function ensureSSHConfigEntry(cs, account) {
         const aliasBase = ownerShort ? `cs-${safeAccount}-${ownerShort}-${repoShort}` : `cs-${safeAccount}-${repoShort}`;
         const aliasLower = aliasBase.toLowerCase();
         const aliasExact = aliasBase;
-        const exactHost = `cs.${safeName}`;
-        const hostAliases = `${exactHost} ${aliasLower} ${aliasExact} ${safeName}`;
+        const hostAliases = `${exactHost} ${aliasLower} ${aliasExact}`;
 
         const ghExe = findGhExecutable();
         const normalizedGhExe = ghExe.replace(/\\/g, '/');
 
         const sshConfigPath = getSshConfigPath();
         let cfg = fs.existsSync(sshConfigPath) ? fs.readFileSync(sshConfigPath, 'utf8') : '';
-        const blockId = `# CS_ENTRY:${safeName}`;
-        const endMarker = `# END_CS_ENTRY:${safeName}`;
+        const blockId = `# CS_ENTRY:${entryId}`;
+        const endMarker = `# END_CS_ENTRY:${entryId}`;
+        const legacyBlockId = `# CS_ENTRY:${safeName}`;
+        const legacyEndMarker = `# END_CS_ENTRY:${safeName}`;
+        const blockMarkers = [
+            { start: blockId, end: endMarker },
+            { start: legacyBlockId, end: legacyEndMarker }
+        ];
 
-        // Extract previous block for logging (before removal)
+        // Extract the current or pre-account-scoping block for logging before removal.
         let previousBlock = null;
-        const prevBlockMatch = cfg.match(new RegExp(`${escapeRegExp(blockId)}[\\s\\S]*?${escapeRegExp(endMarker)}`));
-        if (prevBlockMatch) {
-            previousBlock = prevBlockMatch[0];
+        for (const marker of blockMarkers) {
+            const match = cfg.match(new RegExp(`${escapeRegExp(marker.start)}[\\s\\S]*?${escapeRegExp(marker.end)}`));
+            if (match) {
+                previousBlock = match[0];
+                break;
+            }
         }
 
         // Read settings with defaults
@@ -436,6 +464,7 @@ function ensureSSHConfigEntry(cs, account) {
 
         const newBlock = buildSshConfigBlock({
             codespace: safeName,
+            entryId,
             hostAliases,
             ghExePath: normalizedGhExe,
             identityFile,
@@ -446,12 +475,15 @@ function ensureSSHConfigEntry(cs, account) {
             serverAliveCountMax: aliveMax
         });
 
-        // Strip any previous entry for this Codespace
-        const newFormatRegex = new RegExp(`\\n*${escapeRegExp(blockId)}[\\s\\S]*?${escapeRegExp(endMarker)}[^\\n]*`, 'g');
-        cfg = cfg.replace(newFormatRegex, '');
-        if (cfg.includes(blockId)) {
-            const legacyRegex = new RegExp(`\\n*${escapeRegExp(blockId)}[\\s\\S]*?TCPKeepAlive yes[^\\n]*`, 'g');
-            cfg = cfg.replace(legacyRegex, '');
+        // Replace this account's block and migrate the old name-only block format.
+        // Other account-scoped blocks for the same Codespace are deliberately preserved.
+        for (const marker of blockMarkers) {
+            const newFormatRegex = new RegExp(`\\n*${escapeRegExp(marker.start)}[\\s\\S]*?${escapeRegExp(marker.end)}[^\\n]*`, 'g');
+            cfg = cfg.replace(newFormatRegex, '');
+            if (cfg.includes(marker.start)) {
+                const legacyRegex = new RegExp(`\\n*${escapeRegExp(marker.start)}[\\s\\S]*?TCPKeepAlive yes[^\\n]*`, 'g');
+                cfg = cfg.replace(legacyRegex, '');
+            }
         }
 
         cfg = cfg.trim() + '\n\n' + newBlock + '\n';
@@ -477,7 +509,7 @@ function ensureSSHConfigEntry(cs, account) {
         return exactHost;
     } catch (err) {
         console.error('SSH config generation error:', err);
-        return `cs.${safeName}`;
+        return exactHost;
     }
 }
 
@@ -867,6 +899,7 @@ module.exports = {
     findGhExecutable,
     findAntigravityExecutable,
     ensureSSHConfigEntry,
+    getCodespaceIdentity,
     testSshTunnel,
     probeSshTunnelVerbose,
     sanitizeCsName,

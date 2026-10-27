@@ -80,10 +80,10 @@ Open the Command Palette and run **Codespaces: Setup Doctor**. It checks `gh`, s
 - **Open Cloud Hub Dashboard** gives an overview with usage analytics.
 - Next time, use **Reconnect to Last Codespace**.
 
-The extension writes one marked block per codespace into `~/.ssh/config` (between `# CS_ENTRY:<name>` and `# END_CS_ENTRY:<name>`), with host aliases such as `cs.<codespace-name>`:
+The extension writes one marked block per account-and-Codespace pair into `~/.ssh/config` (between `# CS_ENTRY:<account>:<name>` and `# END_CS_ENTRY:<account>:<name>`), with account-qualified host aliases such as `cs.<account>.<codespace-name>`:
 
 ```sshconfig
-Host cs.<name> cs-<account>-<repo> <name>
+Host cs.<account>.<name> cs-<account>-<owner>-<repo>
   User codespace
   ProxyCommand "<path-to-gh>" cs ssh -c "<name>" --stdio
   StrictHostKeyChecking accept-new
@@ -128,7 +128,7 @@ For the longer Cursor walkthrough (connection methods, Cursor Agent tips, accoun
 3. Run Setup Doctor, then Quick Connect.
 
 ### Trae, Kiro, Positron, Void
-Follow the common steps. If the CLI isn't on PATH, install from the `.vsix` through the Command Palette. Trae and Positron have built-in Remote SSH, Void bundles an Open Remote-SSH fork, and Kiro needs `jeanp413.open-remote-ssh` from Open VSX. Run Setup Doctor first. If the editor can't open a `vscode-remote://ssh-remote+<host>` window, connect manually: use **Copy SSH Command**, or connect to host `cs.<codespace-name>` from that editor's own Remote/SSH panel.
+Follow the common steps. If the CLI isn't on PATH, install from the `.vsix` through the Command Palette. Trae and Positron have built-in Remote SSH, Void bundles an Open Remote-SSH fork, and Kiro needs `jeanp413.open-remote-ssh` from Open VSX. Run Setup Doctor first. If the editor can't open a `vscode-remote://ssh-remote+<host>` window, connect manually: use **Copy SSH Command**, or connect to host `cs.<account>.<codespace-name>` from that editor's own Remote/SSH panel.
 
 ---
 
@@ -151,7 +151,7 @@ Remote-SSH extensions use this map to decide the shell for each host. For codesp
 
 ```json
 "remote.SSH.remotePlatform": {
-  "cs.<codespace-name>": "linux"
+  "cs.<account>.<codespace-name>": "linux"
 }
 ```
 
@@ -164,7 +164,7 @@ The extension sets this for its host aliases, and Setup Doctor fixes wrong entri
 | Symptom | Cause | Fix |
 |---|---|---|
 | **exit code 255** / *"The process tried to write to a nonexistent pipe"* | The `gh` tunnel died immediately. Usually you're not signed in, the `codespace` scope is missing, the codespace is stopped, or `gh` isn't on PATH. | Run `gh auth status`, then `gh auth refresh -h github.com -s codespace`. **Turn ON** the codespace. Run **Test SSH Connectivity** and **Setup Doctor**. |
-| **exit code 127** / *command not found* | Platform mismatch: Remote-SSH treats the Linux codespace as Windows. | Set `remote.SSH.remotePlatform["cs.<name>"]` to `"linux"` or delete the entry. Setup Doctor can fix it. |
+| **exit code 127** / *command not found* | Platform mismatch: Remote-SSH treats the Linux codespace as Windows. | Set `remote.SSH.remotePlatform["cs.<account>.<name>"]` to `"linux"` or delete the entry. Setup Doctor can fix it. |
 | *needs the "codespace" scope* / HTTP 403 | The token lacks `codespace`. | `gh auth refresh -h github.com -s codespace` |
 | Usage page empty or asks for access | No `user` scope (needed only for billing analytics). | **Codespaces: Grant Usage Access (gh user scope)**, then **Codespaces: Refresh Usage** |
 | Host key changed warning | The codespace was rebuilt or recreated. | Run **Sync SSH Config** and reconnect. The extension uses its own managed known_hosts file. |
