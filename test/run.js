@@ -871,6 +871,31 @@ function ok(name, fn) {
         assert.strictEqual(p.includedCoreHours, 40);
         assert.strictEqual(p.storageGbMonths, 3.5);
     });
+    await ok('usage API never-resolving fetch aborts at the deadline and returns offline state', async () => {
+        let signal;
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, timeoutMs: 30, fetchImpl: async (_url, options) => {
+            signal = options.signal;
+            return new Promise(() => {});
+        } });
+        const u = await svc.getAccountUsage('stalled-fetch');
+        assert.strictEqual(u.mode, 'offline');
+        assert.strictEqual(u.offline, true);
+        assert.ok(signal && signal.aborted, 'the stalled request is aborted');
+    });
+    await ok('usage API timeout covers hanging response-body parsing and retains cached data', async () => {
+        let signal;
+        const svc = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => NOW, timeoutMs: 30, fetchImpl: async (_url, options) => {
+            signal = options.signal;
+            return { status: 200, ok: true, headers: { get: () => null }, json: () => new Promise(() => {}) };
+        } });
+        const cached = { account: 'stalled-body', login: 'stalled-body', mode: 'live', fetchedAt: NOW, stats: { used: 42 } };
+        svc._cache.set('stalled-body|2026-10', { at: -Infinity, data: cached });
+        const u = await svc.getAccountUsage('stalled-body');
+        assert.strictEqual(u.offline, true);
+        assert.strictEqual(u.stats.used, 42);
+        assert.strictEqual(u.lastUpdated, NOW);
+        assert.ok(signal && signal.aborted, 'the body read is aborted');
+    });
     const userBody = (login, plan) => ({ login, plan: plan ? { name: plan } : undefined });
     const csList = (login) => ({ codespaces: [
         { name: 'cs-mine', state: 'Available', machine: { cpus: 4, name: 'standardLinux32gb' }, repository: { full_name: login + '/app' }, billable_owner: { login } },

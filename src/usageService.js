@@ -24,6 +24,7 @@ const API_HEADERS = {
 };
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const USAGE_FETCH_TIMEOUT_MS = 15 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const PLAN_QUOTAS = {
@@ -454,14 +455,16 @@ class UsageService {
      * @param {object} opts
      * @param {{getToken:(acc:string)=>Promise<string|null>}} opts.authManager
      * @param {Function} [opts.fetchImpl]   defaults to global fetch
+     * @param {number} [opts.timeoutMs]     request timeout (defaults to 15 seconds)
      * @param {() => object} [opts.getConfig] returns { plan, monthlyCoreHours, monthlyStorageGb }
      * @param {() => number} [opts.now]
      */
-    constructor({ authManager, fetchImpl, getConfig, now, log, getActiveAccount } = {}) {
+    constructor({ authManager, fetchImpl, timeoutMs, getConfig, now, log, getActiveAccount } = {}) {
         this._getActive = typeof getActiveAccount === 'function' ? getActiveAccount : async () => (authManager && authManager.getActiveAccount ? authManager.getActiveAccount() : null);
         this._log = typeof log === 'function' ? log : () => {};
         this._auth = authManager;
         this._fetch = fetchImpl || ((...a) => fetch(...a));
+        this._timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : USAGE_FETCH_TIMEOUT_MS;
         this._getConfig = getConfig || (() => ({}));
         this._now = now || (() => Date.now());
         this._cache = new Map();
@@ -480,12 +483,31 @@ class UsageService {
     async refresh() { for (const e of this._cache.values()) e.at = -Infinity; this._emit(); }
 
     async _get(url, token) {
-        const res = await this._fetch(url, { headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` } });
-        let body = null;
-        try { body = await res.json(); } catch {}
-        const h = (k) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(k) : null);
-        const scopes = h('x-oauth-scopes') || '';
-        return { status: res.status, ok: res.ok, body, scopes, rateRemaining: h('x-ratelimit-remaining'), rateReset: h('x-ratelimit-reset'), retryAfter: h('retry-after') };
+        const controller = new AbortController();
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const seconds = Math.max(1, Math.round(this._timeoutMs / 1000));
+                const error = Object.assign(new Error(`GitHub isn't responding (${seconds}s).`), { kind: 'timeout' });
+                controller.abort(error);
+                reject(error);
+            }, this._timeoutMs);
+        });
+        const request = (async () => {
+            const res = await this._fetch(url, { headers: { ...API_HEADERS, 'Authorization': `Bearer ${token}` }, signal: controller.signal });
+            let body = null;
+            try { body = await res.json(); } catch (err) { if (controller.signal.aborted) throw err; }
+            const h = (k) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(k) : null);
+            const scopes = h('x-oauth-scopes') || '';
+            return { status: res.status, ok: res.ok, body, scopes, rateRemaining: h('x-ratelimit-remaining'), rateReset: h('x-ratelimit-reset'), retryAfter: h('retry-after') };
+        })();
+        try {
+            // Race the full request (including body parsing) so injected fetches and
+            // response readers that ignore AbortSignal cannot leave usage loading forever.
+            return await Promise.race([request, timeout]);
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     /** UI options from settings (preferred unit, sidebar visibility). */
