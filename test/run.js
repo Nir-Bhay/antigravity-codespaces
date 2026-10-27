@@ -26,6 +26,16 @@ function ok(name, fn) {
 }
 
 (async () => {
+    console.log('workflow security');
+    await ok('build and packaging jobs use scoped, non-persisted checkout credentials', () => {
+        const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'build-and-release.yml'), 'utf8');
+        assert.match(workflow, /^permissions:\n  contents: read$/m, 'default workflow token is read-only');
+        assert.match(workflow, /^  build:\n    name: Build & Validate VSIX\n    permissions:\n      contents: read\n/m, 'build job is read-only');
+        assert.match(workflow, /^      - name: Checkout Repository\n        uses: actions\/checkout@v5\n        with:\n          persist-credentials: false$/m, 'build checkout does not persist its token');
+        assert.match(workflow, /^  release:\n    name: Publish GitHub Release\n    needs: build\n    if: .+\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n/m, 'only release receives contents:write');
+        assert.match(workflow, /^      - name: Checkout Repository\n        uses: actions\/checkout@v4\n        with:\n          persist-credentials: false$/m, 'release checkout does not persist its token');
+    });
+
     console.log('utils');
     await ok('escapeHtml escapes all five entities', () => {
         assert.strictEqual(escapeHtml('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
