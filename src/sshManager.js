@@ -805,6 +805,10 @@ function mapTunnelError(stderr, exitCode, host) {
  * @param {object} deps - Injectable dependencies for testing
  * @returns {Promise<{exists: boolean, error?: string}>}
  */
+function quotePosixShellArgument(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
 async function checkRemoteFolderExists(hostAlias, folderPath, deps = {}) {
     const runCmd = deps.runCommandWithDetails || runCommandWithDetails;
     
@@ -812,16 +816,15 @@ async function checkRemoteFolderExists(hostAlias, folderPath, deps = {}) {
         return { exists: false, error: 'Missing hostAlias or folderPath' };
     }
     
-    // Sanitize inputs to prevent injection
     const safeAlias = hostAlias.replace(/[^a-zA-Z0-9._-]/g, '-');
-    const safePath = folderPath.replace(/['"\\]/g, '');
+    const remoteCommand = `test -d ${quotePosixShellArgument(folderPath)} && echo exists`;
     
     try {
         const result = await runCmd('ssh', [
             '-o', 'BatchMode=yes',
             '-o', 'ConnectTimeout=10',
             safeAlias,
-            'test', '-d', safePath, '&&', 'echo', 'exists'
+            remoteCommand
         ], 15000);
         
         return { exists: result.stdout.includes('exists') };
