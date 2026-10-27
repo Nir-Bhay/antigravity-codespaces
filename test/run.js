@@ -974,7 +974,7 @@ function ok(name, fn) {
         assert.ok(src.includes('lastTunnelStderr'), 'includes last tunnel stderr');
         assert.ok(src.includes('setLastTunnelStderr'), 'has method to store tunnel stderr');
     });
-    await ok('systemDoctor report uses the installed extension package version', async () => {
+    await ok('systemDoctor report uses the installed version and omits raw tunnel stderr', async () => {
         const Module = require('module');
         const originalResolve = Module._resolveFilename;
         const doctorPath = path.join(ROOT, 'src', 'systemDoctor.js');
@@ -998,10 +998,21 @@ function ok(name, fn) {
             });
             try {
                 const version = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-                const report = await Doctor.generateReport({}, { lastTunnelStderr: 'No recent tunnel errors' });
-                assert.ok(report.includes(`- Extension: Antigravity Codespaces Pro v${version}`), `report should show package version ${version}`);
-                assert.ok(!report.includes('v5.0.8'), 'report must not retain the old hardcoded version');
+                const marker = 'POC-private-path=/home/alice/work';
+                Doctor.setLastTunnelStderr(marker);
+                assert.strictEqual(Doctor._lastTunnelStderr, true, 'store only whether stderr exists');
+                const reports = [
+                    await Doctor.generateReport({}),
+                    await Doctor.generateReport({}, { lastTunnelStderr: marker })
+                ];
+                for (const report of reports) {
+                    assert.ok(report.includes(`- Extension: Antigravity Codespaces Pro v${version}`), `report should show package version ${version}`);
+                    assert.ok(!report.includes('v5.0.8'), 'report must not retain the old hardcoded version');
+                    assert.ok(!report.includes(marker), 'report must not copy raw tunnel stderr');
+                    assert.ok(report.includes('Tunnel error output omitted for privacy'), 'report should explain stderr omission');
+                }
             } finally {
+                Doctor.setLastTunnelStderr(null);
                 Doctor.diagnose = originalDiagnose;
             }
         } finally {

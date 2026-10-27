@@ -289,8 +289,11 @@ class SystemDoctor {
             }
         } catch {}
         
-        // Get last tunnel stderr from global state if available
-        const lastTunnelStderr = opts.lastTunnelStderr || SystemDoctor._lastTunnelStderr || 'No recent tunnel errors';
+        // Include only whether tunnel stderr exists; raw output can contain local or account details.
+        const hasTunnelError = Boolean(opts.lastTunnelStderr || SystemDoctor._lastTunnelStderr);
+        const lastTunnelStderr = hasTunnelError
+            ? 'Tunnel error output omitted for privacy; review it locally before sharing.'
+            : 'No recent tunnel errors';
         
         const lines = [
             '# Antigravity Codespaces Diagnostic Report',
@@ -352,7 +355,7 @@ class SystemDoctor {
      * Store the last tunnel stderr for diagnostic reports.
      */
     static setLastTunnelStderr(stderr) {
-        SystemDoctor._lastTunnelStderr = stderr ? stderr.slice(0, 2000) : null;
+        SystemDoctor._lastTunnelStderr = Boolean(stderr);
     }
 
     /**
