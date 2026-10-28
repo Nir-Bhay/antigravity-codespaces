@@ -14,7 +14,8 @@ const repositoryCommandSchema = z.object({
   command: z.string().min(1).max(65_536).describe('Shell command or script to run remotely.'),
   cwd: z.string().max(4_096).optional().describe('Local project directory; defaults to the MCP server process working directory.'),
   timeoutMs: timeoutSchema,
-  syncLocalChanges: z.boolean().optional().describe('Opt in to transfer staged/unstaged tracked changes and non-ignored untracked files in a temporary detached worktree. This may include private files; inspect your Git status first.')
+  syncLocalChanges: z.boolean().optional().describe('Opt in to transfer the exact staged/unstaged tracked changes and non-ignored untracked files from a recent preview. This may include private files; inspect the preview before approving.'),
+  localChangesPreviewId: z.string().min(1).max(64).optional().describe('Single-use previewId returned by preview_local_changes; required when syncLocalChanges=true. Preview expires after 10 minutes and is rejected if local changes or repository context differ.')
 });
 const localContextSchema = z.object({
   cwd: z.string().max(4_096).optional().describe('Local project directory; defaults to the MCP server process working directory.')
@@ -97,7 +98,7 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
     'preview_local_changes',
     {
       title: 'Preview local changes before syncing',
-      description: 'Read-only preview of changed tracked and non-ignored untracked file names and patch size. Does not return file contents, contact GitHub, or provision a Codespace. Ignored files are excluded. Review the file list before opting into syncLocalChanges.',
+      description: 'Read-only preview of changed tracked and non-ignored untracked file names and patch size. Does not return file contents, contact GitHub, or provision a Codespace. Ignored files are excluded. Review the file list and patch size, then pass the returned previewId as localChangesPreviewId when opting into syncLocalChanges; changes to repository context or patch are rejected.',
       inputSchema: localContextSchema
     },
     async ({ cwd }) => {
@@ -136,13 +137,13 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
     'run_repository_command',
     {
       title: 'Run a command in this project’s Codespace',
-      description: 'Detect the local GitHub repository and branch, reuse an exact matching Codespace, start it if stopped, or create one if none matches. Set syncLocalChanges=true to transfer staged/unstaged tracked changes and non-ignored untracked files into a temporary detached worktree; use preview_local_changes first to review file names and transfer size because private files may be included. This requires identical local and Codespace HEAD commits and never changes branch history. A newly created or started Codespace is stopped after the command; an already running Codespace is left running. Creating or starting can incur compute charges, and stopped Codespaces still incur storage charges.',
+      description: 'Detect the local GitHub repository and branch, reuse an exact matching Codespace, start it if stopped, or create one if none matches. To sync, first call preview_local_changes, review the file names and transfer size, then set syncLocalChanges=true and pass its single-use previewId as localChangesPreviewId. The preview expires after 10 minutes and sync is refused if repository context or patch changed; only the reviewed patch is transferred. This may include private files. Changes are applied in a temporary detached worktree. This requires identical local and Codespace HEAD commits and never changes branch history. A newly created or started Codespace is stopped after the command; an already running Codespace is left running. Creating or starting can incur compute charges, and stopped Codespaces still incur storage charges.',
       inputSchema: repositoryCommandSchema
     },
-    async ({ command, cwd, timeoutMs, syncLocalChanges }, ctx) => {
+    async ({ command, cwd, timeoutMs, syncLocalChanges, localChangesPreviewId }, ctx) => {
       const reporter = progressReporter(ctx);
       try {
-        const summary = await codespaceManager.runRepositoryCommand({ command, cwd, timeoutMs, syncLocalChanges, onOutput: reporter.onOutput });
+        const summary = await codespaceManager.runRepositoryCommand({ command, cwd, timeoutMs, syncLocalChanges, localChangesPreviewId, onOutput: reporter.onOutput });
         await reporter.flush();
         const metadata = [
           `Repository: ${summary.repository}`,
