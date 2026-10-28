@@ -364,13 +364,17 @@ body {
     margin-top: 12px;
 }
 .signup-link {
+    font: inherit;
     font-size: 11px;
     color: var(--vscode-textLink-foreground, #0969da);
     text-decoration: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
     cursor: pointer;
     transition: text-decoration 0.15s;
 }
-.signup-link:hover {
+.signup-link:hover, .signup-link:focus-visible {
     text-decoration: underline;
 }
 
@@ -438,23 +442,24 @@ body {
         <div class="signin-card" role="region" aria-label="Install GitHub CLI">
             <div class="hero-illustration">${I.cloudHero}</div>
             <h1 class="welcome-title">GitHub CLI isn't installed.</h1>
-            <p class="welcome-desc">Antigravity Codespaces uses the GitHub CLI (gh) to sign in and open SSH tunnels to your codespaces.</p>
+            <p class="welcome-desc">The GitHub CLI (<code>gh</code>) is required for SSH connections; it is separate from the extension's GitHub sign-in used to browse your Codespaces.</p>
             <button class="btn-primary-auth" id="installGhBtn" aria-label="Install GitHub CLI">
                 ${I.github}
                 <span>Install GitHub CLI</span>
             </button>
-            <a class="signup-link" id="patBtn" role="button" tabindex="0">Use a personal access token instead</a>
-            <a class="signup-link" id="recheckBtn" role="button" tabindex="0">I've installed it, check again</a>
+            <button type="button" class="signup-link" id="loginBtn">Sign in to the extension</button>
+            <button type="button" class="signup-link" id="patBtn">Use a personal access token for extension sign-in</button>
+            <button type="button" class="signup-link" id="recheckBtn">I've installed it, check again</button>
         </div>` : `
         <div class="signin-card" role="region" aria-label="Sign in">
             <div class="hero-illustration">${I.cloudHero}</div>
             <h1 class="welcome-title">You're signed out.</h1>
-            <p class="welcome-desc">Sign in with the GitHub CLI to see and open your codespaces.</p>
-            <button class="btn-primary-auth" id="loginBtn" aria-label="Sign in with gh">
+            <p class="welcome-desc">Sign in to the extension with GitHub to browse your Codespaces. SSH connections use the separate GitHub CLI (<code>gh</code>) account, which you can configure with Setup Doctor.</p>
+            <button class="btn-primary-auth" id="loginBtn" aria-label="Sign in to the extension with GitHub">
                 ${I.github}
-                <span>Sign in with gh</span>
+                <span>Sign in to extension</span>
             </button>
-            <a class="signup-link" id="patBtn" role="button" tabindex="0">Use a personal access token instead</a>
+            <button type="button" class="signup-link" id="patBtn">Use a personal access token for extension sign-in</button>
         </div>`}
     </div>
 
@@ -466,6 +471,10 @@ body {
         const gh = document.getElementById('installGhBtn');
         if (gh) gh.addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url: 'https://cli.github.com' }));
         on('recheckBtn', 'refresh');
+        const doctorLink = document.createElement('button');
+        doctorLink.className = 'signup-link'; doctorLink.type = 'button'; doctorLink.textContent = 'Run Setup Doctor (GitHub CLI / SSH checks)';
+        doctorLink.addEventListener('click', () => vscode.postMessage({ command: 'openSetupDoctor' }));
+        document.querySelector('.signin-card')?.appendChild(doctorLink);
     </script>
 </body>
 </html>`;
@@ -663,6 +672,7 @@ body {
 <title>GitHub Codespaces</title>
 <style nonce="${nonce}">
 ${errorUx.UX_CSS}
+.sidebar-help{margin:8px 0 10px;padding:8px 10px;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.22));border-radius:6px;color:var(--vscode-descriptionForeground,var(--vscode-foreground))}.sidebar-help summary{cursor:pointer;font-weight:600;color:var(--vscode-foreground);outline-offset:3px}.sidebar-help-copy{margin:8px 0;font-size:11px;line-height:1.45}.sidebar-help-copy code{font-family:var(--vscode-editor-font-family,monospace)}.sidebar-help-actions{display:flex;flex-wrap:wrap;gap:6px}.sidebar-help-action{font:inherit;font-size:11px;color:var(--vscode-textLink-foreground);background:transparent;border:1px solid var(--vscode-button-border,var(--vscode-panel-border));border-radius:4px;padding:4px 7px;cursor:pointer}.sidebar-help-action:hover{background:var(--vscode-toolbar-hoverBackground)}.sidebar-help-action:focus-visible,.sidebar-help summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}
 .cs-card.is-cached{opacity:.72}.cs-card.is-cached .act-btn[disabled]{cursor:not-allowed;opacity:.5}.cached-tag{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#b45309;background:rgba(217,119,6,.12);border:1px solid rgba(217,119,6,.4);border-radius:10px;padding:0 6px;margin-left:6px;align-self:flex-start;width:fit-content}
 .ux-banner{margin:0 0 10px;font-size:12px}.ux-banner .ux-actions{margin-top:4px}
 *, *::before, *::after {
@@ -1590,6 +1600,18 @@ body {
     <!-- First-Run Three-Step Card -->
     ${firstRunCardHtml}
 
+    <!-- Discover setup and optional agent tools without duplicating primary actions. -->
+    <details class="sidebar-help" id="sidebarHelp">
+        <summary>Need help or using an AI client?</summary>
+        <p class="sidebar-help-copy">Extension sign-in loads your Codespaces. SSH connections use the separate GitHub CLI (<code>gh</code>) account shown above.</p>
+        <div class="sidebar-help-actions">
+            <button type="button" class="sidebar-help-action" id="helpDoctorBtn">Run Setup Doctor</button>
+            <button type="button" class="sidebar-help-action" id="helpDashboardBtn">Open Cloud Hub</button>
+            <button type="button" class="sidebar-help-action" id="helpMcpBtn">MCP client setup guide</button>
+        </div>
+        <p class="sidebar-help-copy">The MCP server is optional and configured separately in your AI client; it uses the active <code>gh</code> account on the server machine.</p>
+    </details>
+
     <!-- Search Bar (Screen 2) -->
     <div class="search-wrapper">
         <span class="search-icon-decor">${I.search}</span>
@@ -1819,6 +1841,11 @@ body {
     if (authFixBtn) {
         authFixBtn.addEventListener('click', () => vscode.postMessage({ command: 'loginGitHub' }));
     }
+
+    // ── Contextual discovery actions ──
+    document.getElementById('helpDoctorBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'openSetupDoctor' }));
+    document.getElementById('helpDashboardBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'openDashboard' }));
+    document.getElementById('helpMcpBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'openExternal', url: 'https://github.com/Nir-Bhay/antigravity-codespaces/blob/main/mcp-server/README.md' }));
 
     // ── Empty State Create Actions ──
     const emptyBtn = document.getElementById('emptyCreateBtn');

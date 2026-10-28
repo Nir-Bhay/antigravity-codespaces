@@ -2228,9 +2228,9 @@ ${errorUx.UX_CSS}
         <div class="empty-state-canvas">
           <div class="empty-hero-box">${I.emptyHero}</div>
           <h4 class="empty-title">You're signed out.</h4>
-          <p class="empty-sub">Sign in with the GitHub CLI to see and open your codespaces.</p>
+          <p class="empty-sub">Sign in to the extension with GitHub to browse your Codespaces. SSH connections use the separate GitHub CLI (<code>gh</code>) account.</p>
           <button class="btn-new-cs" data-cmd="loginGitHub">
-            ${I.key} <span>Sign in with gh</span>
+            ${I.key} <span>Sign in to extension</span>
           </button>
         </div>
       ` : `
