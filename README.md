@@ -4,9 +4,9 @@
 
 # Antigravity Codespaces Pro
 
-### Enterprise Multi-Account GitHub Codespaces Manager for Cursor IDE, Antigravity IDE, VS Code & Code-OSS
+### Manage GitHub Codespaces from VS Code-based editors and coding agents
 
-Manage GitHub Codespaces from a VS Code-based editor: browse accounts, connect over SSH, manage lifecycle, inspect usage, or run remote commands through the optional MCP server.
+Browse and connect to Codespaces over SSH, manage their lifecycle, inspect GitHub-reported usage, or optionally run remote commands through a separate MCP server. Editor compatibility and live service behavior depend on your setup; see the [compatibility notes](docs/IDE_SETUP.md) and [verification boundaries](#support-and-verification-boundaries).
 
 [![Version](https://img.shields.io/open-vsx/v/nirbhay-hiwse/antigravity-codespaces?style=for-the-badge&logo=eclipse&color=A855F7&label=Open%20VSX)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
 [![Downloads](https://img.shields.io/open-vsx/dt/nirbhay-hiwse/antigravity-codespaces?style=for-the-badge&color=22C55E&label=Downloads)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
@@ -19,6 +19,25 @@ Manage GitHub Codespaces from a VS Code-based editor: browse accounts, connect o
 </div>
 
 ---
+
+## Start here
+
+- **Install and connect from an editor:** follow the [Quickstart](#quickstart-guide), then use the [sidebar and Setup Doctor guide](#connect-setup-doctor-and-the-sidebar).
+- **Understand quota data:** read [Usage analytics](#usage-analytics) for permissions, freshness, and reported-vs-derived values.
+- **Use an AI/MCP client:** the MCP server is **optional and separate** from the editor extension. Start with the [MCP setup guide](mcp-server/README.md); it runs as a Node.js stdio process and uses the active `gh` account, not extension sign-in.
+- **Check editor support:** see the [compatibility matrix](#editor-compatibility) and [IDE-specific setup guide](docs/IDE_SETUP.md); marketplace availability does not prove end-to-end behavior.
+
+### Pick the surface for your task
+
+| What you want to do | Where to start | What it uses |
+|---|---|---|
+| Browse, create, start, stop, or connect to a Codespace | **Codespaces** activity-bar icon and sidebar; use **Open Cloud Hub Dashboard** for the full view | Extension sign-in for account browsing; GitHub CLI and compatible Remote-SSH for SSH actions |
+| Jump to a known workspace | **Quick Connect to Codespace...** or `Alt+C` | Available Codespaces across the accounts configured in the extension |
+| Diagnose first-run SSH/editor setup | **Codespaces: Setup Doctor** from the Command Palette | Local `gh`, OpenSSH, Remote-SSH provider, scopes, and editor settings |
+| Review quota and billing usage | Cloud Hub **Usage** page or the sidebar usage line | GitHub billing API; data updates hourly and `user` permission may be requested |
+| Run remote commands from an AI agent | Configure the standalone [MCP server](mcp-server/README.md) in your MCP client | Node.js 20+, active `gh` CLI account, and Codespaces access; provisioning may incur charges |
+
+The extension and MCP server are related but do **not** share sign-in state: installing the extension does not configure an MCP client, and MCP uses the CLI account on the machine running the server.
 
 ## What's new in 5.3.2
 
@@ -181,7 +200,9 @@ Failed rows expose the same terminal or Extensions fix as Connect. **Re-run Chec
 
 ### Sidebar `gh` status and welcome card
 
-The Codespaces sidebar keeps a `gh` status line under the header:
+The Codespaces sidebar keeps a `gh` status line under the header. The **Need help or using an AI client?** disclosure is available alongside the account and Codespaces list: it distinguishes extension sign-in (browse/account data) from the active GitHub CLI account (SSH and optional MCP), and links directly to Setup Doctor, Cloud Hub, and the standalone MCP setup guide. Use the same links from the signed-out/install card where relevant; the MCP server remains an optional, separately configured Node.js process.
+
+The status line shows:
 
 - `gh CLI: @user` when the CLI is signed in with the `codespace` scope
 - `gh CLI not installed`, `gh signed out`, `gh needs codespace permission`, or `gh: @user (mismatch)` otherwise, with **Fix**
@@ -253,7 +274,7 @@ Any other failure shows **Usage unavailable** with the reason. This includes an 
 
 The repository also contains a standalone Node.js stdio MCP server. It is separate from the editor extension and authenticates through the active GitHub CLI account on the machine running the MCP process; it does not reuse the extension's SecretStorage sign-in.
 
-The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse/start/create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP server guide](mcp-server/README.md) for setup and complete tool descriptions.
+The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse/start/create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP setup guide](mcp-server/SETUP.md) for copyable client configuration, read-only preflight, sync preview, and safety details, and the [MCP server reference](mcp-server/README.md) for complete tool descriptions.
 
 **Review these effects before enabling it:** starting or creating a Codespace can incur compute charges; a stopped Codespace can continue to incur storage charges. Repository local-change sync is opt-in and may send staged/unstaged tracked files plus non-ignored untracked files (up to 5 MiB) to a temporary remote worktree. Inspect `git status` before enabling it. The server redacts common credential patterns from output, but cannot reliably identify arbitrary secrets; do not run commands that print secrets. Automated tests use mocked GitHub CLI operations, so live API, billing, SSH, and client interoperability still need a controlled manual test.
 
@@ -410,12 +431,13 @@ Tools like Cursor Agent, Antigravity Agent, Claude Code, and Aider frequently pe
 ## Guides and project direction
 
 - [IDE setup guide](docs/IDE_SETUP.md) — editor-specific installation, Remote-SSH requirements, and troubleshooting.
-- [MCP server guide](mcp-server/README.md) — agent integration, tools, local-change sync, security and cost considerations.
+- [MCP setup guide](mcp-server/SETUP.md) — client configuration examples, read-only preflight, safe sync preview, and first-run steps.
+- [MCP server reference](mcp-server/README.md) — tools, local-change sync, security, cost, and verification boundaries.
 - [Agent setup prompt](AGENT_SETUP.md) — guided setup checklist for an IDE agent.
 - [Cursor walkthrough](docs/CURSOR_IDE_CODESPACES_GUIDE.md) — Cursor-focused connection guidance.
 - [KeepAlive guide](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md) — SSH keepalive behavior and configuration.
 - [Multi-account guide](docs/MULTI_ACCOUNT_MANAGEMENT.md) — account setup and switching.
-- [Roadmap and improvement ideas](docs/ROADMAP_MULTI_IDE_AND_IDEAS.md) — prioritized opportunities, dependencies, and acceptance signals.
+- [Roadmap and improvement ideas](docs/ROADMAP_MULTI_IDE_AND_IDEAS.md) — prioritized opportunities, dependencies, and acceptance signals. Current UX and safety work: [sidebar onboarding](https://github.com/Nir-Bhay/antigravity-codespaces/issues/56), [cost/lifecycle safety](https://github.com/Nir-Bhay/antigravity-codespaces/issues/55), and [MCP setup/operability](https://github.com/Nir-Bhay/antigravity-codespaces/issues/54).
 - [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Releasing](docs/releasing.md)
 
 

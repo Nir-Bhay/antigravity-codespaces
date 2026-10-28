@@ -4,6 +4,8 @@ This is a standalone Node 20 stdio MCP server for remote commands in GitHub Code
 
 ## Requirements and setup
 
+For copyable client configuration, the read-only first-run checks, and the safe sync-preview workflow, see the [MCP client setup guide](SETUP.md). Configuration examples are explicitly marked as not integration-tested against a named client/version.
+
 - Node.js 20 or later
 - GitHub CLI (`gh`) installed and authenticated to GitHub.com with the `codespace` scope
 - A Codespace with an SSH server available for remote command execution
@@ -31,7 +33,7 @@ The server uses MCP over stdio. Protocol messages use stdout; diagnostics must g
 
 ## Tools
 
-- `run_repository_command` detects the local repository from its GitHub remote and current branch. It reuses a Codespace only when both repository and branch match; if none matches, it creates one. A stopped match is started and waited on. The server stops a Codespace it created or started after the command, but leaves a Codespace that was already running untouched to avoid interrupting existing work. Concurrent MCP server processes serialize creation for the same repository/branch.
+- `run_repository_command` detects the local repository from its GitHub remote and current branch. It reuses a Codespace only when both repository and branch match; if none matches, it creates one. A stopped match is started and waited on. After a command completes—including a command failure—the server attempts to stop a Codespace it created or started; it leaves a Codespace that was already running untouched to avoid interrupting existing work. If cleanup fails, the response includes a warning. This is best-effort cleanup, not crash recovery: forced termination (`SIGKILL`), machine loss, or a network/API outage can prevent the stop request from reaching GitHub and leave compute running. Configure GitHub Codespaces' idle timeout and review active Codespaces/billing when using automatic provisioning. Concurrent MCP server processes serialize creation for the same repository/branch.
 - Set `syncLocalChanges: true` to transfer staged/unstaged tracked changes and non-ignored untracked files (up to 5 MiB) into a detached temporary Git worktree in the Codespace. The local and remote HEAD commits must match. The temporary worktree is removed after the command, so remote file changes are not retained.
 - `run_codespace_command` runs a shell command or script in an explicitly named, existing Codespace.
 - `list_codespaces`, `get_codespace_status`, `start_codespace`, `stop_codespace`, `get_codespace_logs`, and `get_codespace_ports` expose basic lifecycle and status operations. There is intentionally no delete tool.

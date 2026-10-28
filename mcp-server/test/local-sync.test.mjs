@@ -37,6 +37,9 @@ test('snapshots staged, unstaged, binary, and untracked changes while excluding 
     assert.equal(snapshot.root, root);
     assert.equal(snapshot.head, git(root, ['rev-parse', 'HEAD']));
     assert.equal(snapshot.trackedAndUntrackedChanged, true);
+    assert.deepEqual(snapshot.files, ['new file.bin', 'tracked.txt']);
+    assert.deepEqual(snapshot.untrackedFiles, ['new file.bin']);
+    assert.ok(snapshot.patchBytes > 0);
     assert.match(snapshot.patch, /tracked\.txt/);
     assert.match(snapshot.patch, /new file\.bin/);
     assert.doesNotMatch(snapshot.patch, /ignored\.txt/);
@@ -76,6 +79,13 @@ test('repository command sends opted-in local changes only to an isolated remote
         return { exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, outputTruncated: false };
       }
     });
+
+    const preview = await manager.previewLocalChanges({ cwd: root });
+    assert.deepEqual(preview.files, ['new.txt', 'tracked.txt']);
+    assert.deepEqual(preview.untrackedFiles, ['new.txt']);
+    assert.equal(preview.repository, 'octocat/hello-world');
+    assert.equal(preview.branch, 'feature/sync');
+    assert.equal(preview.codespaceProvisioningAttempted, false);
 
     const result = await manager.runRepositoryCommand({ cwd: root, command: 'npm test', syncLocalChanges: true });
     assert.equal(result.localChangesSynced, true);

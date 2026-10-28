@@ -8,6 +8,14 @@ Help developers manage GitHub Codespaces from VS Code-based editors and let codi
 
 ## Recommended next steps
 
+The next three scoped work items are tracked separately so each can be implemented, tested, and reviewed on its own:
+
+1. [Sidebar onboarding and feature discoverability (#56)](https://github.com/Nir-Bhay/antigravity-codespaces/issues/56) — clarify the path from install through first connection and surface existing features at the right moment.
+2. [Codespaces cost and lifecycle safety overview (#55)](https://github.com/Nir-Bhay/antigravity-codespaces/issues/55) — make account, state, freshness, compute/storage distinction, and destructive effects clear before actions.
+3. [Standalone MCP setup and safe operation (#54)](https://github.com/Nir-Bhay/antigravity-codespaces/issues/54) — improve client configuration, preflight, transfer preview, and cleanup reporting without implying the MCP server is bundled into the extension.
+
+These issues are proposals, not claims of implemented behavior. Issue [#22](https://github.com/Nir-Bhay/antigravity-codespaces/issues/22) remains the broader MCP phase tracker; #54 deliberately narrows to user setup and operability.
+
 ### P0 — Improve trust and first-run success
 
 1. **Publish a tested editor compatibility matrix.** Record editor/version, extension distribution source, Remote-SSH provider, install result, connect result, and known caveats. Mark rows as tested, community-reported, or unverified. Re-test after editor API or marketplace changes.

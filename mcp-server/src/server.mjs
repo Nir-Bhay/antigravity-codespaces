@@ -16,6 +16,9 @@ const repositoryCommandSchema = z.object({
   timeoutMs: timeoutSchema,
   syncLocalChanges: z.boolean().optional().describe('Opt in to transfer staged/unstaged tracked changes and non-ignored untracked files in a temporary detached worktree. This may include private files; inspect your Git status first.')
 });
+const localContextSchema = z.object({
+  cwd: z.string().max(4_096).optional().describe('Local project directory; defaults to the MCP server process working directory.')
+});
 const codespaceNameSchema = z.object({
   codespaceName: z.string().min(1).max(100).describe('Exact Codespace name.')
 });
@@ -75,6 +78,38 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
   const server = new McpServer({ name: 'antigravity-codespaces', version: '0.1.0' });
 
   server.registerTool(
+    'check_setup',
+    {
+      title: 'Check MCP setup without provisioning',
+      description: 'Read-only preflight for Node.js, GitHub CLI installation/authentication, the Codespaces permission scope, and the local GitHub repository/branch. Never lists, starts, or creates a Codespace.',
+      inputSchema: localContextSchema
+    },
+    async ({ cwd }) => {
+      try {
+        return outputResult(JSON.stringify(await codespaceManager.preflightRepository({ cwd }), null, 2));
+      } catch (error) {
+        return outputResult(error.message || 'Setup preflight failed.', true);
+      }
+    }
+  );
+
+  server.registerTool(
+    'preview_local_changes',
+    {
+      title: 'Preview local changes before syncing',
+      description: 'Read-only preview of changed tracked and non-ignored untracked file names and patch size. Does not return file contents, contact GitHub, or provision a Codespace. Ignored files are excluded. Review the file list before opting into syncLocalChanges.',
+      inputSchema: localContextSchema
+    },
+    async ({ cwd }) => {
+      try {
+        return outputResult(JSON.stringify(await codespaceManager.previewLocalChanges({ cwd }), null, 2));
+      } catch (error) {
+        return outputResult(error.message || 'Could not preview local changes.', true);
+      }
+    }
+  );
+
+  server.registerTool(
     'run_codespace_command',
     {
       title: 'Run a command in a GitHub Codespace',
@@ -101,7 +136,7 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
     'run_repository_command',
     {
       title: 'Run a command in this project’s Codespace',
-      description: 'Detect the local GitHub repository and branch, reuse an exact matching Codespace, start it if stopped, or create one if none matches. Set syncLocalChanges=true to transfer staged/unstaged tracked changes and non-ignored untracked files into a temporary detached worktree; inspect Git status first because private files may be included. This requires identical local and Codespace HEAD commits and never changes branch history. A newly created or started Codespace is stopped after the command; an already running Codespace is left running. Creating or starting can incur compute charges, and stopped Codespaces still incur storage charges.',
+      description: 'Detect the local GitHub repository and branch, reuse an exact matching Codespace, start it if stopped, or create one if none matches. Set syncLocalChanges=true to transfer staged/unstaged tracked changes and non-ignored untracked files into a temporary detached worktree; use preview_local_changes first to review file names and transfer size because private files may be included. This requires identical local and Codespace HEAD commits and never changes branch history. A newly created or started Codespace is stopped after the command; an already running Codespace is left running. Creating or starting can incur compute charges, and stopped Codespaces still incur storage charges.',
       inputSchema: repositoryCommandSchema
     },
     async ({ command, cwd, timeoutMs, syncLocalChanges }, ctx) => {

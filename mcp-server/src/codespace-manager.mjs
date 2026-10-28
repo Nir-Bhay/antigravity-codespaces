@@ -6,6 +6,7 @@ import { detectRepositoryContext } from './git-context.mjs';
 import { createGhClient } from './gh-client.mjs';
 import { runCodespaceCommand, validateCodespaceName, validateCommandInput } from './process-runner.mjs';
 import { buildLocalPatch, buildRemoteWorktreeCommand } from './local-sync.mjs';
+import { runPreflight } from './preflight.mjs';
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -101,7 +102,8 @@ export function createCodespaceManager({
   lock = withRepositoryLock,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
-  startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS
+  startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
+  preflight = runPreflight
 } = {}) {
   async function waitUntilAvailable(name) {
     const deadline = Date.now() + startupTimeoutMs;
@@ -153,6 +155,27 @@ export function createCodespaceManager({
   }
 
   return {
+    async preflightRepository({ cwd } = {}) {
+      return preflight({ cwd, detectContext });
+    },
+
+    async previewLocalChanges({ cwd } = {}) {
+      const context = await detectContext({ cwd });
+      const snapshot = await buildLocalPatch(context.cwd);
+      return {
+        repository: context.repository,
+        branch: context.branch,
+        head: snapshot.head,
+        files: snapshot.files,
+        fileCount: snapshot.files.length,
+        patchBytes: snapshot.patchBytes,
+        transferLimitBytes: 5 * 1024 * 1024,
+        codespaceProvisioningAttempted: false,
+        untrackedFiles: snapshot.untrackedFiles,
+        note: 'Ignored files are excluded. File names and byte count are shown; file contents are not returned. Preview does not contact GitHub or provision a Codespace.'
+      };
+    },
+
     async listCodespaces() {
       return gh.listCodespaces();
     },
