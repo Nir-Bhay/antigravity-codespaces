@@ -4,6 +4,8 @@ This is a standalone Node 20 stdio MCP server for remote commands in GitHub Code
 
 ## Requirements and setup
 
+For copyable client configuration, the read-only first-run checks, and the safe sync-preview workflow, see the [MCP client setup guide](SETUP.md). Configuration examples are explicitly marked as not integration-tested against a named client/version.
+
 - Node.js 20 or later
 - GitHub CLI (`gh`) installed and authenticated to GitHub.com with the `codespace` scope
 - A Codespace with an SSH server available for remote command execution

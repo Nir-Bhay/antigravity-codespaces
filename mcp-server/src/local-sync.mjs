@@ -20,6 +20,8 @@ export async function buildLocalPatch(cwd, { runProcessImpl = runProcess } = {})
   if (!HEAD_RE.test(head)) throw new Error('Could not identify the local repository HEAD commit.');
 
   let patch = await runGit(['diff', '--binary', 'HEAD'], root, runProcessImpl);
+  const tracked = (await runGit(['diff', '--name-only', '-z', 'HEAD'], root, runProcessImpl, MAX_PATCH_BYTES))
+    .split('\0').filter(Boolean);
   const untracked = (await runGit(['ls-files', '--others', '--exclude-standard', '-z'], root, runProcessImpl, MAX_PATCH_BYTES))
     .split('\0').filter(Boolean);
   for (const filename of untracked) {
@@ -36,7 +38,15 @@ export async function buildLocalPatch(cwd, { runProcessImpl = runProcess } = {})
     patch += result.stdout;
   }
   if (Buffer.byteLength(patch) > MAX_PATCH_BYTES) throw new Error('Local changes exceed the 5 MiB transfer limit.');
-  return { root, head, patch, trackedAndUntrackedChanged: patch.length > 0 };
+  return {
+    root,
+    head,
+    patch,
+    files: [...new Set([...tracked, ...untracked])].sort(),
+    untrackedFiles: [...new Set(untracked)].sort(),
+    patchBytes: Buffer.byteLength(patch),
+    trackedAndUntrackedChanged: patch.length > 0
+  };
 }
 
 function shellQuote(value) {

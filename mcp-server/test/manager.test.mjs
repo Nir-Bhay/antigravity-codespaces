@@ -12,7 +12,7 @@ function context(repository = 'octocat/hello-world', branch = 'feature/test') {
   return { repository, branch, cwd: '/tmp/repo' };
 }
 
-function fakeGh({ codespaces = [], state = 'Available' } = {}) {
+function fakeGh({ codespaces = [], state = 'Available', stopError = null } = {}) {
   const calls = { list: 0, create: 0, start: 0, stop: 0 };
   let current = [...codespaces];
   return {
@@ -33,6 +33,7 @@ function fakeGh({ codespaces = [], state = 'Available' } = {}) {
     },
     async stopCodespace(name) {
       calls.stop++;
+      if (stopError) throw stopError;
       state = 'Shutdown';
       current = current.map(item => item.name === name ? { ...item, state } : item);
     }
@@ -120,6 +121,27 @@ test('stops a Codespace it started even when the remote command exits nonzero', 
   const result = await manager.runRepositoryCommand({ command: 'npm test' });
   assert.equal(result.result.exitCode, 2);
   assert.equal(result.stoppedAfterRun, true);
+  assert.equal(gh.calls.stop, 1);
+});
+
+test('reports cleanup failure instead of claiming a started Codespace was stopped', async () => {
+  const gh = fakeGh({
+    codespaces: [{ name: 'octocat-stopped', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Shutdown' }],
+    state: 'Shutdown',
+    stopError: new Error('network unavailable')
+  });
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => context(),
+    lock: async (_key, operation) => operation(),
+    runCommand: async () => ({ exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, outputTruncated: false }),
+    sleep: async () => {},
+    startupTimeoutMs: 1_000
+  });
+  const result = await manager.runRepositoryCommand({ command: 'npm test' });
+  assert.equal(result.started, true);
+  assert.equal(result.stoppedAfterRun, false);
+  assert.match(result.cleanupError, /network unavailable/);
   assert.equal(gh.calls.stop, 1);
 });
 

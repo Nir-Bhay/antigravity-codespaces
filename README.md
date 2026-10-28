@@ -274,7 +274,7 @@ Any other failure shows **Usage unavailable** with the reason. This includes an 
 
 The repository also contains a standalone Node.js stdio MCP server. It is separate from the editor extension and authenticates through the active GitHub CLI account on the machine running the MCP process; it does not reuse the extension's SecretStorage sign-in.
 
-The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse/start/create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP server guide](mcp-server/README.md) for setup and complete tool descriptions.
+The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse/start/create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP setup guide](mcp-server/SETUP.md) for copyable client configuration, read-only preflight, sync preview, and safety details, and the [MCP server reference](mcp-server/README.md) for complete tool descriptions.
 
 **Review these effects before enabling it:** starting or creating a Codespace can incur compute charges; a stopped Codespace can continue to incur storage charges. Repository local-change sync is opt-in and may send staged/unstaged tracked files plus non-ignored untracked files (up to 5 MiB) to a temporary remote worktree. Inspect `git status` before enabling it. The server redacts common credential patterns from output, but cannot reliably identify arbitrary secrets; do not run commands that print secrets. Automated tests use mocked GitHub CLI operations, so live API, billing, SSH, and client interoperability still need a controlled manual test.
 
@@ -431,7 +431,8 @@ Tools like Cursor Agent, Antigravity Agent, Claude Code, and Aider frequently pe
 ## Guides and project direction
 
 - [IDE setup guide](docs/IDE_SETUP.md) — editor-specific installation, Remote-SSH requirements, and troubleshooting.
-- [MCP server guide](mcp-server/README.md) — agent integration, tools, local-change sync, security and cost considerations.
+- [MCP setup guide](mcp-server/SETUP.md) — client configuration examples, read-only preflight, safe sync preview, and first-run steps.
+- [MCP server reference](mcp-server/README.md) — tools, local-change sync, security, cost, and verification boundaries.
 - [Agent setup prompt](AGENT_SETUP.md) — guided setup checklist for an IDE agent.
 - [Cursor walkthrough](docs/CURSOR_IDE_CODESPACES_GUIDE.md) — Cursor-focused connection guidance.
 - [KeepAlive guide](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md) — SSH keepalive behavior and configuration.

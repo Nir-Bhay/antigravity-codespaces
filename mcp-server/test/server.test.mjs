@@ -170,6 +170,8 @@ test('serves a streaming run command tool and returns output and exit code over 
     await client.connect(clientTransport);
     const listed = await client.listTools();
     const toolNames = listed.tools.map(tool => tool.name);
+    assert.ok(toolNames.includes('check_setup'));
+    assert.ok(toolNames.includes('preview_local_changes'));
     assert.ok(toolNames.includes('run_codespace_command'));
     assert.ok(toolNames.includes('run_repository_command'));
     assert.ok(toolNames.includes('list_codespaces'));
@@ -190,6 +192,38 @@ test('serves a streaming run command tool and returns output and exit code over 
     assert.match(result.content[0].text, /STDERR:\nbuilding/);
     assert.ok(progressUpdates.some(message => message.includes('stdout: test 1')));
     assert.ok(progressUpdates.some(message => message.includes('stderr: building')));
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test('setup and sync-preview tools return safe read-only reports without remote lifecycle calls', async () => {
+  const calls = [];
+  const manager = {
+    async preflightRepository() {
+      calls.push('preflight');
+      return { ready: true, codespaceProvisioningAttempted: false, checks: [] };
+    },
+    async previewLocalChanges() {
+      calls.push('preview');
+      return { files: ['src/app.js'], patchBytes: 42, codespaceProvisioningAttempted: false };
+    }
+  };
+  const server = createCodespacesMcpServer({ manager });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test-client', version: '1.0.0' });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const setup = await client.callTool({ name: 'check_setup', arguments: {} });
+    const preview = await client.callTool({ name: 'preview_local_changes', arguments: {} });
+    assert.equal(setup.isError, false);
+    assert.match(setup.content[0].text, /codespaceProvisioningAttempted/);
+    assert.equal(preview.isError, false);
+    assert.match(preview.content[0].text, /src\/app\.js/);
+    assert.doesNotMatch(preview.content[0].text, /patch content/i);
+    assert.deepEqual(calls, ['preflight', 'preview']);
   } finally {
     await client.close();
     await server.close();
