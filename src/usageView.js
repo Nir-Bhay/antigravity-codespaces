@@ -18,9 +18,14 @@ const LINKS = {
     storageDocs: 'https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-codespaces/about-billing-for-github-codespaces#billing-for-storage-usage'
 };
 
-function fmtTime(ms) {
-    const d = new Date(ms);
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+function fmtDateTimeUtc(ms) {
+    const date = new Date(ms);
+    if (!Number.isFinite(date.getTime())) return 'unavailable';
+    const value = new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+        hourCycle: 'h23', timeZone: 'UTC'
+    }).format(date);
+    return `${value} UTC`;
 }
 function fmtDate(iso) {
     try { return new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', timeZone: 'UTC' }); } catch { return ''; }
@@ -78,8 +83,9 @@ function sidebarSummaryHtml(u, nonce, opts = {}) {
     if (!u || opts.show === false) return '';
     const acc = escapeHtml(u.account);
     const plan = u.plan ? ` · ${escapeHtml(u.plan.label)}` : '';
-    const tags = (u.offline ? `<span class="usage-mini-tag" title="Network unavailable">offline · ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '');
-    const top = `<div class="usage-mini-top"><span>Usage${plan}</span>${tags}</div>`;
+    const sourceTag = hasData(u) ? `<span class="usage-mini-tag" title="GitHub-reported billing totals; delayed and not attributable to an individual Codespace">reported · ${escapeHtml(fmtDateTimeUtc(u.lastUpdated || u.fetchedAt))}</span>` : '';
+    const offlineTag = u.offline ? `<span class="usage-mini-tag" title="Network unavailable; cached billing data may be stale">offline</span>` : '';
+    const top = `<div class="usage-mini-top"><span>Usage${plan}</span>${sourceTag}${offlineTag}</div>`;
     let body;
     if (u.mode === 'needsPermission') {
         body = `<div class="usage-mini-line">Grant access to see usage · <button class="usage-mini-link" data-usage-grant="${acc}">Grant access</button></div>`;
@@ -230,7 +236,7 @@ function errorBodyHtml(u) {
     return `<div class="usage-hero-figure">${escapeHtml(title)} <small>${escapeHtml(why)}</small></div>${u.fix ? `<div class="usage-muted">Fix: <code>${escapeHtml(u.fix)}</code></div>` : ''}`;
 }
 function tagsHtml(u) {
-    return (u.offline ? `<span class="usage-tag off">offline · last updated ${fmtTime(u.lastUpdated || u.fetchedAt)}</span>` : '')
+    return (u.offline ? `<span class="usage-tag off">offline · last fetched ${escapeHtml(fmtDateTimeUtc(u.lastUpdated || u.fetchedAt))}</span>` : '')
         + (u.isCurrent === false ? `<span class="usage-tag">closed month</span>` : '');
 }
 
@@ -348,7 +354,10 @@ function hubUsagePageHtml(u, opts = {}) {
     const months = (u && u.months) || [];
     const sel = u && u.period ? `${u.period.year}-${u.period.month}` : '';
     const monthSelect = months.length ? `<label class="usage-muted" for="usageMonth">Month</label><select class="usage-select" id="usageMonth" aria-label="Billing month">${months.map(m => `<option value="${m.year}-${m.month}"${`${m.year}-${m.month}` === sel ? ' selected' : ''}>${escapeHtml(m.label)}${m.current ? ' (current)' : ''}</option>`).join('')}</select>` : '';
-    const head = (title) => `<div class="usage-page-head"><h2>${title}</h2><div class="usage-actions">${u ? tagsHtml(u) : ''}${monthSelect}<span class="usage-muted">Updated hourly · last fetched ${u && u.fetchedAt ? fmtTime(u.fetchedAt) : '—'}</span><button class="btn-header-secondary" id="usageRefreshBtn">Refresh usage</button></div></div>`;
+    const freshness = !u ? 'Billing data unavailable' : hasData(u)
+        ? `GitHub-reported totals · delayed reporting · last fetched ${fmtDateTimeUtc(u.fetchedAt)}`
+        : `Last checked ${fmtDateTimeUtc(u.fetchedAt)}`;
+    const head = (title) => `<div class="usage-page-head"><h2>${title}</h2><div class="usage-actions">${u ? tagsHtml(u) : ''}${monthSelect}<span class="usage-muted" title="GitHub billing is delayed and is not a real-time per-Codespace cost feed">${escapeHtml(freshness)}</span><button class="btn-header-secondary" id="usageRefreshBtn">Refresh usage</button></div></div>`;
     const links = `<div class="usage-actions"><button class="usage-link" data-usage-url="${LINKS.billing}">Open GitHub billing ↗</button><button class="usage-link" data-usage-url="${LINKS.spending}">Set spending limit ↗</button><button class="usage-link" data-usage-url="${LINKS.codespacesSettings}">Reduce idle timeout ↗</button><button class="usage-link" data-usage-url="${LINKS.docs}">Billing docs ↗</button></div>`;
     if (!u) return `<section class="usage-page" id="usagePage">${head('Usage')}<div class="usage-panel">No active GitHub account.</div></section>`;
     const title = `Usage · ${escapeHtml(u.login || u.account)}${u.plan ? ' · ' + escapeHtml(u.plan.label) : ''}`;

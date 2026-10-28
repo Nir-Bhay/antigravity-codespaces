@@ -5,6 +5,7 @@ const errorUx = require('./errorUx');
 const EXT_VERSION = (() => { try { return require('../package.json').version; } catch (e) { return ''; } })();
 const logger = require('./logger');
 const { hubUsageCardHtml, hubUsagePageHtml, hubUsageScript, storageTierText, HUB_CSS } = require('./usageView');
+const { classifyCodespaceState, createConfirmationText } = require('./codespaceLifecycle');
 
 class DashboardProvider {
     constructor(context, authManager, githubApi, usageService = null) {
@@ -84,12 +85,8 @@ class DashboardProvider {
                             break;
                         case 'delete':
                             await vscode.commands.executeCommand('antigravity-codespaces.deleteCodespace', {
-                                codespaceData: { name: msg.name, account: msg.account },
+                                codespaceData: { name: msg.name, account: msg.account, displayName: msg.displayName, state: msg.state, repository: msg.repo },
                                 confirmed: true
-                            });
-                            this._panel?.webview.postMessage({
-                                command: 'toast',
-                                text: `Deleted "${msg.name}"`
                             });
                             setTimeout(() => this.refreshHtml(), 1500);
                             break;
@@ -184,7 +181,18 @@ class DashboardProvider {
                                 if (!msg.repo || !String(msg.repo).trim()) {
                                     throw new Error('Select a repository first.');
                                 }
-                                const newName = await this._githubApi.createCodespace(msg.repo, msg.branch || '', msg.account);
+                                const account = msg.account || this._authManager.getActiveAccount();
+                                const branch = msg.branch || '';
+                                const approved = await vscode.window.showWarningMessage(
+                                    createConfirmationText({ account, repository: msg.repo, branch }),
+                                    { modal: true },
+                                    'Create Codespace'
+                                );
+                                if (approved !== 'Create Codespace') {
+                                    this._panel?.webview.postMessage({ command: 'createError', error: 'Creation cancelled. No Codespace was created.' });
+                                    break;
+                                }
+                                const newName = await this._githubApi.createCodespace(msg.repo, branch, account);
                                 this._panel?.webview.postMessage({
                                     command: 'createSuccess',
                                     name: newName
@@ -352,7 +360,7 @@ class DashboardProvider {
     }
 
     buildDashboardHtml(accountsData, activeAccount, accountsList) {
-        let total = 0, online = 0, offline = 0;
+        let total = 0, online = 0, offline = 0, otherStates = 0;
         const flat = [];
         const accountErrors = [];
 
@@ -362,8 +370,10 @@ class DashboardProvider {
             }
             (codespaces || []).forEach(cs => {
                 total++;
-                const isOnline = cs.state === 'Available';
-                if (isOnline) online++; else offline++;
+                const state = classifyCodespaceState(cs.state);
+                if (state.kind === 'running') online++;
+                else if (state.kind === 'stopped') offline++;
+                else otherStates++;
                 flat.push({ ...cs, account, authType: type });
             });
         });
@@ -418,7 +428,9 @@ class DashboardProvider {
 
         // Render Workspace Cards for Grid View
         const cardsHtml = flat.map(cs => {
-            const running = cs.state === 'Available';
+            const state = classifyCodespaceState(cs.state);
+            const running = state.kind === 'running';
+            const stopped = state.kind === 'stopped';
             const repo = cs.repository || cs.name;
             const branch = cs.gitStatus?.ref || '—';
             const time = formatRelativeTime(cs.lastUsedAt);
@@ -426,19 +438,22 @@ class DashboardProvider {
             const displayName = cs.displayName || cs.name;
             const initials = getInitials(cs.account);
             const accColor = getAccountColor(cs.account);
+            const machine = cs.machineDisplayName || cs.machineName || 'Not reported by GitHub';
+            const lifecycleDisabled = cachedAccounts.has(cs.account) || !state.actionable;
+            const lifecycleDisabledAttr = lifecycleDisabled ? ' disabled aria-disabled="true" title="Refresh GitHub state before using lifecycle actions"' : '';
 
             return `
-            <article class="ws-card ${running ? 'is-running' : 'is-stopped'}${cachedAccounts.has(cs.account) ? ' is-cached' : ''}" 
+            <article class="ws-card is-${state.kind}${cachedAccounts.has(cs.account) ? ' is-cached' : ''}"
                      data-account="${escapeHtml(cs.account)}" 
                      data-name="${escapeHtml(cs.name)}" 
                      data-repo="${escapeHtml(repo)}"
                      data-branch="${escapeHtml(branch)}"
-                     data-state="${running ? 'running' : 'stopped'}">
+                     data-state="${state.kind}">
               
               <!-- Card Header: Status Dot + Title + 3-Dot Menu -->
               <div class="ws-card-header">
                 <div class="ws-title-group">
-                  <span class="status-indicator ${running ? 'status-running' : 'status-stopped'}">
+                  <span class="status-indicator status-${state.kind}" title="GitHub state: ${escapeHtml(state.raw || 'unavailable')}">
                     <span class="status-dot"></span>
                     ${running ? '<span class="status-pulse"></span>' : ''}
                   </span>
@@ -455,14 +470,14 @@ class DashboardProvider {
                     <button class="menu-item" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open in GitHub Web">
                       ${I.globe} <span>Open in GitHub Web</span>
                     </button>
-                    <button class="menu-item" data-cmd="openRebuildModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Rebuild DevContainer">
+                    <button class="menu-item" data-cmd="openRebuildModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${lifecycleDisabledAttr}>
                       ${I.build} <span>Rebuild DevContainer</span>
                     </button>
                     <button class="menu-item" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH Command">
                       ${I.term} <span>Copy SSH Command</span>
                     </button>
                     <div class="menu-divider"></div>
-                    <button class="menu-item menu-item-danger" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete Codespace">
+                    <button class="menu-item menu-item-danger" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-display-name="${escapeHtml(displayName)}" data-acc="${escapeHtml(cs.account)}" data-state="${escapeHtml(state.raw)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true"' : ''} title="${cachedAccounts.has(cs.account) ? 'Disabled until a refresh succeeds' : 'Delete Codespace'}">
                       ${I.trash} <span>Delete Codespace</span>
                     </button>
                   </div>
@@ -475,8 +490,8 @@ class DashboardProvider {
                   <span class="user-avatar-small" style="background:${accColor}; color:#ffffff;">${escapeHtml(initials)}</span>
                   <span class="user-name">${escapeHtml(cs.account)}</span>
                 </div>
-                <span class="status-badge ${running ? 'badge-running' : 'badge-stopped'}">
-                  ${running ? 'RUNNING' : 'STOPPED'}
+                <span class="status-badge badge-${state.kind}" title="GitHub state: ${escapeHtml(state.raw || 'unavailable')}">
+                  ${escapeHtml(state.label)}
                 </span>
               </div>
 
@@ -501,23 +516,26 @@ class DashboardProvider {
                     <span class="meta-text idle-text">Idle timeout: ${idleMins}m</span>
                   </div>` : ''}
                 </div>
+                <div class="meta-row" title="Machine size from GitHub Codespaces">
+                  <span class="meta-icon">${I.desktop}</span><span>Machine: ${escapeHtml(machine)}</span>
+                </div>
               </div>
 
               <!-- Action Dock -->
               <div class="ws-action-dock">
                 <div class="action-primary-group">
                   ${running ? `
-                    <button class="action-btn btn-connect" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Connect in Antigravity IDE"'}>
+                    <button class="action-btn btn-connect" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ' title="Connect in Antigravity IDE"'}>
                       ${I.play} <span>Connect</span>
                     </button>
-                    <button class="action-btn btn-stop" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Stop Codespace (save hours)"'}>
+                    <button class="action-btn btn-stop" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${lifecycleDisabledAttr} title="Stop compute; storage billing continues until deletion">
                       ${I.stop} <span>Stop</span>
                     </button>
-                  ` : `
-                    <button class="action-btn btn-start" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ''}${cachedAccounts.has(cs.account) ? '' : ' title="Turn ON Codespace"'}>
+                  ` : stopped ? `
+                    <button class="action-btn btn-start" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${lifecycleDisabledAttr} title="Start compute; charges may apply">
                       ${I.play} <span>Start</span>
                     </button>
-                  `}
+                  ` : `<span class="lifecycle-state-note" role="status">${escapeHtml(state.label)} · refresh to confirm</span>`}
                 </div>
 
                 <div class="action-utility-group">
@@ -527,13 +545,13 @@ class DashboardProvider {
                   ${running ? '' : `<button class="util-btn" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open in GitHub Web" aria-label="Open Web">
                     ${I.globe}
                   </button>
-                  <button class="util-btn" data-cmd="openRebuildModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Rebuild DevContainer" aria-label="Rebuild">
+                  <button class="util-btn" data-cmd="openRebuildModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${lifecycleDisabledAttr} aria-label="Rebuild">
                     ${I.build}
                   </button>
                   `}<button class="util-btn" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH Command" aria-label="Copy SSH">
                     ${I.term}
                   </button>
-                  ${running ? '' : `<button class="util-btn btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete Codespace" aria-label="Delete">
+                  ${running ? '' : `<button class="util-btn btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-display-name="${escapeHtml(displayName)}" data-acc="${escapeHtml(cs.account)}" data-state="${escapeHtml(state.raw)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ' title="Delete Codespace"'} aria-label="Delete">
                     ${I.trash}
                   </button>`}
                 </div>
@@ -543,24 +561,29 @@ class DashboardProvider {
 
         // Render Workspace Rows for List View
         const tableRowsHtml = flat.map(cs => {
-            const running = cs.state === 'Available';
+            const state = classifyCodespaceState(cs.state);
+            const running = state.kind === 'running';
+            const stopped = state.kind === 'stopped';
             const repo = cs.repository || cs.name;
             const branch = cs.gitStatus?.ref || '—';
             const time = formatRelativeTime(cs.lastUsedAt);
             const displayName = cs.displayName || cs.name;
+            const machine = cs.machineDisplayName || cs.machineName || 'Not reported by GitHub';
+            const disabled = cachedAccounts.has(cs.account) || !state.actionable;
+            const disabledAttr = disabled ? ' disabled aria-disabled="true" title="Refresh GitHub state before using lifecycle actions"' : '';
 
             return `
-            <tr class="table-row ${running ? 'is-running' : 'is-stopped'}"
+            <tr class="table-row is-${state.kind}"
                 data-account="${escapeHtml(cs.account)}" 
                 data-name="${escapeHtml(cs.name)}" 
                 data-repo="${escapeHtml(repo)}"
                 data-branch="${escapeHtml(branch)}"
-                data-state="${running ? 'running' : 'stopped'}">
+                data-state="${state.kind}">
               <td class="col-status">
-                <span class="status-indicator ${running ? 'status-running' : 'status-stopped'}">
+                <span class="status-indicator status-${state.kind}" title="GitHub state: ${escapeHtml(state.raw || 'unavailable')}">
                   <span class="status-dot"></span>
                 </span>
-                <span class="status-badge ${running ? 'badge-running' : 'badge-stopped'}">${running ? 'RUNNING' : 'STOPPED'}</span>
+                <span class="status-badge badge-${state.kind}" title="GitHub state: ${escapeHtml(state.raw || 'unavailable')}">${escapeHtml(state.label)}</span>
               </td>
               <td class="col-name">
                 <span class="table-ws-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
@@ -574,24 +597,25 @@ class DashboardProvider {
               <td class="col-branch">
                 <span class="branch-pill"><code>${escapeHtml(branch)}</code></span>
               </td>
+              <td class="col-machine" title="Machine size from GitHub Codespaces">${escapeHtml(machine)}</td>
               <td class="col-time">Active ${escapeHtml(time)}</td>
               <td class="col-actions">
                 <div class="table-action-wrap">
                   ${running ? `
-                    <button class="action-btn btn-connect btn-sm" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}" title="Connect">
+                    <button class="action-btn btn-connect btn-sm" data-cmd="connect" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ' title="Connect"'}>
                       ${I.play} <span>Connect</span>
                     </button>
-                    <button class="action-btn btn-stop btn-sm" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Stop">
+                    <button class="action-btn btn-stop btn-sm" data-cmd="stop" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${disabledAttr}>
                       ${I.stop} <span>Stop</span>
                     </button>
-                  ` : `
-                    <button class="action-btn btn-start btn-sm" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Start">
+                  ` : stopped ? `
+                    <button class="action-btn btn-start btn-sm" data-cmd="start" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}"${disabledAttr}>
                       ${I.play} <span>Start</span>
                     </button>
-                  `}
+                  ` : `<span class="lifecycle-state-note" role="status">${escapeHtml(state.label)} · refresh</span>`}
                   <button class="util-btn btn-sm" data-cmd="openWeb" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Open Web">${I.globe}</button>
                   <button class="util-btn btn-sm" data-cmd="copySSH" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Copy SSH">${I.term}</button>
-                  <button class="util-btn btn-sm btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-acc="${escapeHtml(cs.account)}" title="Delete">${I.trash}</button>
+                  <button class="util-btn btn-sm btn-util-delete" data-cmd="openDeleteModal" data-name="${escapeHtml(cs.name)}" data-display-name="${escapeHtml(displayName)}" data-acc="${escapeHtml(cs.account)}" data-state="${escapeHtml(state.raw)}" data-repo="${escapeHtml(repo)}"${cachedAccounts.has(cs.account) ? ' disabled aria-disabled="true" title="Disabled until a refresh succeeds"' : ' title="Delete"'}>${I.trash}</button>
                 </div>
               </td>
             </tr>`;
@@ -1230,6 +1254,7 @@ html, body {
 }
 .status-running .status-dot { background: var(--hub-success); }
 .status-stopped .status-dot { background: var(--hub-text-subtle); }
+.status-transitioning .status-dot,.status-unknown .status-dot { background: var(--hub-warning); }
 .status-pulse {
   position: absolute;
   width: 100%;
@@ -1385,6 +1410,9 @@ html, body {
   background: var(--hub-danger-soft);
   color: var(--hub-danger-text);
 }
+.badge-transitioning,.badge-unknown { background: var(--hub-warning-soft); color: var(--hub-warning); }
+.lifecycle-state-note { font-size: 11px; line-height: 1.25; color: var(--hub-warning); }
+.kpi-hint { font-size: 10px; line-height: 1.2; color: var(--hub-text-muted); }
 
 .ws-meta-rows {
   display: flex;
@@ -1995,7 +2023,8 @@ html, body {
   justify-content: center;
 }
 .delete-dialog-title { font-size: 15px; font-weight: 700; color: var(--hub-text-main); }
-.delete-dialog-desc { font-size: 12px; color: var(--hub-text-muted); }
+.delete-dialog-desc { font-size: 12px; color: var(--hub-text-main); font-weight: 600; }
+.delete-dialog-impact { font-size: 12px; color: var(--hub-text-muted); line-height: 1.45; }
 
 /* Buttons in modal */
 .btn-dialog-default {
@@ -2175,12 +2204,13 @@ ${errorUx.UX_CSS}
         </div>
       </div>
 
-      <!-- Stopped (Saved) -->
+      <!-- Stopped (compute paused; storage can still be billed) -->
       <div class="kpi-card">
         <div class="kpi-icon-box kpi-icon-stopped">${I.clock}</div>
         <div class="kpi-meta">
-          <span class="kpi-label">STOPPED (SAVED)</span>
+          <span class="kpi-label">STOPPED</span>
           <span class="kpi-value" id="kpiStoppedCount">${offline}</span>
+          <span class="kpi-hint" id="kpiOtherCount">${otherStates ? `${otherStates} starting or state unavailable` : ''}</span>
         </div>
       </div>
 
@@ -2255,6 +2285,7 @@ ${errorUx.UX_CSS}
             <th>Account</th>
             <th>Repository</th>
             <th>Branch</th>
+            <th>Machine</th>
             <th>Last Active</th>
             <th style="text-align:right;">Actions</th>
           </tr>
@@ -2418,7 +2449,8 @@ ${errorUx.UX_CSS}
     <div class="modal-body delete-dialog-body">
       <div class="delete-icon-circle">${I.trashModal}</div>
       <div class="delete-dialog-title" id="deleteTargetPrompt">Delete codespace?</div>
-      <p class="delete-dialog-desc">This is permanent and cannot be undone.</p>
+      <p class="delete-dialog-desc" id="deleteTargetDetails"></p>
+      <p class="delete-dialog-impact">This cannot be undone; uncommitted Codespace changes may be lost. Deleting removes this workspace and stops further storage accrual after GitHub removes it. The repository itself is not deleted.</p>
     </div>
     <div class="modal-footer">
       <button class="btn-dialog-default" data-cmd="closeDeleteModal">Cancel</button>
@@ -2463,7 +2495,7 @@ window.addEventListener('message', event => {
       document.getElementById('wizardModal').classList.remove('is-open');
     }, 1200);
   } else if (msg.command === 'createError') {
-    showToast('Create failed: ' + msg.error);
+    showToast(msg.error === 'Creation cancelled. No Codespace was created.' ? msg.error : 'Create failed: ' + msg.error);
     document.getElementById('wizardStep4').style.display = 'none';
     document.getElementById('wizardStep3').style.display = 'flex';
     document.getElementById('wizardFooter').style.display = 'flex';
@@ -2530,6 +2562,7 @@ function filterCards() {
   let visibleCount = 0;
   let filteredOnline = 0;
   let filteredOffline = 0;
+  let filteredOther = 0;
 
   // Grid cards
   document.querySelectorAll('.ws-card').forEach(card => {
@@ -2545,7 +2578,8 @@ function filterCards() {
     if (isMatch) {
       visibleCount++;
       if (card.dataset.state === 'running') filteredOnline++;
-      else filteredOffline++;
+      else if (card.dataset.state === 'stopped') filteredOffline++;
+      else filteredOther++;
     }
   });
 
@@ -2564,9 +2598,11 @@ function filterCards() {
   const kpiTotal = document.getElementById('kpiTotalCount');
   const kpiRunning = document.getElementById('kpiRunningCount');
   const kpiStopped = document.getElementById('kpiStoppedCount');
+  const kpiOther = document.getElementById('kpiOtherCount');
   if (kpiTotal) kpiTotal.textContent = visibleCount;
   if (kpiRunning) kpiRunning.textContent = filteredOnline;
   if (kpiStopped) kpiStopped.textContent = filteredOffline;
+  if (kpiOther) kpiOther.textContent = filteredOther ? filteredOther + ' starting or state unavailable' : '';
 
   const totalCards = document.querySelectorAll('.ws-card').length;
   const filteredEmpty = document.getElementById('filteredEmpty');
@@ -2736,7 +2772,7 @@ document.addEventListener('click', (ev) => {
       openRebuildModal(name, account);
       break;
     case 'openDeleteModal':
-      openDeleteModal(name, account);
+      openDeleteModal(name, account, btn.dataset.state, btn.dataset.repo, btn.dataset.displayName);
       break;
     case 'openMenu': {
       ev.stopPropagation();
@@ -2780,9 +2816,10 @@ document.getElementById('optFullRebuild').addEventListener('click', () => {
 });
 
 // ── Delete Modal Logic ────────────────────────────────────────────────
-function openDeleteModal(name, account) {
-  currentActionTarget = { name, account };
-  document.getElementById('deleteTargetPrompt').textContent = 'Delete "' + name + '"?';
+function openDeleteModal(name, account, state, repo, displayName) {
+  currentActionTarget = { name, account, state, repo, displayName };
+  document.getElementById('deleteTargetPrompt').textContent = 'Delete "' + (displayName || name) + '"?';
+  document.getElementById('deleteTargetDetails').textContent = 'GitHub account: ' + account + ' · Current state: ' + (state || 'unavailable') + (repo ? ' · Repository: ' + repo : '');
   document.getElementById('deleteModal').classList.add('is-open');
 }
 function closeDeleteModal() {
@@ -2790,9 +2827,9 @@ function closeDeleteModal() {
 }
 document.getElementById('btnConfirmDelete').addEventListener('click', () => {
   if (!currentActionTarget) return;
-  const { name, account } = currentActionTarget;
+  const { name, account, state, repo, displayName } = currentActionTarget;
   closeDeleteModal();
-  vscode.postMessage({ command: 'delete', name, account });
+  vscode.postMessage({ command: 'delete', name, account, state, repo, displayName });
 });
 
 // ── Create New Codespace Wizard Logic ─────────────────────────────────

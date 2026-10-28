@@ -31,6 +31,7 @@ const { SidebarProvider } = require('./src/sidebarProvider');
 const { DashboardProvider } = require('./src/dashboardProvider');
 const { StatusBarManager } = require('./src/statusBar');
 const { SetupDoctorProvider } = require('./src/setupDoctorProvider');
+const { classifyCodespaceState, createConfirmationText, startConfirmationText, stopConfirmationText, deleteConfirmationText } = require('./src/codespaceLifecycle');
 
 // Concurrency tracker for active connections (fixes BUG-13)
 const connectingSet = new Set();
@@ -288,6 +289,24 @@ async function activate(context) {
                 state: pick.cs.state
             }
         };
+    }
+
+    async function getFreshCodespaceTarget(cs) {
+        const account = cs && (cs.account || authManager.getActiveAccount());
+        if (!account || !cs || !cs.name) throw new Error('Could not identify the exact GitHub account and Codespace target. Refresh and try again.');
+        const fresh = await githubApi.getFreshCodespace(cs.name, account);
+        return fresh ? { ...fresh, account } : null;
+    }
+
+    function stateNeedsRefresh(target, action) {
+        const state = classifyCodespaceState(target && target.state);
+        vscode.window.showWarningMessage(
+            `Cannot ${action} "${target?.displayName || target?.name || 'Codespace'}" for GitHub account "${target?.account || 'unknown'}" while GitHub reports state "${state.label}". Refresh the list and try again when the state is Running or Stopped.`
+        );
+    }
+
+    async function confirmLifecycle(message, button) {
+        return (await vscode.window.showWarningMessage(message, { modal: true }, button)) === button;
     }
 
     // Register Webview View Provider for the sidebar container
@@ -750,6 +769,12 @@ async function activate(context) {
             if (!repoValue) return;
 
             const branch = await vscode.window.showInputBox({ prompt: 'Branch name (leave empty for default)', placeHolder: 'main' });
+            if (branch === undefined) return;
+            const approved = await confirmLifecycle(
+                createConfirmationText({ account: accPick.acc, repository: repoValue, branch: branch || '' }),
+                'Create Codespace'
+            );
+            if (!approved) return;
 
             await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: `Creating Codespace on ${repoValue}...`, cancellable: false },
@@ -788,6 +813,37 @@ async function activate(context) {
             }
 
             const account = cs.account || authManager.getActiveAccount();
+            let startApproved = false;
+            try {
+                let fresh = await getFreshCodespaceTarget({ ...cs, account });
+                if (!fresh) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${cs.displayName || cs.name}" for account "${account}". Refresh the list before connecting.`);
+                    return;
+                }
+                let freshState = classifyCodespaceState(fresh.state);
+                if (freshState.kind === 'stopped') {
+                    const approved = await confirmLifecycle(startConfirmationText(fresh), 'Start Codespace');
+                    if (!approved) return;
+                    fresh = await getFreshCodespaceTarget(fresh);
+                    if (!fresh) {
+                        vscode.window.showWarningMessage(`GitHub no longer lists "${cs.displayName || cs.name}" for account "${account}". Refresh the list before connecting.`);
+                        return;
+                    }
+                    freshState = classifyCodespaceState(fresh.state);
+                    if (freshState.kind !== 'stopped' && freshState.kind !== 'running') {
+                        stateNeedsRefresh(fresh, 'connect');
+                        return;
+                    }
+                    startApproved = freshState.kind === 'stopped';
+                } else if (freshState.kind !== 'running') {
+                    stateNeedsRefresh(fresh, 'connect');
+                    return;
+                }
+                cs = fresh;
+            } catch (e) {
+                await showOpError(`Could not verify Codespace state: ${friendlyError(e)}`, `connect ${cs.name}`);
+                return;
+            }
             const connectIdentity = getCodespaceIdentity(cs, account);
             if (connectingSet.has(connectIdentity.key)) {
                 vscode.window.showInformationMessage(`Already connecting to ${cs.displayName || cs.name}...`);
@@ -830,13 +886,34 @@ async function activate(context) {
                         
                         let remoteFolder = GithubApi.getBestFolder(meta, cs.repository, cs.name, folderTemplate);
 
-                        // Stage 3: Wake container if needed
-                        if (cs.state !== 'Available') {
-                            progress.report({ message: 'Step 3/4: Waking container...' });
-                            await githubApi.startCodespace(cs.name, account);
-                        } else {
-                            progress.report({ message: 'Step 3/4: Container running...' });
+                        // Stage 3: Re-check immediately before waking; preparation may have taken time.
+                        progress.report({ message: 'Step 3/4: Verifying Codespace state...' });
+                        let wakeTarget = await getFreshCodespaceTarget(cs);
+                        if (!wakeTarget) {
+                            vscode.window.showWarningMessage(`GitHub no longer lists "${cs.displayName || cs.name}" for account "${account}". Refresh the list before connecting.`);
+                            return;
                         }
+                        let wakeState = classifyCodespaceState(wakeTarget.state);
+                        if (wakeState.kind === 'stopped' && !startApproved) {
+                            if (!(await confirmLifecycle(startConfirmationText(wakeTarget), 'Start Codespace'))) return;
+                            wakeTarget = await getFreshCodespaceTarget(wakeTarget);
+                            if (!wakeTarget) {
+                                vscode.window.showWarningMessage(`GitHub no longer lists "${cs.displayName || cs.name}" for account "${account}". Refresh the list before connecting.`);
+                                return;
+                            }
+                            wakeState = classifyCodespaceState(wakeTarget.state);
+                            startApproved = wakeState.kind === 'stopped';
+                        }
+                        if (wakeState.kind === 'stopped') {
+                            progress.report({ message: 'Step 3/4: Waking container...' });
+                            await githubApi.startCodespace(wakeTarget.name, account);
+                        } else if (wakeState.kind === 'running') {
+                            progress.report({ message: 'Step 3/4: Container running...' });
+                        } else {
+                            stateNeedsRefresh(wakeTarget, 'connect');
+                            return;
+                        }
+                        cs = wakeTarget;
 
                         // Stage 4: Verify folder exists and open
                         progress.report({ message: 'Step 4/4: Verifying remote folder...' });
@@ -974,26 +1051,45 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.start', async (item) => {
             if (!item?.codespaceData) item = await pickCodespace('Select a Codespace to turn ON');
-            const cs = item?.codespaceData;
-            if (!cs) return;
-            if (cs.state === 'Available') {
-                vscode.window.showInformationMessage(`${cs.displayName || cs.name} is already running.`);
-                return;
-            }
-            await vscode.window.withProgress(
-                { location: vscode.ProgressLocation.Notification, title: `Waking up ${cs.displayName || cs.name}...`, cancellable: false },
-                async () => {
-                    try {
+            const selected = item?.codespaceData;
+            if (!selected) return;
+            try {
+                let cs = await getFreshCodespaceTarget(selected);
+                if (!cs) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${selected.displayName || selected.name}" for account "${selected.account || authManager.getActiveAccount()}". Refresh the list and try again.`);
+                    return;
+                }
+                let state = classifyCodespaceState(cs.state);
+                if (state.kind === 'running') {
+                    vscode.window.showInformationMessage(`${cs.displayName || cs.name} is already running.`);
+                    return;
+                }
+                if (state.kind !== 'stopped') { stateNeedsRefresh(cs, 'start'); return; }
+                if (!(await confirmLifecycle(startConfirmationText(cs), 'Start Codespace'))) return;
+                cs = await getFreshCodespaceTarget(cs);
+                if (!cs) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${selected.displayName || selected.name}" for account "${selected.account || authManager.getActiveAccount()}". Refresh the list and try again.`);
+                    return;
+                }
+                state = classifyCodespaceState(cs.state);
+                if (state.kind === 'running') {
+                    vscode.window.showInformationMessage(`${cs.displayName || cs.name} is already running.`);
+                    return;
+                }
+                if (state.kind !== 'stopped') { stateNeedsRefresh(cs, 'start'); return; }
+                await vscode.window.withProgress(
+                    { location: vscode.ProgressLocation.Notification, title: `Waking up ${cs.displayName || cs.name}...`, cancellable: false },
+                    async () => {
                         await githubApi.startCodespace(cs.name, cs.account);
                         vscode.window.showInformationMessage(`${cs.displayName || cs.name} is starting!`);
                         sidebarProvider.refresh();
                         dashboardProvider.refreshHtml();
                         statusBar.update();
-                    } catch (e) {
-                        await showOpError(`Could not start: ${friendlyError(e)}`, `start ${cs.name}`);
                     }
-                }
-            );
+                );
+            } catch (e) {
+                await showOpError(`Could not start: ${friendlyError(e)}`, `start ${selected.name}`);
+            }
         })
     );
 
@@ -1001,16 +1097,39 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.stop', async (item) => {
             if (!item?.codespaceData) item = await pickCodespace('Select a Codespace to stop');
-            const cs = item?.codespaceData;
-            if (!cs) return;
+            const selected = item?.codespaceData;
+            if (!selected) return;
             try {
+                let cs = await getFreshCodespaceTarget(selected);
+                if (!cs) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${selected.displayName || selected.name}" for account "${selected.account || authManager.getActiveAccount()}". Refresh the list and try again.`);
+                    return;
+                }
+                let state = classifyCodespaceState(cs.state);
+                if (state.kind === 'stopped') {
+                    vscode.window.showInformationMessage(`${cs.displayName || cs.name} is already stopped. Its storage may still be billed until deletion.`);
+                    return;
+                }
+                if (state.kind !== 'running') { stateNeedsRefresh(cs, 'stop'); return; }
+                if (!(await confirmLifecycle(stopConfirmationText(cs), 'Stop Codespace'))) return;
+                cs = await getFreshCodespaceTarget(cs);
+                if (!cs) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${selected.displayName || selected.name}" for account "${selected.account || authManager.getActiveAccount()}". Refresh the list and try again.`);
+                    return;
+                }
+                state = classifyCodespaceState(cs.state);
+                if (state.kind === 'stopped') {
+                    vscode.window.showInformationMessage(`${cs.displayName || cs.name} is already stopped. Its storage may still be billed until deletion.`);
+                    return;
+                }
+                if (state.kind !== 'running') { stateNeedsRefresh(cs, 'stop'); return; }
                 await githubApi.stopCodespace(cs.name, cs.account);
-                vscode.window.showInformationMessage(`Stopped ${cs.displayName || cs.name}.`);
+                vscode.window.showInformationMessage(`Stopped ${cs.displayName || cs.name}. Compute has stopped; storage billing continues until deletion.`);
                 sidebarProvider.refresh();
                 dashboardProvider.refreshHtml();
                 statusBar.update();
             } catch (e) {
-                await showOpError(`Stop failed: ${friendlyError(e)}`, `stop ${cs.name}`);
+                await showOpError(`Stop failed: ${friendlyError(e)}`, `stop ${selected.name}`);
             }
         })
     );
@@ -1019,8 +1138,22 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.rebuild', async (item) => {
             if (!item?.codespaceData) item = await pickCodespace('Select a Codespace to rebuild');
-            const cs = item?.codespaceData;
-            if (!cs) return;
+            const selected = item?.codespaceData;
+            if (!selected) return;
+
+            let cs;
+            try {
+                cs = await getFreshCodespaceTarget(selected);
+            } catch (e) {
+                await showOpError(`Could not verify Codespace state: ${friendlyError(e)}`, `rebuild ${selected.name}`);
+                return;
+            }
+            if (!cs) {
+                vscode.window.showWarningMessage(`GitHub no longer lists "${selected.displayName || selected.name}" for account "${selected.account || authManager.getActiveAccount()}". Refresh before rebuilding.`);
+                return;
+            }
+            const initialState = classifyCodespaceState(cs.state);
+            if (!initialState.actionable) { stateNeedsRefresh(cs, 'rebuild'); return; }
 
             let isFull = item?.full;
             if (isFull === undefined) {
@@ -1030,6 +1163,22 @@ async function activate(context) {
                 ], { placeHolder: `Rebuild ${cs.displayName || cs.name}?` });
                 if (!mode) return;
                 isFull = mode.full;
+            }
+
+            try {
+                const latest = await getFreshCodespaceTarget(cs);
+                if (!latest) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${cs.displayName || cs.name}" for account "${cs.account}". Nothing was rebuilt; refresh and review the target.`);
+                    return;
+                }
+                if (latest.state !== cs.state) {
+                    vscode.window.showWarningMessage(`GitHub state for "${cs.displayName || cs.name}" changed from "${initialState.label}" to "${classifyCodespaceState(latest.state).label}" while you were choosing the rebuild. Nothing was rebuilt; refresh and try again.`);
+                    return;
+                }
+                cs = latest;
+            } catch (e) {
+                await showOpError(`Could not verify Codespace state: ${friendlyError(e)}`, `rebuild ${cs.name}`);
+                return;
             }
 
             await vscode.window.withProgress(
@@ -1053,26 +1202,35 @@ async function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-codespaces.deleteCodespace', async (item) => {
             if (!item?.codespaceData) item = await pickCodespace('Select a Codespace to delete');
-            const cs = item?.codespaceData;
-            if (!cs) return;
-
-            if (!item?.confirmed) {
-                const ok = await vscode.window.showWarningMessage(
-                    `Delete "${cs.displayName || cs.name}"? This is permanent.`,
-                    { modal: true },
-                    'Delete'
-                );
-                if (ok !== 'Delete') return;
-            }
+            const selected = item?.codespaceData;
+            if (!selected) return;
 
             try {
+                let cs = await getFreshCodespaceTarget(selected);
+                if (!cs) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${selected.displayName || selected.name}" for account "${selected.account || authManager.getActiveAccount()}". Refresh before deleting.`);
+                    return;
+                }
+                let confirmed = !!item?.confirmed && typeof selected.state === 'string' && selected.state === cs.state;
+                if (!confirmed) confirmed = await confirmLifecycle(deleteConfirmationText(cs), 'Delete Permanently');
+                if (!confirmed) return;
+
+                const latest = await getFreshCodespaceTarget(cs);
+                if (!latest) {
+                    vscode.window.showWarningMessage(`GitHub no longer lists "${cs.displayName || cs.name}" for account "${cs.account}". Nothing was deleted; refresh and review the target.`);
+                    return;
+                }
+                if (latest.state !== cs.state) {
+                    vscode.window.showWarningMessage(`GitHub state for "${cs.displayName || cs.name}" changed from "${classifyCodespaceState(cs.state).label}" to "${classifyCodespaceState(latest.state).label}" while you were confirming. Nothing was deleted; refresh and review the exact target.`);
+                    return;
+                }
                 await githubApi.deleteCodespace(cs.name, cs.account);
-                vscode.window.showInformationMessage(`Deleted ${cs.displayName || cs.name}.`);
+                vscode.window.showInformationMessage(`Deleted "${cs.displayName || cs.name}" from GitHub account "${cs.account}". The repository itself was not deleted.`);
                 sidebarProvider.refresh();
                 dashboardProvider.refreshHtml();
                 statusBar.update();
             } catch (e) {
-                await showOpError(`Delete failed: ${friendlyError(e)}`, `delete ${cs.name}`);
+                await showOpError(`Delete failed: ${friendlyError(e)}`, `delete ${selected.name}`);
             }
         })
     );

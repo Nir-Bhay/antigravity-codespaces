@@ -203,6 +203,18 @@ class GithubApi {
     }
 
     /**
+     * Bypass the short Codespaces-list cache before a lifecycle action so an old
+     * state or a workspace belonging to another selected account is never used
+     * as the authority for start/stop/delete/connect.
+     */
+    async getFreshCodespace(name, account) {
+        if (!name) throw new Error('A Codespace name is required to verify the lifecycle target.');
+        this._invalidateCs(account);
+        const list = await this.listCodespaces(account);
+        return list.find(cs => cs.name === name) || null;
+    }
+
+    /**
      * Lists Codespaces for an account. Prefers direct REST API, falls back to CLI.
      */
     async listCodespaces(account) {
@@ -497,7 +509,7 @@ class GithubApi {
             name: m.name || '',
             repository,
             state: m.state || '',
-            machineDisplayName: m.machineDisplayName || m.machine_display_name || m.machineName || m.machine_name || '2 vCPU, 8 GB RAM',
+            machineDisplayName: m.machineDisplayName || m.machine_display_name || m.machineName || m.machine_name || '',
             machineName: m.machineName || m.machine_name || '',
             createdAt: m.createdAt || m.created_at || '',
             lastUsedAt: m.lastUsedAt || m.last_used_at || '',
@@ -530,7 +542,7 @@ class GithubApi {
                         name: cs.name,
                         repository: cs.repository?.full_name || '',
                         state: cs.state,
-                        machineDisplayName: cs.machine?.display_name || cs.machine?.name || '2 vCPU, 8 GB RAM',
+                        machineDisplayName: cs.machine?.display_name || cs.machine?.name || '',
                         machineName: cs.machine?.name || '',
                         createdAt: cs.created_at,
                         lastUsedAt: cs.last_used_at,
