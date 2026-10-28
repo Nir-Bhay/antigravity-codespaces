@@ -11,6 +11,8 @@ import { runPreflight } from './preflight.mjs';
 const DEFAULT_STARTUP_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const LOCK_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
+const LOCAL_PREVIEW_TTL_MS = 10 * 60 * 1000;
+const MAX_LOCAL_PREVIEWS = 4;
 
 function normalizeRepository(value) {
   if (typeof value === 'string') return value.toLowerCase();
@@ -142,6 +144,17 @@ export function createCodespaceManager({
     }
   }
 
+  const localPreviews = new Map();
+
+  function pruneLocalPreviews(now = Date.now(), reserveSlot = false) {
+    for (const [previewId, snapshot] of localPreviews) {
+      if (snapshot.expiresAt <= now) localPreviews.delete(previewId);
+    }
+    while (reserveSlot && localPreviews.size >= MAX_LOCAL_PREVIEWS) {
+      localPreviews.delete(localPreviews.keys().next().value);
+    }
+  }
+
   async function cleanupIfOwned(codespaceName, owned) {
     if (!owned) return { stopped: false, error: null };
     try {
@@ -162,7 +175,24 @@ export function createCodespaceManager({
     async previewLocalChanges({ cwd } = {}) {
       const context = await detectContext({ cwd });
       const snapshot = await buildLocalPatch(context.cwd);
+      const now = Date.now();
+      pruneLocalPreviews(now, true);
+      const previewId = randomUUID();
+      const expiresAt = now + LOCAL_PREVIEW_TTL_MS;
+      localPreviews.set(previewId, {
+        repository: context.repository.toLowerCase(),
+        branch: context.branch,
+        root: snapshot.root,
+        head: snapshot.head,
+        patch: snapshot.patch,
+        files: snapshot.files,
+        untrackedFiles: snapshot.untrackedFiles,
+        patchBytes: snapshot.patchBytes,
+        expiresAt
+      });
       return {
+        previewId,
+        expiresAt: new Date(expiresAt).toISOString(),
         repository: context.repository,
         branch: context.branch,
         head: snapshot.head,
@@ -172,7 +202,7 @@ export function createCodespaceManager({
         transferLimitBytes: 5 * 1024 * 1024,
         codespaceProvisioningAttempted: false,
         untrackedFiles: snapshot.untrackedFiles,
-        note: 'Ignored files are excluded. File names and byte count are shown; file contents are not returned. Preview does not contact GitHub or provision a Codespace.'
+        note: 'Ignored files are excluded. File names and byte count are shown; file contents are not returned. Pass previewId as localChangesPreviewId when opting into syncLocalChanges. The preview expires after 10 minutes and is single-use; syncing is refused if the repository, branch, HEAD, or local patch changes. Preview does not contact GitHub or provision a Codespace.'
       };
     },
 
@@ -211,10 +241,32 @@ export function createCodespaceManager({
       return gh.getCodespacePorts(name);
     },
 
-    async runRepositoryCommand({ cwd, command, timeoutMs, onOutput, syncLocalChanges = false } = {}) {
+    async runRepositoryCommand({ cwd, command, timeoutMs, onOutput, syncLocalChanges = false, localChangesPreviewId } = {}) {
       const validated = validateCommandInput({ command, timeoutMs });
+      if (localChangesPreviewId && !syncLocalChanges) throw new Error('localChangesPreviewId can only be used with syncLocalChanges=true.');
       const context = await detectContext({ cwd });
-      const localSnapshot = syncLocalChanges ? await buildLocalPatch(context.cwd) : null;
+      let localSnapshot = null;
+      if (syncLocalChanges) {
+        if (typeof localChangesPreviewId !== 'string' || !localChangesPreviewId) {
+          throw new Error('A current local-changes preview is required; call preview_local_changes before syncing.');
+        }
+        const now = Date.now();
+        pruneLocalPreviews(now);
+        const reviewed = localPreviews.get(localChangesPreviewId);
+        localPreviews.delete(localChangesPreviewId);
+        if (!reviewed || reviewed.expiresAt <= now) {
+          throw new Error('The local-changes preview is missing or expired; call preview_local_changes again before syncing.');
+        }
+        const current = await buildLocalPatch(context.cwd);
+        if (reviewed.repository !== context.repository.toLowerCase()
+          || reviewed.branch !== context.branch
+          || reviewed.root !== current.root
+          || reviewed.head !== current.head
+          || reviewed.patch !== current.patch) {
+          throw new Error('Local changes or repository context changed since preview; review a fresh preview before syncing.');
+        }
+        localSnapshot = reviewed;
+      }
       const remoteCommand = localSnapshot
         ? buildRemoteWorktreeCommand({ repository: context.repository, head: localSnapshot.head, command: validated.command, runId: randomUUID() })
         : validated.command;

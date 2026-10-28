@@ -260,7 +260,7 @@ Core-hours = cores × hours, so a 2-core machine uses 2 core-hours per hour. Dol
 
 **Where the numbers come from**
 
-Numbers come from GitHub's billing API: `GET /users/{user}/settings/billing/usage/summary` and `.../settings/billing/usage`. They match [github.com/settings/billing](https://github.com/settings/billing). GitHub updates this data **hourly**. The extension caches it for 10 minutes; **Refresh usage** fetches it again. If the network drops, the last good numbers stay with an `offline · last updated HH:MM` note.
+Numbers come from GitHub's billing API: `GET /users/{user}/settings/billing/usage/summary` and `.../settings/billing/usage`. They match [github.com/settings/billing](https://github.com/settings/billing). GitHub updates this data **hourly**. The extension caches it for 10 minutes; **Refresh usage** fetches it again. If the network drops, the last good numbers stay with an `offline · last fetched DD Mon YYYY, HH:MM UTC` note.
 
 **Permission**
 

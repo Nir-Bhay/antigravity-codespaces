@@ -87,7 +87,7 @@ test('repository command sends opted-in local changes only to an isolated remote
     assert.equal(preview.branch, 'feature/sync');
     assert.equal(preview.codespaceProvisioningAttempted, false);
 
-    const result = await manager.runRepositoryCommand({ cwd: root, command: 'npm test', syncLocalChanges: true });
+    const result = await manager.runRepositoryCommand({ cwd: root, command: 'npm test', syncLocalChanges: true, localChangesPreviewId: preview.previewId });
     assert.equal(result.localChangesSynced, true);
     assert.equal(launched.codespaceName, 'existing-space');
     assert.ok(launched.command.includes('git -C "$repo_root" worktree add --detach'));
@@ -96,6 +96,42 @@ test('repository command sends opted-in local changes only to an isolated remote
     assert.match(launched.input, /new\.txt/);
     assert.doesNotMatch(launched.input, /ignored\.txt/);
     assert.doesNotMatch(launched.input, /ignored private marker/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects local changes added after preview before provisioning a Codespace', async () => {
+  const root = await makeRepo();
+  try {
+    git(root, ['remote', 'add', 'origin', 'https://github.com/octocat/hello-world.git']);
+    await writeFile(join(root, 'reviewed.txt'), 'reviewed change\n');
+    let provisioningCalls = 0;
+    const manager = createCodespaceManager({
+      gh: {
+        async listCodespaces() { provisioningCalls++; return []; },
+        async getCodespace() { throw new Error('must reject before Codespace lookup'); },
+        async createCodespace() { throw new Error('must reject before Codespace creation'); },
+        async startCodespace() { throw new Error('must reject before Codespace start'); },
+        async stopCodespace() { throw new Error('must not stop a Codespace'); }
+      },
+      lock: async (_key, operation) => operation(),
+      runCommand: async () => { throw new Error('must reject before command execution'); }
+    });
+
+    const preview = await manager.previewLocalChanges({ cwd: root });
+    await writeFile(join(root, 'private-after-preview.txt'), 'private file added after review\n');
+
+    await assert.rejects(
+      manager.runRepositoryCommand({
+        cwd: root,
+        command: 'npm test',
+        syncLocalChanges: true,
+        localChangesPreviewId: preview.previewId
+      }),
+      /changed since preview/
+    );
+    assert.equal(provisioningCalls, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
