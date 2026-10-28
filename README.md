@@ -200,7 +200,9 @@ Failed rows expose the same terminal or Extensions fix as Connect. **Re-run Chec
 
 ### Sidebar `gh` status and welcome card
 
-The Codespaces sidebar keeps a `gh` status line under the header:
+The Codespaces sidebar keeps a `gh` status line under the header. The **Need help or using an AI client?** disclosure is available alongside the account and Codespaces list: it distinguishes extension sign-in (browse/account data) from the active GitHub CLI account (SSH and optional MCP), and links directly to Setup Doctor, Cloud Hub, and the standalone MCP setup guide. Use the same links from the signed-out/install card where relevant; the MCP server remains an optional, separately configured Node.js process.
+
+The status line shows:
 
 - `gh CLI: @user` when the CLI is signed in with the `codespace` scope
 - `gh CLI not installed`, `gh signed out`, `gh needs codespace permission`, or `gh: @user (mismatch)` otherwise, with **Fix**

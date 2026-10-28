@@ -967,6 +967,18 @@ function ok(name, fn) {
         assert.ok(src.includes("command: 'openSetupDoctor'") && src.includes('stepSetupGhBtn'), 'step 2 posts openSetupDoctor');
         assert.ok(src.includes("command: 'createCodespace'") && src.includes('stepConnectBtn'), 'step 3 posts createCodespace');
     });
+    await ok('sidebar feature discovery explains auth boundaries and exposes setup, dashboard, and MCP guide actions', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'src', 'sidebarProvider.js'), 'utf8');
+        assert.match(src, /Extension sign-in loads your Codespaces/);
+        assert.match(src, /SSH connections use the separate GitHub CLI/);
+        assert.match(src, /MCP server is optional and configured separately/);
+        assert.match(src, /id="helpDoctorBtn"/);
+        assert.match(src, /id="helpDashboardBtn"/);
+        assert.match(src, /id="helpMcpBtn"/);
+        assert.match(src, /mcp-server\/README\.md/);
+        assert.match(src, /focus-visible/);
+        assert.match(src, /Sign in to the extension with GitHub to browse/);
+    });
 
     // ── Issue #4 §D-G Tests ──────────────────────────────────────────────────
     console.log('issue #4 §D-G features');
@@ -1815,7 +1827,7 @@ function ok(name, fn) {
             assert.match(DP.usageBanner({ mode: 'live', offline: true, fetchedAt: Date.now() }), /as of/);
             const p = Object.create(DP.prototype); p._usage = null; p._initialPage = null; p._context = { extensionUri: {} };
             const out = p.buildDashboardHtml([], '', []);
-            assert.match(out, /You're signed out\./); assert.match(out, /Sign in with gh/);
+            assert.match(out, /You're signed out\./); assert.match(out, /Sign in to extension/);
             const empty = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: [] }], 'octocat', ['octocat']);
             assert.match(empty, /No codespaces yet\./); assert.match(empty, /Create codespace/);
             const failed = p.buildDashboardHtml([{ account: 'octocat', type: 'gh', codespaces: [], error: 'x', errorKind: 'timeout' }], 'octocat', ['octocat']);
@@ -2007,7 +2019,7 @@ function ok(name, fn) {
             const live = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, '', {}, false);
             assert.ok(!/cs-card is-(running|stopped) is-cached|data-act="(connect|stop|start)" disabled/.test(live));
             const w = sp.buildWelcomeHtml({ ghInstalled: true });
-            assert.match(w, /You're signed out\./); assert.match(w, /Sign in with gh/);
+            assert.match(w, /You're signed out\./); assert.match(w, /Sign in to extension/);
             assert.ok(!/60 free compute hrs/.test(w)); assert.ok(!/System Health Checklist/.test(w), 'single card when gh is installed');
             const g = sp.buildWelcomeHtml({ ghInstalled: false });
             assert.match(g, /GitHub CLI isn't installed\./); assert.match(g, /id="installGhBtn"/); assert.ok(!/System Health Checklist/.test(g));
@@ -2079,7 +2091,7 @@ function ok(name, fn) {
             await sp.refresh();
             const h = sp._view.webview.html;
             assert.match(h, /GitHub CLI isn't installed\./); assert.match(h, /Install GitHub CLI/); assert.match(h, /id="recheckBtn"/);
-            assert.match(h, /id="patBtn"[^>]*>Use a personal access token instead</); assert.ok(!/Sign in with gh/.test(h), 'no gh sign-in when gh is missing');
+            assert.match(h, /id="patBtn"[^>]*>Use a personal access token for extension sign-in</); assert.match(h, /id="loginBtn"[^>]*>Sign in to the extension/); assert.ok(!/Sign in with gh/.test(h), 'no misleading gh sign-in label');
             assert.match(h, /getElementById\('installGhBtn'\)[\s\S]{0,160}command: 'openExternal', url: 'https:\/\/cli\.github\.com'/);
             assert.ok(!/cs-card|search|You're signed out/i.test(h.replace(/<style[\s\S]*?<\/style>/g, '')), 'nothing else in the view');
             assert.strictEqual(listed, false, 'no list call without gh');
