@@ -11,6 +11,7 @@ const ROOT = path.join(__dirname, '..');
 const { escapeHtml, generateNonce, formatRelativeTime, friendlyError, runCommand, runCommandWithDetails } = require('../src/utils');
 const sshManager = require('../src/sshManager');
 const { GithubApi } = require('../src/githubApi');
+const lifecycle = require('../src/codespaceLifecycle');
 const { AuthManager, PAT_SECRET_KEY_PREFIX, PAT_SECRET_ACCOUNTS_KEY } = require('../src/authManager');
 const connectPreflight = require('../src/connectPreflight');
 
@@ -625,12 +626,43 @@ function ok(name, fn) {
         assert.deepStrictEqual(api._getFresh(api._csCache, 'k', 10000), [1]);
         assert.strictEqual(api._getFresh(api._csCache, 'k', -1), undefined);
     });
-    await ok('CLI meta normalizes to REST shape incl. account', () => {
+    await ok('lifecycle target lookup bypasses cached state and remains account-scoped', async () => {
+        let calls = 0;
+        const api = new GithubApi({ getToken: async account => `token-for-${account}`, getActiveAccount: () => 'bob' }, {
+            fetchImpl: async (_url, options) => {
+                calls++;
+                assert.strictEqual(options.headers.Authorization, 'Bearer token-for-alice');
+                return { status: 200, ok: true, headers: { get: () => null }, json: async () => [{ name: 'space', state: 'Shutdown', machine: { display_name: '4-core' } }] };
+            }
+        });
+        api._setFresh(api._csCache, api._csKey('alice'), [{ name: 'space', state: 'Available' }]);
+        const result = await api.getFreshCodespace('space', 'alice');
+        assert.strictEqual(calls, 1, 'the API is queried despite a fresh cached entry');
+        assert.strictEqual(result.state, 'Shutdown');
+        assert.strictEqual(result.machineDisplayName, '4-core');
+        assert.strictEqual(await api.getFreshCodespace('missing', 'alice'), null);
+    });
+    await ok('CLI meta normalizes to REST shape incl. account without inventing machine size', () => {
         const api = new GithubApi({ getActiveAccount: () => '' });
         const m = api._normalizeMeta({ name: 'x', machineDisplayName: '4 vCPU', repository: { full_name: 'o/r' } }, 'alice');
         assert.strictEqual(m.account, 'alice');
         assert.strictEqual(m.repository, 'o/r');
         assert.strictEqual(m.machineDisplayName, '4 vCPU');
+        assert.strictEqual(api._normalizeMeta({ name: 'x' }, 'alice').machineDisplayName, '');
+    });
+    await ok('Codespace lifecycle classification and confirmation copy are conservative and target-specific', () => {
+        assert.strictEqual(lifecycle.classifyCodespaceState('Available').kind, 'running');
+        assert.strictEqual(lifecycle.classifyCodespaceState('Shutdown').kind, 'stopped');
+        assert.deepStrictEqual(lifecycle.classifyCodespaceState('Starting'), { kind: 'transitioning', label: 'Starting', raw: 'Starting', actionable: false });
+        assert.strictEqual(lifecycle.classifyCodespaceState('Unknown').kind, 'unknown');
+        assert.strictEqual(lifecycle.classifyCodespaceState('').label, 'State unavailable');
+        assert.match(lifecycle.startConfirmationText({ name: 'space', account: 'alice' }), /Compute usage resumes.*Storage billing continues/);
+        assert.match(lifecycle.stopConfirmationText({ name: 'space', account: 'alice' }), /does not delete.*storage billing/);
+        const deletion = lifecycle.deleteConfirmationText({ name: 'space', account: 'alice', state: 'Shutdown', repository: 'alice/repo' });
+        assert.match(deletion, /space.*alice.*Stopped.*cannot be undone.*uncommitted.*repository itself is not deleted/);
+        const creation = lifecycle.createConfirmationText({ account: 'alice', repository: 'alice/repo', branch: 'main' });
+        assert.match(creation, /alice\/repo.*branch "main".*GitHub account "alice"/);
+        assert.match(creation, /charges.*Storage is billed/);
     });
 
     console.log('authManager');
@@ -1397,7 +1429,7 @@ function ok(name, fn) {
         const u = await svc.getAccountUsage('hal');
         assert.strictEqual(u.offline, true);
         assert.strictEqual(u.stats.used, first.stats.used);
-        assert.match(uv.hubUsageCardHtml(u), /offline · last updated \d\d:\d\d/);
+        assert.match(uv.hubUsageCardHtml(u), /offline · last fetched 21 Oct 2026, 12:00 UTC/);
         now += 11 * 60000;
         assert.strictEqual((await svc.getAccountUsage('hal')).offline, true, 'still served after TTL');
         const fresh = new us.UsageService({ authManager: { getToken: async () => 't' }, now: () => now, fetchImpl: async () => { throw new Error('offline'); } });
@@ -1483,6 +1515,8 @@ function ok(name, fn) {
         const html = uv.sidebarSummaryHtml(u, 'n');
         assert.strictEqual((html.match(/class="usage-mini"/g) || []).length, 1);
         assert.match(html, /20 \/ 180 core-hrs/);
+        assert.match(html, /reported · 21 Oct 2026, 12:00 UTC/);
+        assert.match(html, /GitHub-reported billing totals; delayed and not attributable to an individual Codespace/);
     });
     await ok('Cloud Hub usage card + page: bar colours, tiles, sortable table, svg chart, last fetched', () => {
         const mk = (used) => ({ account: 'a', login: 'a', plan: { label: 'Free' }, mode: 'live', fetchedAt: NOW, cycleStart: new Date(Date.UTC(2026, 9, 1)).toISOString(), resetDate: new Date(RESET).toISOString(),
@@ -1504,7 +1538,7 @@ function ok(name, fn) {
         assert.match(page, /<svg/);
         assert.match(page, /stroke-dasharray/);
         assert.match(page, /class="usage-table sortable"/);
-        assert.match(page, /Updated hourly · last fetched/);
+        assert.match(page, /GitHub-reported totals · delayed reporting · last fetched 21 Oct 2026, 12:00 UTC/);
         assert.match(page, /\$2\.70/);
     });
     await ok('Cloud Hub dashboard integrates usage (rail item, card, page) and no separate usage webview', () => {
@@ -1664,6 +1698,8 @@ function ok(name, fn) {
         const page = uv.hubUsagePageHtml(u);
         assert.ok(!/Full cycle/.test(page));
         assert.match(page, /At this pace: ~[\d.]+ core-hrs by reset/);
+        assert.match(page, /GitHub-reported totals · delayed reporting · last fetched 21 Oct 2026, 12:00 UTC/);
+        assert.doesNotMatch(page, /Updated hourly/);
         assert.match(page, /2-core<\/span><b>[\d.]+ h<\/b>/);
         assert.match(page, /4-core machine uses your quota 2× as fast/);
         assert.match(page, /<title>Oct \d+: [\d.]+ core-hrs · \$[\d.]+<\/title>/);
@@ -1945,6 +1981,15 @@ function ok(name, fn) {
             const dock = live.slice(live.indexOf('class="action-utility-group"'), live.indexOf('</article>'));
             assert.ok(!/data-cmd="openDeleteModal"|data-cmd="openRebuildModal"|data-cmd="openWeb"/.test(dock), 'extra actions live in the ⋮ menu on running cards');
             assert.ok(!/disabled aria-disabled/.test(live));
+            const pendingHtml = p.buildDashboardHtml([{ account: 'alice', type: 'gh', codespaces: [{ name: 'pending-space', displayName: 'Pending space', repository: 'alice/demo', state: 'Starting', machineName: 'standardLinux32gb' }] }], 'alice', ['alice']);
+            const pendingStart = pendingHtml.indexOf('<article class="ws-card');
+            const pendingEnd = pendingHtml.indexOf('</article>', pendingStart);
+            const pendingCard = pendingHtml.slice(pendingStart, pendingEnd);
+            assert.match(pendingCard, /badge-transitioning[^>]*>\s*Starting\s*</);
+            assert.ok(!/data-cmd="(?:start|stop|connect)"/.test(pendingCard), 'transitioning Codespaces expose no lifecycle action');
+            assert.match(pendingCard, /data-cmd="openRebuildModal"[^>]*disabled aria-disabled="true"/);
+            assert.match(pendingCard, /Machine: standardLinux32gb/);
+            assert.match(pendingHtml, /1 starting or state unavailable/);
             const S = require(path.join(ROOT, 'src', 'sidebarProvider.js')); const SP = S.SidebarProvider || S;
             assert.match(SP.skeletonPage(), /ux-skel-card/);
             const sp = Object.create(SP.prototype); sp._usage = null; sp._context = { globalState: { get: () => true } }; sp.isFirstRunDismissed = () => true;
@@ -2018,6 +2063,14 @@ function ok(name, fn) {
             for (const a of ['connect', 'stop', 'start']) assert.match(h, new RegExp(`data-act="${a}" disabled aria-disabled="true"`));
             const live = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', cs, '', {}, false);
             assert.ok(!/cs-card is-(running|stopped) is-cached|data-act="(connect|stop|start)" disabled/.test(live));
+            const pendingSidebar = sp.buildSidebarHtml([{ account: 'octocat', type: 'gh' }], 'octocat', [{ name: 'pending-space', repository: 'octocat/demo', account: 'octocat', state: 'Starting', machineName: 'standardLinux32gb', lastUsedAt: '2026-10-21T08:00:00Z' }], '', {}, false);
+            const pendingSidebarStart = pendingSidebar.indexOf('<article class="cs-card');
+            const pendingSidebarEnd = pendingSidebar.indexOf('</article>', pendingSidebarStart);
+            const pendingSidebarCard = pendingSidebar.slice(pendingSidebarStart, pendingSidebarEnd);
+            assert.match(pendingSidebarCard, /text-pending">Starting</);
+            assert.ok(!/data-act="(connect|start|stop)"/.test(pendingSidebarCard));
+            assert.match(pendingSidebarCard, /octocat · standardLinux32gb · Active/);
+            assert.match(pendingSidebarCard, /Refresh before lifecycle actions/);
             const w = sp.buildWelcomeHtml({ ghInstalled: true });
             assert.match(w, /You're signed out\./); assert.match(w, /Sign in to extension/);
             assert.ok(!/60 free compute hrs/.test(w)); assert.ok(!/System Health Checklist/.test(w), 'single card when gh is installed');
