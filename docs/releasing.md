@@ -30,4 +30,4 @@ After the release workflows finish successfully:
 
 ## Known external dependency follow-up
 
-Issue [#42](https://github.com/Nir-Bhay/antigravity-codespaces/issues/42) tracks an upstream MSAL advisory in the Open VSX publisher dependency tree. The latest `@azure/identity` package observed during the current review is 4.14.0 and still depends on `@azure/msal-node` `^6.0.0`; the advisory's patched MSAL line begins at 7.1.0. Do not force a cross-major override. Recheck upstream package support and `npm audit` before a later release, then update the lockfile when Azure Identity supports the patched line.
+Issue [#42](https://github.com/Nir-Bhay/antigravity-codespaces/issues/42) tracked an upstream MSAL advisory in the Open VSX publisher dependency tree. `@azure/identity@4.14.1` now declares `@azure/msal-node` `^7.1.0`; this lockfile resolves `@azure/identity@4.14.1` and patched `@azure/msal-node@7.1.2` without an override. The current `npm audit` reports no vulnerabilities. Keep the audit and publisher verification in release checks, and do not add a cross-major override.
