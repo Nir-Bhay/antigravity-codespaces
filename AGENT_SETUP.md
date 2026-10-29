@@ -2,7 +2,7 @@
 
 Copy one prompt into the AI agent in **Antigravity**, **Cursor**, **VS Code** (Copilot agent mode), **Windsurf**, Codex or Claude Code, and it sets up **Antigravity Codespaces** for you. The agent detects your OS and editor, installs the GitHub CLI, checks that you're signed in with the `codespace` scope, installs the extension (from Open VSX or the latest GitHub release `.vsix`) and the right Remote-SSH extension, and lists your **GitHub Codespaces** so you can connect. Every step is safe to re-run. The agent never asks for or handles your tokens. You do the browser sign-in yourself.
 
-See [docs/IDE_SETUP.md](docs/IDE_SETUP.md) for the manual guide.
+This prompt sets up the editor extension and SSH connection; it does **not** install or configure the separate optional MCP server. For MCP client setup and remote-command safety, use the [MCP setup guide](mcp-server/SETUP.md). See [docs/IDE_SETUP.md](docs/IDE_SETUP.md) for the manual editor guide.
 
 ---
 
@@ -30,8 +30,7 @@ STEP 1 - Detect environment
   codium, trae, kiro, positron, void (`command -v <name>` or `where.exe <name>` on Windows).
   macOS fallback paths: /Applications/<App>.app/Contents/Resources/app/bin/<cli>.
   Pick the CLI matching the IDE I'm in now; if unsure, ask me. Call it $IDE_CLI.
-- Note the marketplace: VS Code / VS Code Insiders = Microsoft Marketplace (this extension is
-  listed there only at the older v4.3.0, so install the 5.3.2 .vsix); Trae and Void = install the 5.3.2 .vsix; all others = Open VSX or an Open VSX mirror.
+- Check the version shown by the chosen gallery before installing. For VS Code / VS Code Insiders, Trae, and Void, use the latest GitHub Release VSIX if the gallery does not offer the version you need. For Open VSX-based editors, install from the gallery only after confirming its version; otherwise use the GitHub Release VSIX. Never assume a hard-coded version is current.
 
 STEP 2 - GitHub CLI
 - Run `gh --version`. If missing, install it:
@@ -65,12 +64,13 @@ STEP 4 - Remote-SSH extension
   `$IDE_CLI --install-extension <id>`.
 
 STEP 5 - Install Antigravity Codespaces
-- If `nirbhay-hiwse.antigravity-codespaces` is already in --list-extensions, report its version and skip.
+- If `nirbhay-hiwse.antigravity-codespaces` is already in --list-extensions, report its installed version. Compare it with the target version selected in Step 1; skip only if it already matches, otherwise update it using the chosen gallery or release VSIX.
 - Otherwise, for Open VSX IDEs: `$IDE_CLI --install-extension nirbhay-hiwse.antigravity-codespaces`.
-- If that fails, or for VS Code / Insiders: download the .vsix asset from
+- If that fails, or the gallery does not offer the target version: download the .vsix asset from
   https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest
-  (e.g. `gh release download --repo Nir-Bhay/antigravity-codespaces --pattern "*.vsix" --dir <tmp>`)
-  and run `$IDE_CLI --install-extension <tmp>/antigravity-codespaces-<version>.vsix`.
+  (for example, `gh release download --repo Nir-Bhay/antigravity-codespaces --pattern "*.vsix" --dir <tmp>`).
+  Install the downloaded filename rather than assuming a versioned asset name:
+  `$IDE_CLI --install-extension <tmp>/<downloaded-file>.vsix`.
 - Confirm with `$IDE_CLI --list-extensions --show-versions`.
 
 STEP 6 - remote.SSH.remotePlatform

@@ -103,6 +103,7 @@ export function createCodespaceManager({
   detectContext = detectRepositoryContext,
   lock = withRepositoryLock,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  now = () => Date.now(),
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
   preflight = runPreflight
@@ -146,9 +147,9 @@ export function createCodespaceManager({
 
   const localPreviews = new Map();
 
-  function pruneLocalPreviews(now = Date.now(), reserveSlot = false) {
+  function pruneLocalPreviews(currentTime = now(), reserveSlot = false) {
     for (const [previewId, snapshot] of localPreviews) {
-      if (snapshot.expiresAt <= now) localPreviews.delete(previewId);
+      if (snapshot.expiresAt <= currentTime) localPreviews.delete(previewId);
     }
     while (reserveSlot && localPreviews.size >= MAX_LOCAL_PREVIEWS) {
       localPreviews.delete(localPreviews.keys().next().value);
@@ -175,10 +176,10 @@ export function createCodespaceManager({
     async previewLocalChanges({ cwd } = {}) {
       const context = await detectContext({ cwd });
       const snapshot = await buildLocalPatch(context.cwd);
-      const now = Date.now();
-      pruneLocalPreviews(now, true);
+      const createdAt = now();
+      pruneLocalPreviews(createdAt, true);
       const previewId = randomUUID();
-      const expiresAt = now + LOCAL_PREVIEW_TTL_MS;
+      const expiresAt = createdAt + LOCAL_PREVIEW_TTL_MS;
       localPreviews.set(previewId, {
         repository: context.repository.toLowerCase(),
         branch: context.branch,
@@ -250,11 +251,11 @@ export function createCodespaceManager({
         if (typeof localChangesPreviewId !== 'string' || !localChangesPreviewId) {
           throw new Error('A current local-changes preview is required; call preview_local_changes before syncing.');
         }
-        const now = Date.now();
-        pruneLocalPreviews(now);
+        const currentTime = now();
+        pruneLocalPreviews(currentTime);
         const reviewed = localPreviews.get(localChangesPreviewId);
         localPreviews.delete(localChangesPreviewId);
-        if (!reviewed || reviewed.expiresAt <= now) {
+        if (!reviewed || reviewed.expiresAt <= currentTime) {
           throw new Error('The local-changes preview is missing or expired; call preview_local_changes again before syncing.');
         }
         const current = await buildLocalPatch(context.cwd);
