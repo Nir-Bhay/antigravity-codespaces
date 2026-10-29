@@ -24,7 +24,7 @@ Browse and connect to Codespaces over SSH, manage their lifecycle, inspect GitHu
 
 - **Install and connect from an editor:** follow the [Quickstart](#quickstart-guide), then use the [sidebar and Setup Doctor guide](#connect-setup-doctor-and-the-sidebar).
 - **Understand quota data:** read [Usage analytics](#usage-analytics) for permissions, freshness, and reported-vs-derived values.
-- **Use an AI/MCP client:** the MCP server is **optional and separate** from the editor extension. Start with the [MCP setup guide](mcp-server/README.md); it runs as a Node.js stdio process and uses the active `gh` account, not extension sign-in.
+- **Use an AI/MCP client:** the MCP server is **optional and separate** from the editor extension. Start with the [MCP setup guide](mcp-server/SETUP.md); the [MCP reference](mcp-server/README.md) lists its tools and limits. It runs as a Node.js stdio process and uses the active `gh` account, not extension sign-in.
 - **Check editor support:** see the [compatibility matrix](#editor-compatibility) and [IDE-specific setup guide](docs/IDE_SETUP.md); marketplace availability does not prove end-to-end behavior.
 
 ### Pick the surface for your task
@@ -48,6 +48,13 @@ The extension and MCP server are related but do **not** share sign-in state: ins
 - **One rate-limit message:** "GitHub API rate limit reached. Resets at HH:MM."
 - **gh missing:** the sidebar shows one card with [Install GitHub CLI] and a personal-access-token option.
 - See the [CHANGELOG](CHANGELOG.md) for the full list.
+
+## Changes on main after 5.3.2 (not yet published)
+
+The latest `main` branch includes the following merged work, but a successful build is not a release. Check the [latest GitHub Release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) and the registries for the version actually available to install.
+
+- **Codespaces lifecycle and cost safety:** status is treated conservatively when it is transitioning or unknown; lifecycle actions re-fetch and confirm the selected target before acting. Compute and storage are described separately, and usage remains GitHub-reported rather than real-time per-Codespace pricing.
+- **Safer MCP local-change sync:** `preview_local_changes` issues a single-use ID that expires after 10 minutes. Sync requires that reviewed ID and is rejected if the repository context or patch changed; only the reviewed patch is sent. See the [MCP setup guide](mcp-server/SETUP.md).
 
 ## What's new in 5.3.0
 
@@ -102,35 +109,22 @@ The project does not claim that every listed fork/version has been validated end
 
 ---
 
-## Core Capabilities
+## Core capabilities
 
-### ⚡ 1-Click Quick Connect — `Alt+C`
-Press `Alt+C` anywhere in your editor. A fuzzy-search launcher lists every Codespace across all your GitHub accounts (running instances prioritized, followed by recent activity). Press Enter, and you are connected inside your editor in seconds.
+### Quick Connect for GitHub Codespaces (`Alt+C`)
+Use the Quick Connect command or `Alt+C` to search the Codespaces available to the accounts connected in the extension and choose one to open through your editor's Remote-SSH integration. Startup time and compatibility depend on GitHub, the Codespace state, and the editor's remote support.
 
-### 🏢 True Multi-Account Support (Work + Personal + Orgs)
-Connect multiple GitHub accounts simultaneously:
-- Native GitHub OAuth (fast, no terminal popups).
-- Personal Access Tokens (stored encrypted in your OS keychain via `SecretStorage`).
-- GitHub CLI (`gh auth`).
-Each account is queried in parallel with isolated tokens. Switching accounts never logs out or disturbs other accounts.
+### Multi-account Codespaces browsing
+The extension can browse Codespaces across multiple accounts configured in its account picker. Extension sign-in is separate from the active `gh` CLI account used for SSH and the optional MCP server; switching one does not silently switch the other. See [account and authentication details](docs/MULTI_ACCOUNT_MANAGEMENT.md).
 
-### 🤖 AI Agent Session KeepAlive (Cursor Agent & Antigravity Agent)
-Autonomous agent tasks often run for 10 to 45 minutes without terminal typing. Standard SSH tunnels drop on idle timeout, killing the agent midway. Antigravity Codespaces Pro automatically configures `ServerAliveInterval` and `TCPKeepAlive` inside SSH host blocks so your agent keeps working uninterrupted until the job is done.
+### SSH configuration for remote development
+The extension manages marked Codespaces entries in `~/.ssh/config` and can set configurable `ServerAliveInterval` and `ServerAliveCountMax` keepalive values. These may reduce idle tunnel disconnects, but cannot guarantee that a network, editor, or remote agent session stays connected indefinitely. Host-key verification defaults to `accept-new`; see [SSH security details](#architecture--security).
 
-### 🛡️ Zero-Password SSH Tunneling & Golden Blocks
-The extension automatically detects GitHub CLI authentication keys (`~/.ssh/codespaces.auto`) and injects proper `IdentityFile` declarations into your SSH configuration. No more unexpected password prompts or broken proxy commands. Writes are atomic with automatic `.bak` backups.
+### Cloud Hub and Codespaces lifecycle
+Use the in-editor Cloud Hub to browse, filter, create, start, stop, rebuild, or remove Codespaces with target-specific confirmation. Status and machine details come from GitHub and may be unavailable or transitional; the extension avoids treating an unknown or transitioning state as stopped. Review GitHub's compute and storage billing separately before starting or keeping Codespaces.
 
-### 🖥️ Bento Grid Cloud Hub Dashboard
-Open a full-featured management panel right inside your editor:
-- **KPI Metrics Strip:** Total workspaces, running instances, stopped containers, and free storage tier usage.
-- **Account Chips:** Filter workspaces by account with a single click.
-- **Live Search (`/`):** Instant search by repository name, Codespace display name, or branch.
-- **View Switcher:** Toggle between clean Bento Cards and compact List View.
-- **4-Step Creation Wizard:** Account → Repository → Branch → Provision with auto-recovery.
-- **Container Lifecycle Controls:** Wake up (cold boot), stop, standard rebuild, clean rebuild, and delete.
-
-### 🌐 Live Port Forwarding Discovery & Latency Checker
-Inspect forwarded web ports (3000, 5173, 8080, etc.) on running containers directly from the sidebar. Run millisecond latency pings before connecting to pick the fastest cloud region.
+### SSH diagnostics and forwarded ports
+Setup Doctor checks local prerequisites and `Test SSH Connectivity` measures a tunnel probe for a selected Codespace. The sidebar and Cloud Hub can display forwarded port information returned by GitHub. A successful probe or listed port is not a guarantee that every editor can open the remote window or service.
 
 ---
 
@@ -274,9 +268,9 @@ Any other failure shows **Usage unavailable** with the reason. This includes an 
 
 The repository also contains a standalone Node.js stdio MCP server. It is separate from the editor extension and authenticates through the active GitHub CLI account on the machine running the MCP process; it does not reuse the extension's SecretStorage sign-in.
 
-The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse/start/create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP setup guide](mcp-server/SETUP.md) for copyable client configuration, read-only preflight, sync preview, and safety details, and the [MCP server reference](mcp-server/README.md) for complete tool descriptions.
+The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse, start, or create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP setup guide](mcp-server/SETUP.md) for copyable client configuration, read-only preflight, and the safe sync workflow; see the [MCP server reference](mcp-server/README.md) for the full tool list and limits.
 
-**Review these effects before enabling it:** starting or creating a Codespace can incur compute charges; a stopped Codespace can continue to incur storage charges. Repository local-change sync is opt-in and may send staged/unstaged tracked files plus non-ignored untracked files (up to 5 MiB) to a temporary remote worktree. Inspect `git status` before enabling it. The server redacts common credential patterns from output, but cannot reliably identify arbitrary secrets; do not run commands that print secrets. Automated tests use mocked GitHub CLI operations, so live API, billing, SSH, and client interoperability still need a controlled manual test.
+**Review these effects before enabling it:** starting or creating a Codespace can incur compute charges; a stopped Codespace can continue to incur storage charges. Repository local-change sync is opt-in and may send staged/unstaged tracked files plus non-ignored untracked files (up to 5 MiB) to a temporary remote worktree. First review `preview_local_changes`; its ID is single-use, expires after 10 minutes, and sync is rejected if the repository context or patch changes. Inspect `git status` before approving. The server redacts common credential patterns from output, but cannot reliably identify arbitrary secrets; do not run commands that print secrets. Automated tests use mocked GitHub CLI operations, so live API, billing, SSH, and client interoperability still need a controlled manual test.
 
 ### Run tests locally
 
@@ -334,7 +328,7 @@ Customize behavior under `Settings` (`Ctrl+,`) → **Antigravity Codespaces Pro*
 | **Antigravity Codespaces: Create New Codespace** | — | Interactive 4-step wizard |
 | **Antigravity Codespaces: Switch GitHub Account** | — | Switch between connected accounts |
 | **Antigravity Codespaces: Sync SSH Config** | — | Re-generate clean SSH Golden Blocks in `~/.ssh/config` |
-| **Antigravity Codespaces: Test SSH Connectivity** | — | Ping tunnel latency in milliseconds |
+| **Antigravity Codespaces: Test SSH Connectivity** | — | Probe the selected SSH tunnel and report latency |
 | **Antigravity Codespaces: Turn ON / Stop** | — | Wake cold container or shut down to save quota |
 | **Antigravity Codespaces: Rebuild Container** | — | Standard cached or full clean container rebuild |
 | **Antigravity Codespaces: Delete Codespace** | — | Safely remove a Codespace with confirmation |
@@ -415,16 +409,16 @@ gh auth refresh -h github.com -s codespace
 ## Frequently Asked Questions (FAQ)
 
 ### Does this work in Cursor IDE?
-Yes. Cursor IDE is powered by the Open VSX extension registry. You can install Antigravity Codespaces Pro directly from Cursor's Extensions view. It gives you complete GitHub Codespaces connectivity inside Cursor.
+The extension is available through Open VSX, which Cursor can use for extensions. Install it from the Extensions view or a VSIX, then check Setup Doctor and the [IDE compatibility notes](docs/IDE_SETUP.md). Remote-SSH behavior depends on the Cursor version and its bundled SSH integration; gallery availability alone is not proof of end-to-end support.
 
 ### Why does my SSH connection ask for a password?
-GitHub Codespace containers only accept SSH public keys; password authentication is disabled on the container. Antigravity Codespaces Pro automatically configures your `~/.ssh/config` to point to `~/.ssh/codespaces.auto`. If you ever see a password prompt, run `Ctrl+Shift+P` → **Antigravity Codespaces: Sync SSH Config** to refresh your keys.
+GitHub Codespaces SSH is mediated by the GitHub CLI. The extension manages a marked SSH host block and uses `gh cs ssh --stdio`; it adds an `IdentityFile` only when the relevant local file exists. If you see an authentication prompt, check `gh auth status` and Setup Doctor first, then verify the generated `~/.ssh/config` entry.
 
-### Can I connect multiple GitHub accounts?
-Yes. You can connect personal accounts, enterprise organizations, and client accounts simultaneously. You can use OAuth for one account, Personal Access Tokens for another, and the GitHub CLI for a third. All accounts appear in the Cloud Hub dashboard with live status indicators.
+### Can I browse multiple GitHub accounts?
+The extension supports multiple accounts in its account picker, subject to the authentication method and permissions configured for each one. SSH uses the active GitHub CLI account, which is separate from the extension's account selection. The optional MCP server also uses the active `gh` account on the machine that launches it.
 
-### How does this help AI Agent workflows?
-Tools like Cursor Agent, Antigravity Agent, Claude Code, and Aider frequently perform multi-step planning and long compilation tasks without active keyboard input. Standard SSH connections drop after a few minutes of inactivity. Antigravity Codespaces Pro injects automated keepalive signals (`ServerAliveInterval 30`) to keep the tunnel open continuously.
+### How does this support AI-agent workflows?
+The extension can configure SSH keepalive settings that may reduce idle disconnects while an editor agent works in a remote Codespace; this is best-effort, not a guarantee against network or editor timeouts. For AI clients that need to run commands in Codespaces, configure the separate [MCP server](mcp-server/SETUP.md). Review its cost and local-change preview behavior before opting into sync.
 
 ---
 

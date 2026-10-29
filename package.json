@@ -1,7 +1,7 @@
 {
   "name": "antigravity-codespaces",
   "displayName": "Antigravity Codespaces Pro",
-  "description": "Manage GitHub Codespaces from VS Code-based editors: browse accounts, connect over SSH, manage lifecycle, view usage, and optionally run remote commands with a separate MCP server.",
+  "description": "Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code-based editors: browse accounts, connect over SSH, manage lifecycle and usage, or run remote commands with the optional MCP server.",
   "version": "5.3.2",
   "publisher": "nirbhay-hiwse",
   "author": {
@@ -44,10 +44,10 @@
     "port-forwarding",
     "workspace-manager",
     "developer-tools",
-    "productivity",
-    "docker",
-    "container",
-    "github"
+    "mcp",
+    "mcp-server",
+    "codespaces-mcp",
+    "model-context-protocol"
   ],
   "engines": {
     "vscode": "^1.85.0"

@@ -2,7 +2,7 @@
 
 **Antigravity Codespaces** (`nirbhay-hiwse.antigravity-codespaces`) lets you browse, start and connect to **GitHub Codespaces** over SSH from **Google Antigravity**, **Cursor**, **VS Code**, **Windsurf** and other VS Code-based editors. Your editor runs locally and the codespace runs in the cloud. The tunnel is the official GitHub CLI (`gh cs ssh --stdio`, used as an SSH `ProxyCommand`), so you never have to manage SSH keys or open ports. This guide covers installation for each IDE, the Remote-SSH extension each one needs, OS-specific notes and troubleshooting.
 
-> **Availability (v5.3.2):** published on **Open VSX**. The **VS Code Marketplace** still has the older **v4.3.0**; for the latest 5.3.2, VS Code users install the `.vsix` from the [latest GitHub release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest).
+> **Choose the version you need:** extension galleries can lag GitHub Releases. Check the version shown by your editor's gallery; if it is older than the release you need, install the `.vsix` from the [latest GitHub release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest). A successful install or marketplace listing does not establish end-to-end Remote-SSH compatibility.
 > **Requirements:** an editor compatible with VS Code engine `^1.85.0`, the GitHub CLI (`gh`), an OpenSSH client, and a Remote-SSH extension.
 
 > **Prefer to let your AI agent do it?** Paste the prompt from [AGENT_SETUP.md](../AGENT_SETUP.md) into your IDE's agent chat.
@@ -15,14 +15,14 @@
 |---|---|---|---|---|
 | **Google Antigravity** | Open VSX | `antigravity --install-extension nirbhay-hiwse.antigravity-codespaces` | Built-in Antigravity remote support, or `jeanp413.open-remote-ssh` | Microsoft's Remote-SSH is not available. On macOS, the CLI is at `/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity` if it isn't on PATH. |
 | **Cursor** | Open VSX, served through Cursor's proxy `marketplace.cursorapi.com` ([Cursor docs](https://cursor.com/help/customization/extensions)) | `cursor --install-extension nirbhay-hiwse.antigravity-codespaces` | `anysphere.remote-ssh` (Cursor's own, bundled) | The extension tries the `anysphere-remote-ssh.*` connect commands first. |
-| **VS Code** | Microsoft Marketplace (v4.3.0; 5.3.2 via `.vsix`) | `code --install-extension antigravity-codespaces-5.3.2.vsix` | `ms-vscode-remote.remote-ssh` | Marketplace has v4.3.0; use the release `.vsix` for 5.3.2. |
-| **VS Code Insiders** | Microsoft Marketplace (v4.3.0; 5.3.2 via `.vsix`) | `code-insiders --install-extension antigravity-codespaces-5.3.2.vsix` | `ms-vscode-remote.remote-ssh` | Same as VS Code. |
+| **VS Code** | Microsoft Marketplace (check its listed version; use GitHub Releases if it is older than the version you need) | `code --install-extension ./antigravity-codespaces-<version>.vsix` | `ms-vscode-remote.remote-ssh` | Verify the downloaded VSIX filename before installing. |
+| **VS Code Insiders** | Microsoft Marketplace (check its listed version; use GitHub Releases if it is older than the version you need) | `code-insiders --install-extension ./antigravity-codespaces-<version>.vsix` | `ms-vscode-remote.remote-ssh` | Verify the downloaded VSIX filename before installing. |
 | **Windsurf** | Open VSX | `windsurf --install-extension nirbhay-hiwse.antigravity-codespaces` | Windsurf's built-in SSH, `codeium.windsurf-remote-openssh` | Per [Windsurf docs](https://docs.windsurf.com/windsurf/advanced), do **not** install Microsoft Remote-SSH or `open-remote-ssh`; they conflict with the built-in one. It needs OpenSSH installed and supports Linux remotes only. Whether it honors a custom `ProxyCommand` is not documented, so if Quick Connect fails, use **Copy SSH Command**. Extension ID is Community-reported ([issue #324](https://github.com/Exafunction/codeium/issues/324)). |
 | **VSCodium** | Open VSX | `codium --install-extension nirbhay-hiwse.antigravity-codespaces` | `jeanp413.open-remote-ssh` | |
 | **Trae** | TRAE's own extension store; Marketplace extensions via manual `.vsix` ([TRAE docs](https://docs.trae.ai/ide/manage-extensions)) | **Install from VSIX…**, or `trae --install-extension …` (CLI name Community-reported: [forum.trae.cn](https://forum.trae.cn/t/topic/171618)) | Trae's built-in Remote SSH ([TRAE docs](https://docs.trae.ai/ide/ssh-remote)) | Trae's Remote SSH supports Linux remotes only, which is fine because codespaces run Linux. |
 | **Kiro** | Open VSX ([Kiro docs](https://kiro.dev/docs/privacy-and-security/)) | `kiro --install-extension …` (by default `kiro` launches the IDE, [Kiro CLI reference](https://kiro.dev/docs/reference/cli-commands/)) or **Install from VSIX…** | `jeanp413.open-remote-ssh` (Open Remote - SSH from Open VSX, named in [Kiro docs](https://kiro.dev/docs/privacy-and-security/)) | Kiro has no native Remote SSH yet ([kirodotdev/Kiro#3965](https://github.com/kirodotdev/Kiro/issues/3965)); the extension is third-party. |
 | **Positron** | Posit P3M (same catalog as Open VSX) or Open VSX directly ([Positron docs](https://positron.posit.co/extensions)) | `positron --install-extension …` (enable via *Install 'positron' command in PATH*, [Positron docs](https://positron.posit.co/add-to-path)) or **Install from VSIX…** | Positron's built-in Remote SSH ([Positron docs](https://positron.posit.co/remote-ssh)) | Linux remotes only. Set `remoteSSH.transport` to `native` if your SSH config needs OpenSSH features such as `ProxyJump`. The gallery is set by `positron.extensions.gallerySource`. |
-| **Void** | Microsoft Marketplace gallery URL in `product.json` ([source](https://github.com/voideditor/void/blob/main/product.json)), so use **Install from VSIX…** for 5.3.2 | `void --install-extension …` (`applicationName: void` in [product.json](https://github.com/voideditor/void/blob/main/product.json)) or **Install from VSIX…** | Bundled Open Remote-SSH fork ([voideditor/void#282](https://github.com/voideditor/void/pull/282)) | Void is deprecated and no longer maintained ([repo](https://github.com/voideditor/void)). Best-effort only. |
+| **Void** | Microsoft Marketplace gallery URL in `product.json` ([source](https://github.com/voideditor/void/blob/main/product.json)); use **Install from VSIX…** if its gallery does not offer the version you need | `void --install-extension …` (`applicationName: void` in [product.json](https://github.com/voideditor/void/blob/main/product.json)) or **Install from VSIX…** | Bundled Open Remote-SSH fork ([voideditor/void#282](https://github.com/voideditor/void/pull/282)) | Void is deprecated and no longer maintained ([repo](https://github.com/voideditor/void)). Best-effort only. |
 | **Eclipse Theia / Gitpod OpenVSCode Server** | Open VSX | n/a | n/a | ❌ Not a target. These are browser or remote IDEs with no local SSH client, so a codespace can't be tunneled into them. Use the codespace's own web editor instead. |
 
 Entries labeled *Community-reported* are not in official docs. Feedback and PRs are welcome.
@@ -67,7 +67,7 @@ Install the one listed for your IDE in the table, for example `<cli> --install-e
 ### Step 4: Install Antigravity Codespaces
 
 - **From the gallery:** search for *Antigravity Codespaces* (Open VSX-based IDEs), or run `<cli> --install-extension nirbhay-hiwse.antigravity-codespaces`.
-- **From a .vsix:** download `antigravity-codespaces-<version>.vsix` from the [latest release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest), then run `<cli> --install-extension ./antigravity-codespaces-5.3.2.vsix`. Alternatively, use **Extensions: Install from VSIX…** in the Command Palette.
+- **From a .vsix:** download the asset from the [latest release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest), confirm its version and filename on the release page, then run `<cli> --install-extension ./<downloaded-file>.vsix`. Alternatively, use **Extensions: Install from VSIX…** in the Command Palette.
 
 ### Step 5: Run Setup Doctor
 
@@ -114,7 +114,7 @@ For the longer Cursor walkthrough (connection methods, Cursor Agent tips, accoun
 ### VS Code / VS Code Insiders
 1. Install `gh` and sign in.
 2. Install `ms-vscode-remote.remote-ssh` from the Marketplace.
-3. Install the release `.vsix`: `code --install-extension antigravity-codespaces-5.3.2.vsix` (use `code-insiders` for Insiders). If `code` isn't on PATH, run **Shell Command: Install 'code' command in PATH** (macOS).
+3. If the Marketplace version is older than the version you need, download the `.vsix` from the [latest GitHub release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest), verify its asset name, and run `code --install-extension ./<downloaded-file>.vsix` (use `code-insiders` for Insiders). If `code` isn't on PATH, run **Shell Command: Install 'code' command in PATH** (macOS).
 4. Run Setup Doctor, then Quick Connect.
 
 ### Windsurf

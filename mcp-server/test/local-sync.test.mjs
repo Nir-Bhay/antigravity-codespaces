@@ -137,6 +137,75 @@ test('rejects local changes added after preview before provisioning a Codespace'
   }
 });
 
+test('rejects an expired preview before contacting GitHub or provisioning a Codespace', async () => {
+  const root = await makeRepo();
+  try {
+    git(root, ['remote', 'add', 'origin', 'https://github.com/octocat/hello-world.git']);
+    await writeFile(join(root, 'reviewed.txt'), 'reviewed change\n');
+    let currentTime = Date.now();
+    let githubCalls = 0;
+    const manager = createCodespaceManager({
+      now: () => currentTime,
+      gh: {
+        async listCodespaces() { githubCalls++; return []; },
+        async getCodespace() { throw new Error('must not look up a Codespace'); },
+        async createCodespace() { throw new Error('must not create a Codespace'); },
+        async startCodespace() { throw new Error('must not start a Codespace'); },
+        async stopCodespace() { throw new Error('must not stop a Codespace'); }
+      },
+      lock: async (_key, operation) => operation(),
+      runCommand: async () => { throw new Error('must not run a remote command'); }
+    });
+
+    const preview = await manager.previewLocalChanges({ cwd: root });
+    currentTime += 10 * 60 * 1000;
+    await assert.rejects(
+      manager.runRepositoryCommand({ cwd: root, command: 'npm test', syncLocalChanges: true, localChangesPreviewId: preview.previewId }),
+      /missing or expired/
+    );
+    assert.equal(githubCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a preview ID is single-use and cannot trigger a second repository command', async () => {
+  const root = await makeRepo();
+  try {
+    git(root, ['remote', 'add', 'origin', 'https://github.com/octocat/hello-world.git']);
+    await writeFile(join(root, 'reviewed.txt'), 'reviewed change\n');
+    let githubLookups = 0;
+    let commandRuns = 0;
+    const manager = createCodespaceManager({
+      gh: {
+        async listCodespaces() {
+          githubLookups++;
+          return [{ name: 'existing-space', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/sync' }, state: 'Available' }];
+        },
+        async getCodespace(name) { return { name, state: 'Available' }; },
+        async createCodespace() { throw new Error('must reuse matching Codespace'); },
+        async startCodespace() { throw new Error('must not start an available Codespace'); },
+        async stopCodespace() { throw new Error('must not stop a Codespace it did not start'); }
+      },
+      lock: async (_key, operation) => operation(),
+      runCommand: async () => {
+        commandRuns++;
+        return { exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, outputTruncated: false };
+      }
+    });
+
+    const preview = await manager.previewLocalChanges({ cwd: root });
+    const input = { cwd: root, command: 'npm test', syncLocalChanges: true, localChangesPreviewId: preview.previewId };
+    const first = await manager.runRepositoryCommand(input);
+    assert.equal(first.localChangesSynced, true);
+    await assert.rejects(manager.runRepositoryCommand(input), /missing or expired/);
+    assert.equal(githubLookups, 1);
+    assert.equal(commandRuns, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('builds a syntactically valid remote cleanup script using a detached worktree', () => {
   const script = buildRemoteWorktreeCommand({
     repository: 'Octocat/hello-world',

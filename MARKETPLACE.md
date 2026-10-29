@@ -1,6 +1,6 @@
 # Marketplace & Distribution Strategy
 
-A step-by-step guide for publishing, promoting, and growing **Antigravity Codespaces Pro** across registries and developer communities.
+Maintainer guidance for distributing **Antigravity Codespaces Pro** and improving discoverability with accurate, task-focused listing content. Search placement is controlled by each registry and is not guaranteed by metadata changes.
 
 ---
 
@@ -22,19 +22,19 @@ Open VSX is the vendor-neutral extension registry for Code-OSS, Gitpod, Eclipse 
 
 ```bash
 # From the repo root after building the VSIX
-npx @vscode/vsce package --no-git-tag-version
-npx ovsx publish antigravity-codespaces-5.0.2.vsix -p <your-token>
+npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
+npx ovsx publish antigravity-codespaces-<version>.vsix -p "$OVSX_PAT"
 ```
 
 ### Automated Publish via CI (See `open-vsx-publish.yml`)
 
-The workflow in `.github/workflows/open-vsx-publish.yml` automatically publishes to Open VSX on every tagged release (`v*`). Set the `OVSX_PAT` secret in your repository settings once, and every `git tag v4.x.x && git push --tags` will trigger an automatic publish.
+The workflow in `.github/workflows/open-vsx-publish.yml` automatically publishes to Open VSX on every tagged release (`v*`). Set the `OVSX_PAT` secret in the protected `production-release` environment. Publishing is triggered by a `v*` tag; verify the tag matches the package version and points to the reviewed release commit.
 
 ---
 
 ## 2. VS Code Marketplace (Microsoft)
 
-The Microsoft Marketplace requires a publisher account and is restricted to their proprietary build, but gaining visibility there increases general awareness.
+The Microsoft Marketplace is a separate registry with its own publisher account and listing. Its description and install copy must be kept current independently; the repository's Open VSX workflow does not update the Microsoft Marketplace.
 
 ### Setup Steps
 
@@ -42,17 +42,17 @@ The Microsoft Marketplace requires a publisher account and is restricted to thei
 2. Go to [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) → Create Publisher.
 3. Publisher ID must match `package.json` → `"publisher": "nirbhay-hiwse"`.
 4. Generate a **Personal Access Token** with `Marketplace → Manage` scope. Save as `VSCE_PAT` in GitHub Secrets.
-5. Run: `npx @vscode/vsce publish -p <VSCE_PAT>`
+5. Run: `npx @vscode/vsce publish -p "$VSCE_PAT"`
 
 > Note: The extension targets Antigravity IDE / Code-OSS users. Open VSX delivers more targeted reach for this audience.
 
 ---
 
-## 3. SEO Metadata Summary
+## 3. Search metadata
 
-The following metadata is configured in `package.json` for maximum discoverability on Open VSX and search engines (SEO & GEO).
+`package.json` supplies the extension's searchable description and up to 30 keywords. These terms reflect the actual audience and capabilities; metadata can improve relevance for those searches but cannot guarantee a ranking or install count.
 
-### Keywords Used (30-slot limit)
+### Current keywords
 
 ```
 cursor, cursor-ide, cursor-codespaces, cursor-agent, codespaces,
@@ -60,12 +60,14 @@ github-codespaces, antigravity, antigravity-ide, remote-development, remote-ssh,
 ssh, devcontainer, multi-account, windsurf, vscodium,
 code-oss, open-vsx, vscode, cloud-ide, cloud-dev,
 ai-agent, ssh-keepalive, websocket-keepalive, port-forwarding, workspace-manager,
-developer-tools, productivity, docker, container, github
+developer-tools, mcp, mcp-server, codespaces-mcp, model-context-protocol
 ```
+
+Keep the short description factual and front-load the phrases users are likely to search for: GitHub Codespaces, the editor family, SSH connection, usage, and the optional MCP server. Avoid keyword stuffing, unverified compatibility promises, and time-sensitive version strings.
 
 ### Gallery Banner
 
-Dark themed banner (`#1a1a2e`) with white text to match the extension icon and dashboard glassmorphism aesthetic.
+The package sets a dark gallery banner (`#1a1a2e`). Keep screenshots and copy legible in both light and dark contexts, and avoid implying that a visual screenshot demonstrates live account behavior.
 
 ### Categories
 
@@ -80,18 +82,18 @@ Dark themed banner (`#1a1a2e`) with white text to match the extension icon and d
 
 | Platform | Action | Link |
 |---|---|---|
-| **Cursor Community Forum** | Post: "How to connect Cursor IDE to GitHub Codespaces with Multi-Account & KeepAlive" | [forum.cursor.com](https://forum.cursor.com) |
-| **Reddit r/cursor** | Guide: Connecting Cursor IDE directly to GitHub Codespaces without Microsoft extension limits | [reddit.com/r/cursor](https://reddit.com/r/cursor) |
-| **Reddit r/github** | Post announcement with Bento Cloud Hub dashboard screenshots | [reddit.com/r/github](https://reddit.com/r/github) |
+| **Cursor Community Forum** | Share an evidence-based setup guide for GitHub Codespaces in Cursor, including authentication and Remote-SSH caveats | [forum.cursor.com](https://forum.cursor.com) |
+| **Reddit r/cursor** | Share a practical Cursor-to-GitHub-Codespaces setup guide with version and compatibility notes | [reddit.com/r/cursor](https://reddit.com/r/cursor) |
+| **Reddit r/github** | Share an accurate walkthrough of Codespaces setup, usage reporting, and lifecycle controls | [reddit.com/r/github](https://reddit.com/r/github) |
 | **Reddit r/vscode** | Cross-post targeting Code-OSS, Antigravity, and VSCodium users | [reddit.com/r/vscode](https://reddit.com/r/vscode) |
-| **Hacker News** | "Show HN: Antigravity Codespaces Pro — Codespaces for Cursor & Antigravity IDE" | [news.ycombinator.com](https://news.ycombinator.com) |
+| **Hacker News** | Present the extension's verified capabilities, open-source code, limitations, and release status | [news.ycombinator.com](https://news.ycombinator.com) |
 | **GitHub Discussions** | Post in `github/codespaces` community discussions | [github.com/github/codespaces](https://github.com/github/codespaces) |
 
 ### Content Ideas
 
-1. **"Using GitHub Codespaces in Cursor IDE: The Complete Guide"** — Tutorial on dev.to and Medium explaining how to install from Open VSX and connect in 1 click.
-2. **"Why AI Agent Long-Sessions Disconnect (and How to Fix Them)"** — Technical write-up on SSH keepalive tuning for Cursor Agent and Antigravity Agent.
-3. **Twitter/X Thread** — "Cursor users: Microsoft's official Codespaces extension isn't on Open VSX. We built the native multi-account Codespaces manager for Cursor & Antigravity IDE (750+ downloads in 24h!)..." with GIF.
+1. **GitHub Codespaces in Cursor or Antigravity:** a setup guide covering Open VSX/VSIX choice, the active `gh` account, and editor-specific Remote-SSH limits.
+2. **Using an MCP server with GitHub Codespaces:** explain the optional Node.js process, the single-use local-change preview, and potential compute/storage charges.
+3. **Understanding Codespaces usage in an editor:** distinguish GitHub-reported billing data, hourly freshness, personal quota, and organization-billed usage.
 
 ---
 
@@ -114,17 +116,17 @@ Dark themed banner (`#1a1a2e`) with white text to match the extension icon and d
 
 ## 6. Extension Listing Copy (for Open VSX / Marketplace)
 
-**Short Description (150 chars):**
-> Manage GitHub Codespaces across multiple accounts inside Antigravity IDE & Code-OSS. Connect, start, stop, rebuild with one click.
+**Short Description (under 150 characters):**
+> Manage GitHub Codespaces in Antigravity, Cursor, and VS Code-based editors. Connect over SSH, inspect usage, and manage lifecycle actions.
 
-**Long Description (for marketplace detail page):**
-> Antigravity Codespaces Pro brings full GitHub Codespaces management to Code-OSS, Gitpod, Eclipse Theia, and Google Antigravity IDE. The extension provides a Bento Grid visual dashboard, multi-account token isolation, automated SSH config management, AI agent connection keepalive, and a keyboard-first Quick Connect launcher (Alt+C). All Codespace lifecycle operations — start, stop, rebuild, delete, port forwarding — are available directly from the sidebar without touching the browser.
+**Long Description (for marketplace detail pages):**
+> Antigravity Codespaces Pro is an open-source VS Code extension for browsing GitHub Codespaces across configured accounts, connecting through the GitHub CLI and Remote-SSH, managing Codespace lifecycle actions, and viewing GitHub-reported usage. A separate optional Node.js MCP server lets an MCP client run commands in a named or repository-matched Codespace. MCP uses the active `gh` CLI account, not the extension's sign-in. Starting or creating a Codespace may incur compute charges, and stopped Codespaces may continue to incur storage charges. Editor and MCP-client compatibility must be checked for the specific host/version; marketplace availability alone does not prove integration behavior.
 
 ---
 
-## 7. Version & Release Cadence Recommendations
+## 7. Version and release guidance
 
-- **Patch releases** (`4.3.x`) — Bug fixes, monthly or on demand.
-- **Minor releases** (`4.x.0`) — New features, every 1-2 months.
-- **Respond to issues within 48 hours** — Response rate is a strong trust signal on Open VSX.
-- **Update `engines.vscode`** minimum version quarterly to keep the extension "compatible with current stable" in search filters.
+- Follow the package's current major version and Semantic Versioning: patch for compatible fixes, minor for compatible features, and major for breaking changes.
+- Keep the `CHANGELOG.md`, release notes, package version, and exact VSIX asset name aligned for each release.
+- The `build-and-release.yml` workflow builds on pull requests and pushes to `main`; GitHub Release publication runs only for a `v*` tag. Open VSX publication is a separate `v*`-tag workflow. A successful main-branch build is not publication.
+- Before announcing an update, verify the GitHub Release assets and independently check each registry listing/version. Update the Microsoft Marketplace manually through its publisher process when authorized; do not imply the repository's Open VSX workflow publishes there.

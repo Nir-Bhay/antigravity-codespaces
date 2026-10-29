@@ -5,7 +5,19 @@ All notable changes to the **Antigravity Codespaces Pro** extension will be docu
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Changes under **Unreleased** are merged into `main` but are not necessarily present in the latest published extension package. See [Releasing](docs/releasing.md) for the tag-gated publication process.
+
 ---
+
+## [Unreleased]
+
+### Added
+- Codespaces lifecycle and cost-safety overview: transitioning or unknown states are not treated as stopped, lifecycle actions re-check the selected target, and compute and storage costs are explained separately.
+- MCP local-change previews issue a short-lived, single-use ID; syncing requires that reviewed ID and is rejected if the repository context or patch changes before provisioning.
+
+### Changed
+- MCP setup and reference guides clarify the preview ID, expiration, drift rejection, and exact patch transferred.
+- Marketplace metadata and setup guides use version-neutral release instructions and include MCP search terms without promising unverified publication or editor compatibility.
 
 ## [5.3.2] - 2026-10-21
 
