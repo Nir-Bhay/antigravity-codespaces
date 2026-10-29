@@ -9,6 +9,8 @@ node_modules/**
 # Never include local session data or nested checkouts in the extension package.
 .artifacts
 .artifacts/**
+.worktree-*
+.worktree-*/**
 antigravity-codespaces
 antigravity-codespaces/**
 

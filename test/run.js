@@ -94,7 +94,7 @@ function ok(name, fn) {
 
     await ok('VSIX excludes local session artifacts, nested checkouts, and workspace masks', () => {
         const ignore = fs.readFileSync(path.join(ROOT, '.vscodeignore'), 'utf8').split(/\r?\n/);
-        for (const pattern of ['.artifacts/**', '.vscode-test/**', 'antigravity-codespaces/**', '.bash_profile', '.bashrc', '.claude/**', '.gitconfig', '.gitmodules', '.idea/**', '.mcp.json', '.profile', '.ripgreprc', '.vscode', '.zprofile', '.zshrc']) {
+        for (const pattern of ['.artifacts/**', '.vscode-test/**', '.worktree-*/**', 'antigravity-codespaces/**', '.bash_profile', '.bashrc', '.claude/**', '.gitconfig', '.gitmodules', '.idea/**', '.mcp.json', '.profile', '.ripgreprc', '.vscode', '.zprofile', '.zshrc']) {
             assert.ok(ignore.includes(pattern), `VSIX ignore rules must include ${pattern}`);
         }
     });
