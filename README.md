@@ -81,7 +81,7 @@ The latest `main` branch includes the following merged work, but a successful bu
 - **Codespaces: Setup Doctor.** One panel checks the CLI, OpenSSH, Remote-SSH, the `codespace` scope, the active account, and `remote.SSH.remotePlatform`. **Copy Diagnostic Report** redacts tokens before they reach the clipboard.
 - **Sidebar `gh` status and welcome card.** The Codespaces view shows live `gh` status with a Fix action, and a three-step Get Started card until the CLI is ready.
 - **Connect progress and the real folder.** A four-step notification covers the CLI check, SSH config, container wake, and open. The window opens the Codespace's recent folder when GitHub reports one.
-- **Connect Now and Reconnect to Last Codespace.** After **Create New Codespace**, choose **Connect Now**. Later, run **Reconnect to Last Codespace**.
+- **Connect Now and Reconnect to Last Codespace.** In the command-palette creation flow, choose **Connect Now** after creation. The Cloud Hub wizard closes after creating; connect from the refreshed Codespace card. Later, run **Reconnect to Last Codespace**; a stopped Codespace is checked and confirmed before it starts.
 - **Host keys and SSH logs.** Generated blocks use `StrictHostKeyChecking accept-new`, an extension-managed `~/.antigravity-codespaces/known_hosts` file, and `LogLevel ERROR`. Change them with `antigravity-codespaces.strictHostKeyChecking` (default `accept-new`) and `antigravity-codespaces.sshLogLevel` (default `error`).
 
 ---
@@ -222,9 +222,9 @@ If that path is not on the machine, Connect asks you to pick a folder under `/wo
 
 ### Connect Now and Reconnect to Last Codespace
 
-**Create New Codespace** ends with a confirmation that includes **Connect Now**. That button runs **Connect** on the Codespace that was just created.
+The Command Palette **Create New Codespace** flow ends with a confirmation that includes **Connect Now**. The Cloud Hub creation wizard instead shows a success toast and closes; connect from the refreshed Codespace card.
 
-**Reconnect to Last Codespace** wakes the Codespace you connected to most recently (if it is stopped) and runs **Connect** again. If you have never connected in this editor, it tells you to connect once first.
+**Reconnect to Last Codespace** verifies the saved account-scoped target and its current state. If stopped, it asks for the normal start confirmation before waking it, then runs **Connect** again. If you have never connected in this editor, it tells you to connect once first.
 
 ---
 

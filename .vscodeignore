@@ -1,6 +1,29 @@
+.vscode
 .vscode/**
+.git
 .git/**
 node_modules/**
+
+# Never include local session data or nested checkouts in the extension package.
+.artifacts
+.artifacts/**
+antigravity-codespaces
+antigravity-codespaces/**
+
+# Exclude shell and workspace masks that may exist only on the build machine.
+.bash_profile
+.bashrc
+.claude
+.claude/**
+.gitconfig
+.gitmodules
+.idea
+.idea/**
+.mcp.json
+.profile
+.ripgreprc
+.zprofile
+.zshrc
 test/**
 *.vsix
 .DS_Store

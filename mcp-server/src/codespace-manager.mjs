@@ -108,10 +108,18 @@ export function createCodespaceManager({
   startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
   preflight = runPreflight
 } = {}) {
-  async function waitUntilAvailable(name) {
+  async function pinIdentity() {
+    return typeof gh.pinIdentity === 'function' ? gh.pinIdentity() : undefined;
+  }
+
+  function identityOptions(identityToken) {
+    return identityToken === undefined ? {} : { identityToken };
+  }
+
+  async function waitUntilAvailable(name, identityToken) {
     const deadline = Date.now() + startupTimeoutMs;
     while (Date.now() < deadline) {
-      const status = await gh.getCodespace(name);
+      const status = await gh.getCodespace(name, identityOptions(identityToken));
       if (isAvailable(status.state)) return status;
       if (['deleted', 'failed', 'unavailable'].includes(String(status.state || '').toLowerCase())) {
         throw new Error(`Codespace ${name} entered state ${status.state}.`);
@@ -121,24 +129,24 @@ export function createCodespaceManager({
     throw new Error(`Codespace ${name} did not become available within ${Math.round(startupTimeoutMs / 1000)} seconds.`);
   }
 
-  async function ensureAvailable(context) {
-    const codespaces = await gh.listCodespaces();
+  async function ensureAvailable(context, identityToken) {
+    const codespaces = await gh.listCodespaces(identityOptions(identityToken));
     let codespace = findMatchingCodespace(codespaces, context.repository, context.branch);
     let created = false;
     let started = false;
     if (!codespace) {
-      codespace = await gh.createCodespace(context.repository, context.branch);
+      codespace = await gh.createCodespace(context.repository, context.branch, identityOptions(identityToken));
       created = true;
     } else if (!isAvailable(codespace.state)) {
-      await gh.startCodespace(codespace.name);
+      await gh.startCodespace(codespace.name, identityOptions(identityToken));
       started = true;
     }
     try {
-      const status = await waitUntilAvailable(codespace.name);
+      const status = await waitUntilAvailable(codespace.name, identityToken);
       return { codespace: { ...codespace, ...status }, created, started };
     } catch (error) {
       if (created || started) {
-        try { await gh.stopCodespace(codespace.name); }
+        try { await gh.stopCodespace(codespace.name, identityOptions(identityToken)); }
         catch (stopError) { error.message += ` Cleanup also failed: ${stopError.message}`; }
       }
       throw error;
@@ -156,12 +164,12 @@ export function createCodespaceManager({
     }
   }
 
-  async function cleanupIfOwned(codespaceName, owned) {
+  async function cleanupIfOwned(codespaceName, owned, identityToken) {
     if (!owned) return { stopped: false, error: null };
     try {
-      const current = await gh.getCodespace(codespaceName);
+      const current = await gh.getCodespace(codespaceName, identityOptions(identityToken));
       if (!isAvailable(current.state)) return { stopped: false, error: null };
-      await gh.stopCodespace(codespaceName);
+      await gh.stopCodespace(codespaceName, identityOptions(identityToken));
       return { stopped: true, error: null };
     } catch (error) {
       return { stopped: false, error: error.message };
@@ -218,10 +226,11 @@ export function createCodespaceManager({
 
     async startCodespace(name) {
       validateCodespaceName(name);
-      const current = await gh.getCodespace(name);
+      const identityToken = await pinIdentity();
+      const current = await gh.getCodespace(name, identityOptions(identityToken));
       if (!isAvailable(current.state)) {
-        await gh.startCodespace(name);
-        return waitUntilAvailable(name);
+        await gh.startCodespace(name, identityOptions(identityToken));
+        return waitUntilAvailable(name, identityToken);
       }
       return current;
     },
@@ -273,18 +282,19 @@ export function createCodespaceManager({
         : validated.command;
       const key = `${context.repository.toLowerCase()}\0${context.branch}`;
       return lock(key, async () => {
-        const resource = await ensureAvailable(context);
+        const identityToken = await pinIdentity();
+        const resource = await ensureAvailable(context, identityToken);
         let result;
         let runError;
         try {
           result = await runCommand(
             { codespaceName: resource.codespace.name, command: remoteCommand, timeoutMs: validated.timeoutMs, input: localSnapshot?.patch },
-            { onOutput }
+            { onOutput, ...identityOptions(identityToken) }
           );
         } catch (error) {
           runError = error;
         }
-        const cleanup = await cleanupIfOwned(resource.codespace.name, resource.created || resource.started);
+        const cleanup = await cleanupIfOwned(resource.codespace.name, resource.created || resource.started, identityToken);
         if (runError) {
           if (cleanup.error) runError.message += ` Cleanup also failed: ${cleanup.error}`;
           throw runError;

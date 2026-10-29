@@ -254,6 +254,28 @@ test('executes the remote setup locally to prove patch application and cleanup o
   }
 });
 
+test('rejects remotes whose hostname only contains github.com before applying local changes', async () => {
+  const root = await makeRepo();
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'codespaces mcp workspaces '));
+  const remoteRepo = join(workspaceRoot, 'hello-world');
+  try {
+    const head = git(root, ['rev-parse', 'HEAD']);
+    execFileSync('git', ['clone', '-q', root, remoteRepo], { stdio: 'ignore' });
+    git(remoteRepo, ['remote', 'set-url', 'origin', 'https://evilgithub.com/octocat/hello-world.git']);
+    const script = buildRemoteWorktreeCommand({
+      repository: 'octocat/hello-world', head, command: "printf 'should not run\\n'", workspaceRoot
+    });
+    const result = spawnSync('bash', ['-c', script], { cwd: remoteRepo, encoding: 'utf8' });
+    assert.equal(result.status, 44);
+    assert.match(result.stderr, /Could not find the matching repository/);
+    assert.equal(result.stdout, '');
+    assert.equal(git(remoteRepo, ['worktree', 'list', '--porcelain']).split('worktree ').length - 1, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('rejects malformed repo, commit id, and run id before building remote command', () => {
   const args = { repository: 'owner/repo;touch /tmp/x', head: 'a'.repeat(40), command: 'true' };
   assert.throws(() => buildRemoteWorktreeCommand(args), /owner\/repository/);

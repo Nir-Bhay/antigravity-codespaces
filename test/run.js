@@ -3,6 +3,7 @@
  * Run: npm test
  */
 const assert = require('assert');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -52,6 +53,34 @@ function ok(name, fn) {
         assert.ok(ovsxWorkflow.includes("    if: startsWith(github.ref, 'refs/tags/v')\n"), 'Open VSX publishing is gated to version tags only');
         assert.doesNotMatch(ovsxWorkflow, /github.event_name\s*==\s*'workflow_dispatch'/, 'manual dispatch cannot bypass the version-tag gate');
         assert.ok(ovsxWorkflow.includes('    environment: production-release'), 'Open VSX publishing requires the protected release environment');
+    });
+
+    await ok('Open VSX installs MCP test dependencies before running the full suite', () => {
+        const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'open-vsx-publish.yml'), 'utf8');
+        const install = workflow.indexOf('run: npm ci --prefix mcp-server');
+        const tests = workflow.indexOf('run: npm test');
+        assert.ok(install >= 0 && tests > install, 'MCP dependencies must be installed before the root test script runs');
+    });
+
+    await ok('release workflows reject tags that do not match package version', () => {
+        const packageVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+        const script = path.join(ROOT, 'scripts', 'check-release-tag.js');
+        for (const relativePath of ['.github/workflows/build-and-release.yml', '.github/workflows/open-vsx-publish.yml']) {
+            const workflow = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+            assert.ok(workflow.includes('node scripts/check-release-tag.js "$GITHUB_REF_NAME"'), `${relativePath} must validate its release tag`);
+        }
+        const matching = spawnSync(process.execPath, [script, `v${packageVersion}`], { encoding: 'utf8' });
+        assert.strictEqual(matching.status, 0, matching.stderr);
+        const mismatching = spawnSync(process.execPath, [script, `v${packageVersion}-wrong`], { encoding: 'utf8' });
+        assert.notStrictEqual(mismatching.status, 0, 'a mismatched tag must fail');
+        assert.match(mismatching.stderr, /does not match package version/);
+    });
+
+    await ok('VSIX excludes local session artifacts, nested checkouts, and workspace masks', () => {
+        const ignore = fs.readFileSync(path.join(ROOT, '.vscodeignore'), 'utf8').split(/\r?\n/);
+        for (const pattern of ['.artifacts/**', 'antigravity-codespaces/**', '.bash_profile', '.bashrc', '.claude/**', '.gitconfig', '.gitmodules', '.idea/**', '.mcp.json', '.profile', '.ripgreprc', '.vscode', '.zprofile', '.zshrc']) {
+            assert.ok(ignore.includes(pattern), `VSIX ignore rules must include ${pattern}`);
+        }
     });
 
     await ok('Open VSX publisher is integrity-pinned before the publishing secret is injected', () => {
@@ -1819,14 +1848,34 @@ function ok(name, fn) {
         const tier4 = src.slice(src.indexOf('errorUx.connectFailure('), src.indexOf('errorUx.connectFailure(') + 400);
         assert.ok(/dashboardProvider\.refreshHtml\(\)/.test(tier4), 'views refresh so the card shows Available again');
     });
-    await ok('reconnect: start failure shows the real reason and skips SSH', () => {
+    await ok('reconnect revalidates the saved target and confirms before starting a stopped Codespace', () => {
         const nf = new Error('HTTP 404: Not Found');
         assert.match(eux.startFailure('cs-1', nf).why, /no longer exists/);
         assert.match(eux.startFailure('cs-1', new Error('HTTP 402 spending limit')).why, /quota or spending limit/);
         const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
-        const rc = src.slice(src.indexOf("'antigravity-codespaces.reconnectLast'"), src.indexOf("'antigravity-codespaces.reconnectLast'") + 2200);
-        assert.ok(!rc.includes('.catch(() => {})'));
-        assert.ok(rc.indexOf('if (startErr)') > 0 && rc.indexOf('return;', rc.indexOf('if (startErr)')) < rc.indexOf("'antigravity-codespaces.connect'"));
+        const reconnectStart = src.indexOf("registerCommand('antigravity-codespaces.reconnectLast'");
+        const reconnectEnd = src.indexOf('// ── Command: Sync All SSH Configs', reconnectStart);
+        const reconnect = src.slice(reconnectStart, reconnectEnd);
+        const connectStart = src.indexOf("registerCommand('antigravity-codespaces.connect'");
+        const connectEnd = src.indexOf('// ── Command: Start', connectStart);
+        const connect = src.slice(connectStart, connectEnd);
+        assert.ok(reconnect.includes("executeCommand('antigravity-codespaces.connect'"), 'reconnect delegates to the guarded Connect flow');
+        assert.doesNotMatch(reconnect, /githubApi\.startCodespace/, 'reconnect must not bypass Connect\'s cost confirmation');
+        const freshCheck = connect.indexOf('getFreshCodespaceTarget({ ...cs, account })');
+        const confirm = connect.indexOf('confirmLifecycle(startConfirmationText(fresh)');
+        const wakeCheck = connect.indexOf('getFreshCodespaceTarget(cs)', confirm);
+        const startCall = connect.indexOf('githubApi.startCodespace(wakeTarget.name, account)');
+        assert.ok(freshCheck >= 0 && confirm > freshCheck && wakeCheck > confirm && startCall > wakeCheck, 'Connect revalidates and confirms before waking a stopped target');
+        assert.ok(!reconnect.includes('.catch(() => {})'));
+    });
+    await ok('Stop confirmation reports a request rather than claiming shutdown is complete', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const start = src.indexOf("registerCommand('antigravity-codespaces.stop'");
+        const end = src.indexOf('// ── Command: Rebuild', start);
+        const stop = src.slice(start, end);
+        assert.match(stop, /Stop requested for/);
+        assert.match(stop, /may take a moment to finish stopping/);
+        assert.doesNotMatch(stop, /Compute has stopped/);
     });
     await ok('no empty catch blocks in extension.js / dashboardProvider.js; metadata failure is logged (silent)', () => {
         const ext = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
@@ -1872,6 +1921,20 @@ function ok(name, fn) {
             const src = fs.readFileSync(path.join(ROOT, 'src', 'dashboardProvider.js'), 'utf8');
             assert.match(src, /btn-spin.*Connecting…/);
             assert.ok(src.includes('errorUx.skeletonHtml(3)'));
+            for (const titleId of ['wizardTitle', 'rebuildDialogTitle', 'deleteDialogTitle']) {
+                assert.ok(out.includes(`aria-labelledby="${titleId}"`), `${titleId} labels its modal dialog`);
+            }
+            assert.equal((out.match(/role="dialog" aria-modal="true"/g) || []).length, 3, 'all dashboard dialogs are modal and labelled');
+            assert.match(out, /id="optStandardRebuild" role="button" tabindex="0"/);
+            assert.match(out, /id="optFullRebuild" role="button" tabindex="0"/);
+            assert.match(src, /function openAccessibleDialog/);
+            assert.match(src, /function closeAccessibleDialog/);
+            assert.match(src, /event\.shiftKey \? last : first/);
+            assert.match(src, /if \(event\.shiftKey && document\.activeElement === first\)/);
+            assert.match(src, /containDialogFocus\(e, openDialog\)/);
+            assert.match(src, /event\.key === 'Enter' \|\| event\.key === ' '/);
+            assert.match(src, /if \(opener\?\.isConnected && !opener\.disabled\) opener\.focus/);
+            assert.match(fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8'), /Cloud Hub creation wizard instead shows a success toast and closes/);
         const SD = require(path.join(ROOT, 'src', 'systemDoctor.js'));
             const w = (SD.SystemDoctor || SD).detectRemoteSsh(['codeium.windsurf-remote-openssh'], 'Windsurf');
             assert.strictEqual(w.has, true); assert.strictEqual(w.id, 'codeium.windsurf-remote-openssh');
