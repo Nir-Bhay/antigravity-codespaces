@@ -27,6 +27,8 @@
 
 Entries labeled *Community-reported* are not in official docs. Feedback and PRs are welcome.
 
+**Verification status:** CI currently launches a clean VS Code Stable Extension Development Host and checks activation plus selected command handlers. It does not test Remote-SSH or a live Codespace. No editor/provider combination in this table should be treated as end-to-end verified until it has been tested with a named editor and provider version; use the [live smoke-test checklist](LIVE_SMOKE_TEST.md) to record results.
+
 Setup Doctor recognizes these Remote-SSH IDs: `jeanp413.open-remote-ssh`, `ms-vscode-remote.remote-ssh`, `vsx-remote-ssh.vsx-remote-ssh` and `anysphere.remote-ssh`, plus any installed extension whose ID contains `remote-ssh`. If none is found, its one-click fix installs `jeanp413.open-remote-ssh`.
 
 ---

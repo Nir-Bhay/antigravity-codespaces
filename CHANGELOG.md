@@ -18,6 +18,11 @@ Changes under **Unreleased** are merged into `main` but are not necessarily pres
 ### Changed
 - MCP setup and reference guides clarify the preview ID, expiration, drift rejection, and exact patch transferred.
 - Marketplace metadata and setup guides use version-neutral release instructions and include MCP search terms without promising unverified publication or editor compatibility.
+- README discovery now prioritizes installation and user tasks; detailed release history remains in this changelog. Removed the static rating badge and replaced a broad keyword with a direct Codespaces usage term.
+- Added audience-focused guides for the MCP agent workflow and Codespaces cost/lifecycle effects, plus reviewed Marketplace copy and a manual release/verification checklist.
+
+### Tests
+- Added an isolated VS Code Extension Development Host smoke test for activation and selected command handlers; it does not claim live service or cross-editor verification.
 
 ## [5.3.2] - 2026-10-21
 

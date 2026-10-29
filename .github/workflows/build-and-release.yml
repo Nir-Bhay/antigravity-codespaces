@@ -32,11 +32,17 @@ jobs:
       - name: Validate Extension Syntax
         run: node -c extension.js
 
+      - name: Install Root Test Dependencies
+        run: npm ci --ignore-scripts
+
       - name: Install MCP Server Dependencies
         run: npm ci --prefix mcp-server
 
       - name: Run Unit Tests
         run: npm test
+
+      - name: Run VS Code Extension Host Smoke Test
+        run: xvfb-run -a npm run test:extension-host
 
       - name: Package Extension (VSIX)
         run: npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license

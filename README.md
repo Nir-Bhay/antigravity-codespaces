@@ -6,11 +6,10 @@
 
 ### Manage GitHub Codespaces from VS Code-based editors and coding agents
 
-Browse and connect to Codespaces over SSH, manage their lifecycle, inspect GitHub-reported usage, or optionally run remote commands through a separate MCP server. Editor compatibility and live service behavior depend on your setup; see the [compatibility notes](docs/IDE_SETUP.md) and [verification boundaries](#support-and-verification-boundaries).
+Browse and connect to GitHub Codespaces over SSH, manage their lifecycle, and review GitHub-reported usage from Antigravity, Cursor, Windsurf, and VS Code-based editors. For coding agents, an optional separate Model Context Protocol (MCP) server can run remote commands. Editor compatibility and live service behavior depend on your setup; see the [compatibility notes](docs/IDE_SETUP.md) and [verification boundaries](#support-and-verification-boundaries).
 
 [![Version](https://img.shields.io/open-vsx/v/nirbhay-hiwse/antigravity-codespaces?style=for-the-badge&logo=eclipse&color=A855F7&label=Open%20VSX)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
 [![Downloads](https://img.shields.io/open-vsx/dt/nirbhay-hiwse/antigravity-codespaces?style=for-the-badge&color=22C55E&label=Downloads)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
-[![Rating](https://img.shields.io/badge/Rating-★★★★★%20(5.0)-F59E0B?style=for-the-badge)](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces)
 [![Tests](https://img.shields.io/github/actions/workflow/status/Nir-Bhay/antigravity-codespaces/build-and-release.yml?style=for-the-badge&logo=github&label=Tests)](https://github.com/Nir-Bhay/antigravity-codespaces/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
@@ -24,7 +23,7 @@ Browse and connect to Codespaces over SSH, manage their lifecycle, inspect GitHu
 
 - **Install and connect from an editor:** follow the [Quickstart](#quickstart-guide), then use the [sidebar and Setup Doctor guide](#connect-setup-doctor-and-the-sidebar).
 - **Understand quota data:** read [Usage analytics](#usage-analytics) for permissions, freshness, and reported-vs-derived values.
-- **Use an AI/MCP client:** the MCP server is **optional and separate** from the editor extension. Start with the [MCP setup guide](mcp-server/SETUP.md); the [MCP reference](mcp-server/README.md) lists its tools and limits. It runs as a Node.js stdio process and uses the active `gh` account, not extension sign-in.
+- **Run commands from an AI agent:** the optional MCP server is **separate** from the editor extension. Start with the [Codespaces MCP workflow guide](docs/MCP_CODESPACES_AGENT_GUIDE.md), then follow the [MCP client setup guide](mcp-server/SETUP.md). The [MCP reference](mcp-server/README.md) lists tools and limits. It runs as a Node.js stdio process and uses the active `gh` account, not extension sign-in.
 - **Check editor support:** see the [compatibility matrix](#editor-compatibility) and [IDE-specific setup guide](docs/IDE_SETUP.md); marketplace availability does not prove end-to-end behavior.
 
 ### Pick the surface for your task
@@ -34,55 +33,16 @@ Browse and connect to Codespaces over SSH, manage their lifecycle, inspect GitHu
 | Browse, create, start, stop, or connect to a Codespace | **Codespaces** activity-bar icon and sidebar; use **Open Cloud Hub Dashboard** for the full view | Extension sign-in for account browsing; GitHub CLI and compatible Remote-SSH for SSH actions |
 | Jump to a known workspace | **Quick Connect to Codespace...** or `Alt+C` | Available Codespaces across the accounts configured in the extension |
 | Diagnose first-run SSH/editor setup | **Codespaces: Setup Doctor** from the Command Palette | Local `gh`, OpenSSH, Remote-SSH provider, scopes, and editor settings |
-| Review quota and billing usage | Cloud Hub **Usage** page or the sidebar usage line | GitHub billing API; data updates hourly and `user` permission may be requested |
-| Run remote commands from an AI agent | Configure the standalone [MCP server](mcp-server/README.md) in your MCP client | Node.js 20+, active `gh` CLI account, and Codespaces access; provisioning may incur charges |
+| Review quota and billing usage | Cloud Hub **Usage** page or the sidebar usage line; read the [Codespaces cost guide](docs/CODESPACES_COST_GUIDE.md) | GitHub billing API; data updates hourly and optional `user` permission may be requested |
+| Run remote commands from an AI agent | Follow the [Codespaces MCP workflow guide](docs/MCP_CODESPACES_AGENT_GUIDE.md) and [client setup](mcp-server/SETUP.md) | Node.js 20+, active `gh` CLI account, and Codespaces access; provisioning may incur charges |
 
 The extension and MCP server are related but do **not** share sign-in state: installing the extension does not configure an MCP client, and MCP uses the CLI account on the machine running the server.
 
-## What's new in 5.3.2
+## Release status
 
-5.3.1 and 5.3.2 make errors clear and consistent:
+The latest **installable** version is shown on [GitHub Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) and the [Open VSX listing](https://open-vsx.org/extension/nirbhay-hiwse/antigravity-codespaces). A successful CI build or VSIX artifact is not a publication. Changes documented as **Unreleased** in the [changelog](CHANGELOG.md) are not necessarily present in either registry; check the exact release version before installing.
 
-- **Clear errors.** Every GitHub request times out after 15s. Server errors are retried once. Each error shows what happened and a next step, such as [Retry], [Sign in again] or [Run Setup Doctor]. A slow GitHub is a Warning, not an Error.
-- **Cached data stays usable.** If a refresh fails, the sidebar and Cloud Hub keep the last list ("Showing data as of <time>"). Cached cards are tagged and their actions are disabled until a refresh succeeds.
-- **One rate-limit message:** "GitHub API rate limit reached. Resets at HH:MM."
-- **gh missing:** the sidebar shows one card with [Install GitHub CLI] and a personal-access-token option.
-- See the [CHANGELOG](CHANGELOG.md) for the full list.
-
-## Changes on main after 5.3.2 (not yet published)
-
-The latest `main` branch includes the following merged work, but a successful build is not a release. Check the [latest GitHub Release](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) and the registries for the version actually available to install.
-
-- **Codespaces lifecycle and cost safety:** status is treated conservatively when it is transitioning or unknown; lifecycle actions re-fetch and confirm the selected target before acting. Compute and storage are described separately, and usage remains GitHub-reported rather than real-time per-Codespace pricing.
-- **Safer MCP local-change sync:** `preview_local_changes` issues a single-use ID that expires after 10 minutes. Sync requires that reviewed ID and is rejected if the repository context or patch changed; only the reviewed patch is sent. See the [MCP setup guide](mcp-server/SETUP.md).
-
-## What's new in 5.3.0
-
-- **Deeper usage analytics:** month switcher and month-over-month comparison, a forecast ("~X / quota by reset · won't run out" or "runs out ~date"), hours left per machine size, daily compute chart with hover hours and $, cumulative vs pace, storage sparkline, and an expandable, filterable per-repo table with CSV/JSON export.
-- **Settings:** usage alert thresholds (75/90% by default), refresh interval, sidebar line on/off, preferred unit (core-hours or $).
-- **Docs:** [multi-IDE setup guide](docs/IDE_SETUP.md) and a copy-paste [agent setup prompt](AGENT_SETUP.md).
-- All figures come from GitHub's billing API; derived values are labelled.
-
-## What's new in 5.2.0
-
-**5.2.0** adds **Codespaces usage analytics** that use GitHub's own billing numbers.
-
-- **Cloud Hub usage card.** A full-width card above the stats shows separate **Compute** (core-hours) and **Storage** (GB-month) bars for the active account, each with the dollar value used out of the included quota. It also shows hours left, days left at your current pace, and a billing line (consumed / included discount / billable).
-- **Usage page.** A new **Usage** item in the Cloud Hub left rail has tiles, a daily chart with an ideal-pace line, and a sortable per-repository table (core-hours, storage, share, amount).
-- **Sidebar usage line.** One compact line under the account picker opens the Usage page.
-- **No estimates.** Every number comes from the GitHub billing API. If it can't be read, you see the reason and the fix command instead of guessed figures. See [Usage analytics](#usage-analytics).
-
-## What's new in 5.1.0
-
-**5.1.0** is the first-run and connect release. SSH into a Codespace still goes through the GitHub CLI, and the extension now checks that path before it opens a window.
-
-- **First-run prerequisites.** Install the `gh` CLI, sign in with `gh auth login`, grant the Codespaces permission with `gh auth refresh -h github.com -s codespace`, and install a Remote-SSH extension.
-- **Connect pre-checks.** **Connect**, **Quick Connect to Codespace...**, and **Test SSH Connectivity** stop on four `gh` states — CLI missing, signed out, missing `codespace` scope, wrong account — and offer a one-click fix.
-- **Codespaces: Setup Doctor.** One panel checks the CLI, OpenSSH, Remote-SSH, the `codespace` scope, the active account, and `remote.SSH.remotePlatform`. **Copy Diagnostic Report** redacts tokens before they reach the clipboard.
-- **Sidebar `gh` status and welcome card.** The Codespaces view shows live `gh` status with a Fix action, and a three-step Get Started card until the CLI is ready.
-- **Connect progress and the real folder.** A four-step notification covers the CLI check, SSH config, container wake, and open. The window opens the Codespace's recent folder when GitHub reports one.
-- **Connect Now and Reconnect to Last Codespace.** In the command-palette creation flow, choose **Connect Now** after creation. The Cloud Hub wizard closes after creating; connect from the refreshed Codespace card. Later, run **Reconnect to Last Codespace**; a stopped Codespace is checked and confirmed before it starts.
-- **Host keys and SSH logs.** Generated blocks use `StrictHostKeyChecking accept-new`, an extension-managed `~/.antigravity-codespaces/known_hosts` file, and `LogLevel ERROR`. Change them with `antigravity-codespaces.strictHostKeyChecking` (default `accept-new`) and `antigravity-codespaces.sshLogLevel` (default `error`).
+For the full version history, see the [changelog](CHANGELOG.md). Use the [Codespaces cost guide](docs/CODESPACES_COST_GUIDE.md) for compute/storage billing and lifecycle effects, and the [MCP workflow guide](docs/MCP_CODESPACES_AGENT_GUIDE.md) for remote agent commands and safe local-change sync.
 
 ---
 
@@ -121,7 +81,7 @@ The extension can browse Codespaces across multiple accounts configured in its a
 The extension manages marked Codespaces entries in `~/.ssh/config` and can set configurable `ServerAliveInterval` and `ServerAliveCountMax` keepalive values. These may reduce idle tunnel disconnects, but cannot guarantee that a network, editor, or remote agent session stays connected indefinitely. Host-key verification defaults to `accept-new`; see [SSH security details](#architecture--security).
 
 ### Cloud Hub and Codespaces lifecycle
-Use the in-editor Cloud Hub to browse, filter, create, start, stop, rebuild, or remove Codespaces with target-specific confirmation. Status and machine details come from GitHub and may be unavailable or transitional; the extension avoids treating an unknown or transitioning state as stopped. Review GitHub's compute and storage billing separately before starting or keeping Codespaces.
+Use the in-editor Cloud Hub to browse, filter, create, start, stop, rebuild, or remove Codespaces with target-specific confirmation. Status and machine details come from GitHub and may be unavailable or transitional; the extension avoids treating an unknown or transitioning state as stopped. Starting uses compute; stopped Codespaces can still use storage. Review the [Codespaces cost guide](docs/CODESPACES_COST_GUIDE.md) and GitHub billing before lifecycle actions.
 
 ### SSH diagnostics and forwarded ports
 Setup Doctor checks local prerequisites and `Test SSH Connectivity` measures a tunnel probe for a selected Codespace. The sidebar and Cloud Hub can display forwarded port information returned by GitHub. A successful probe or listed port is not a guarantee that every editor can open the remote window or service.
@@ -134,7 +94,7 @@ Setup Doctor checks local prerequisites and `Test SSH Connectivity` measures a t
 1. Open Cursor and press `Ctrl+Shift+X` (or `Cmd+Shift+X` on macOS).
 2. Search for **`Antigravity Codespaces Pro`** (or **`Codespaces`**).
 3. Click **Install**.
-4. Click the Cloud icon in the Activity Bar or press `Alt+C` to connect to your Codespaces instantly.
+4. Open the Codespaces view or press `Alt+C` to search for and connect to an available Codespace.
 
 ### For other compatible editors
 1. Search for **Antigravity Codespaces Pro** in the editor's extension view, or download the latest `.vsix` from [GitHub Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest).
@@ -268,19 +228,22 @@ Any other failure shows **Usage unavailable** with the reason. This includes an 
 
 The repository also contains a standalone Node.js stdio MCP server. It is separate from the editor extension and authenticates through the active GitHub CLI account on the machine running the MCP process; it does not reuse the extension's SecretStorage sign-in.
 
-The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse, start, or create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. See the [MCP setup guide](mcp-server/SETUP.md) for copyable client configuration, read-only preflight, and the safe sync workflow; see the [MCP server reference](mcp-server/README.md) for the full tool list and limits.
+The server can run commands in a named existing Codespace, or detect the current local GitHub repository and branch, then reuse, start, or create an exact-match Codespace for a command. It also exposes list/status/start/stop/log/port tools. There is deliberately no delete tool. Start with the [Codespaces MCP workflow guide](docs/MCP_CODESPACES_AGENT_GUIDE.md), then use the [MCP setup guide](mcp-server/SETUP.md) for configuration and the [MCP server reference](mcp-server/README.md) for the full tool list and limits.
 
 **Review these effects before enabling it:** starting or creating a Codespace can incur compute charges; a stopped Codespace can continue to incur storage charges. Repository local-change sync is opt-in and may send staged/unstaged tracked files plus non-ignored untracked files (up to 5 MiB) to a temporary remote worktree. First review `preview_local_changes`; its ID is single-use, expires after 10 minutes, and sync is rejected if the repository context or patch changes. Inspect `git status` before approving. The server redacts common credential patterns from output, but cannot reliably identify arbitrary secrets; do not run commands that print secrets. Automated tests use mocked GitHub CLI operations, so live API, billing, SSH, and client interoperability still need a controlled manual test.
 
 ### Run tests locally
 
 ```bash
-npm test                 # Extension and MCP unit tests
-npm run check            # Extension syntax check
+npm ci --ignore-scripts
+npm ci --prefix mcp-server
+npm test                          # Extension and MCP unit tests
+npm run check                     # Extension syntax check
+npm run test:extension-host       # VS Code host activation smoke test
 node --check mcp-server/index.mjs
 ```
 
-The MCP server requires Node.js 20 or later. For the extension's editor requirements and first-run GitHub CLI setup, see [Quickstart](#quickstart-guide) and [IDE setup](docs/IDE_SETUP.md).
+On headless Linux, run the host test with `xvfb-run -a npm run test:extension-host`. It downloads and launches a clean VS Code stable host; it does not test live GitHub/Codespaces behavior or other editors. The MCP server requires Node.js 20 or later. For first-run GitHub CLI setup, see [Quickstart](#quickstart-guide) and [IDE setup](docs/IDE_SETUP.md).
 
 ---
 
@@ -418,15 +381,19 @@ GitHub Codespaces SSH is mediated by the GitHub CLI. The extension manages a mar
 The extension supports multiple accounts in its account picker, subject to the authentication method and permissions configured for each one. SSH uses the active GitHub CLI account, which is separate from the extension's account selection. The optional MCP server also uses the active `gh` account on the machine that launches it.
 
 ### How does this support AI-agent workflows?
-The extension can configure SSH keepalive settings that may reduce idle disconnects while an editor agent works in a remote Codespace; this is best-effort, not a guarantee against network or editor timeouts. For AI clients that need to run commands in Codespaces, configure the separate [MCP server](mcp-server/SETUP.md). Review its cost and local-change preview behavior before opting into sync.
+The extension can configure SSH keepalive settings that may reduce idle disconnects while an editor agent works in a remote Codespace; this is best-effort, not a guarantee against network or editor timeouts. For an MCP client that needs to run commands in Codespaces, follow the separate [MCP workflow guide](docs/MCP_CODESPACES_AGENT_GUIDE.md) and review the [cost guide](docs/CODESPACES_COST_GUIDE.md) before opting into local-change sync.
 
 ---
 
 ## Guides and project direction
 
-- [IDE setup guide](docs/IDE_SETUP.md) — editor-specific installation, Remote-SSH requirements, and troubleshooting.
+- [IDE setup guide](docs/IDE_SETUP.md) — editor-specific installation, Remote-SSH requirements, and verification limits.
+- [Codespaces MCP workflow guide](docs/MCP_CODESPACES_AGENT_GUIDE.md) — agent command workflow, identity, reviewed sync, cleanup, and cost boundaries.
 - [MCP setup guide](mcp-server/SETUP.md) — client configuration examples, read-only preflight, safe sync preview, and first-run steps.
 - [MCP server reference](mcp-server/README.md) — tools, local-change sync, security, cost, and verification boundaries.
+- [Codespaces billing and lifecycle guide](docs/CODESPACES_COST_GUIDE.md) — compute versus storage, usage freshness, and safer lifecycle decisions.
+- [Live smoke-test checklist](docs/LIVE_SMOKE_TEST.md) — opt-in verification with a disposable Codespace and exact client versions.
+- [Marketplace copy proposal](docs/MARKETPLACE_COPY.md) — accurate listing text and the external-publishing checklist.
 - [Agent setup prompt](AGENT_SETUP.md) — guided setup checklist for an IDE agent.
 - [Cursor walkthrough](docs/CURSOR_IDE_CODESPACES_GUIDE.md) — Cursor-focused connection guidance.
 - [KeepAlive guide](docs/AI_AGENT_KEEP_ALIVE_GUIDE.md) — SSH keepalive behavior and configuration.

@@ -1,7 +1,7 @@
 {
   "name": "antigravity-codespaces",
   "displayName": "Antigravity Codespaces Pro",
-  "description": "Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code; connect over SSH, view usage, or run commands with optional MCP.",
+  "description": "Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code-based editors. Connect over SSH, review GitHub-reported usage, or run remote commands with the optional MCP server.",
   "version": "5.3.2",
   "publisher": "nirbhay-hiwse",
   "author": {
@@ -40,7 +40,7 @@
     "cloud-dev",
     "ai-agent",
     "ssh-keepalive",
-    "websocket-keepalive",
+    "codespaces-usage",
     "port-forwarding",
     "workspace-manager",
     "developer-tools",
@@ -63,7 +63,8 @@
   "icon": "icon.png",
   "scripts": {
     "test": "node test/run.js && npm --prefix mcp-server test",
-    "check": "node -c extension.js"
+    "check": "node -c extension.js",
+    "test:extension-host": "node scripts/test-extension-host.js"
   },
   "activationEvents": [
     "onStartupFinished",
@@ -329,6 +330,7 @@
     }
   },
   "devDependencies": {
+    "@vscode/test-electron": "3.1.0",
     "ovsx": "1.2.0"
   }
 }

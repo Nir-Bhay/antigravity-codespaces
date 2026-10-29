@@ -1,111 +1,79 @@
-# Complete Guide: Connecting Cursor IDE to GitHub Codespaces (2026 Edition)
+# Connect Cursor to GitHub Codespaces over SSH
 
-> **Goal:** Run your cloud devcontainers inside **Cursor IDE** with full multi-account management, zero password prompts, and persistent SSH tunnels for **Cursor Agent**.
+Use Antigravity Codespaces Pro to browse GitHub Codespaces and open a selected workspace from Cursor through SSH. The extension uses Cursor's available Remote-SSH integration; exact behavior depends on the Cursor release and installed provider. This guide avoids assuming that marketplace availability proves connection compatibility.
 
----
+For setup across other editors, see the [multi-IDE setup guide](IDE_SETUP.md). To run a remote command from an AI client rather than open an SSH workspace, use the separate [Codespaces MCP workflow guide](MCP_CODESPACES_AGENT_GUIDE.md).
 
-> **Other editors:** setup for Antigravity, VS Code, Windsurf, VSCodium, Trae and more, plus OS notes and troubleshooting, is in the [multi-IDE setup guide](IDE_SETUP.md). To have Cursor's agent configure everything for you, use the [agent setup prompt](../AGENT_SETUP.md).
+## Requirements
 
-## 1. The Situation with Cursor IDE & Codespaces
+- Cursor installed on your local computer.
+- GitHub CLI (`gh`) and OpenSSH available on that computer.
+- The `codespace` scope on the active GitHub CLI account.
+- Cursor's Remote-SSH provider available in your Cursor version.
+- Antigravity Codespaces Pro installed from Cursor's extension view or as a VSIX.
 
-Cursor is an AI-first code editor built as a fork of VS Code. However, there is a fundamental difference in how extensions are distributed:
+Check the installed version in Cursor's Extensions panel. If the gallery is behind, verify the exact version and asset name on [GitHub Releases](https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest) before installing a VSIX.
 
-1. **Cursor uses the Open VSX Registry** by default, rather than Microsoft's proprietary Visual Studio Marketplace.
-2. **Microsoft's official GitHub Codespaces extension is closed-source and proprietary.** It is licensed solely for official Microsoft VS Code builds and is completely unavailable on Open VSX.
-3. Because of this restriction, Cursor developers searching for a native way to manage and launch Codespaces had to rely on manual terminal commands, broken SSH configs, or third-party wrappers that crash on multi-account logins.
+## 1. Sign in to GitHub CLI
 
-**Antigravity Codespaces Pro** bridges this gap directly. It delivers a native UI, Bento Grid dashboard, fuzzy-search launcher, and automatic SSH tunneling built specifically for Open VSX and modern AI editors.
+The editor extension's GitHub sign-in and GitHub CLI sign-in are separate. The CLI identity is used for the SSH proxy and optional MCP server.
 
----
-
-## 2. Step-by-Step Setup in Cursor IDE
-
-### Step 1: Install Antigravity Codespaces Pro from Open VSX
-1. Open Cursor IDE.
-2. Press `Ctrl+Shift+X` (Windows/Linux) or `Cmd+Shift+X` (macOS) to open the **Extensions** panel.
-3. Search for:
-   ```
-   Antigravity Codespaces Pro
-   ```
-   *(Or simply search `Codespaces`)*
-4. Click **Install**.
-
-Alternatively, install via the Cursor terminal:
 ```bash
-cursor --install-extension nirbhay-hiwse.antigravity-codespaces
+gh auth status --hostname github.com
 ```
 
-### Step 2: Ensure GitHub CLI (`gh`) is Installed
-The extension uses the official GitHub CLI to establish secure SSH proxy tunnels without exposing private keys.
+If needed, sign in and grant Codespaces access:
 
-- **Windows:**
-  ```powershell
-  winget install --id GitHub.cli
-  ```
-- **macOS:**
-  ```bash
-  brew install gh
-  ```
-- **Linux (Debian/Ubuntu):**
-  ```bash
-  sudo apt update && sudo apt install gh
-  ```
-
-### Step 3: Authenticate GitHub CLI
-Run:
 ```bash
-gh auth login -s codespace
+gh auth login -h github.com -s codespace
 ```
-Make sure to request the `codespace` scope during authentication. If you already logged in previously without this scope, refresh it:
+
+For an existing CLI session missing that permission:
+
 ```bash
 gh auth refresh -h github.com -s codespace
 ```
 
----
+Do not paste or share CLI token output. Confirm that the active CLI account owns or can access the intended Codespace.
 
-## 3. Connecting to a Codespace in Cursor
+## 2. Install the extension and SSH provider
 
-You have three fast ways to connect:
+1. Open Cursor's Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`).
+2. Search for **Antigravity Codespaces Pro** and install it, or install the verified VSIX through Cursor's **Install from VSIX** command.
+3. Confirm a compatible Remote-SSH provider is available. Cursor commonly bundles `anysphere.remote-ssh`; provider availability and command APIs vary by release.
+4. Reload Cursor after installation if the Codespaces view is not visible.
 
-### Method A: Quick Connect Launcher (`Alt+C`) — Fastest
-1. Press `Alt+C` anywhere inside Cursor.
-2. A fuzzy-search menu displays all your available Codespaces across all authenticated GitHub accounts.
-3. Select your desired Codespace and press **Enter**.
-4. Cursor connects directly to the remote container in a dedicated window.
+## 3. Run Setup Doctor and connect
 
-### Method B: Activity Bar Sidebar
-1. Click the **Cloud** icon in Cursor's Activity Bar (left sidebar).
-2. Browse your Codespaces with real-time status indicators (Online vs. Stopped), active branch, and forwarded ports.
-3. Click the **Connect** button on any container card.
+1. Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
+2. Run **Codespaces: Setup Doctor** and address missing CLI, OpenSSH, scope, or Remote-SSH checks.
+3. Use the Codespaces activity-bar view or run **Quick Connect to Codespace...** (`Alt+C`).
+4. Confirm the account and Codespace target, then connect. The extension checks status and SSH prerequisites before opening a remote window.
+5. If Cursor cannot open the remote window, use **Copy SSH Command** or the Remote-SSH provider's host picker and follow its current guidance.
 
-### Method C: Cloud Hub Bento Dashboard
-1. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
-2. Type and select: `Antigravity Codespaces: Open Cloud Hub Dashboard`.
-3. View your full Bento Grid with KPI counters, storage tier indicators, account filters, and container lifecycle actions (Start, Stop, Rebuild, Delete).
+A successful list or SSH probe does not prove the provider can open every remote window. Record the exact Cursor and Remote-SSH versions when reporting a failure.
 
----
+## 4. Use Cursor with a remote Codespace
 
-## 4. Supercharging Cursor Agent on Codespaces
+When Cursor is connected to a Codespace, files and terminal commands use the remote environment. This can move some work off the local machine, but local editor processes and network traffic still use local resources. Available CPU, memory, disk, and preinstalled tools depend on the selected Codespace machine and devcontainer.
 
-Running **Cursor Agent** inside a remote GitHub Codespace offers major advantages over local development:
-- **Zero Local Resource Drain:** Heavy indexing, multi-file code generation, and test suites run entirely on high-spec cloud vCPUs and RAM.
-- **Pre-configured Environments:** Devcontainers already have Node.js, Python, Docker, databases, and dependencies installed via `devcontainer.json`.
-- **Persistent AI Agent Tunnels:** Autonomous agents often run for 10 to 30 minutes without keyboard interaction. Antigravity Codespaces Pro injects automated keepalive signals (`ServerAliveInterval 30`, `TCPKeepAlive yes`) so your SSH connection never drops midway through an autonomous agent plan.
+The extension's SSH keepalive settings may reduce disconnects during idle periods. They are best-effort and cannot guarantee a tunnel will remain connected through network, server, or editor failures. See the [keepalive guide](AI_AGENT_KEEP_ALIVE_GUIDE.md) for details and tradeoffs.
 
----
+## 5. Optional MCP command workflow
 
-## 5. Troubleshooting Common Cursor Issues
+The MCP server is not part of the extension install. It is a separate Node.js process started by an MCP-capable client, and it uses the CLI identity on the computer that launches the process. Follow the [MCP setup guide](../mcp-server/SETUP.md) and [agent workflow guide](MCP_CODESPACES_AGENT_GUIDE.md). Review any local-change preview before opting into sync; provisioning can incur charges.
 
-### Q: Why does SSH ask for a password when connecting?
-GitHub Codespace containers only support SSH key authentication; password login is disabled. Antigravity Codespaces Pro automatically maps `IdentityFile ~/.ssh/codespaces.auto`. If you see a password prompt:
-1. Open Cursor's Command Palette (`Ctrl+Shift+P`).
-2. Run **`Antigravity Codespaces: Sync SSH Config`**.
-3. Reconnect.
+## Troubleshooting
 
-### Q: How do I switch between personal and work GitHub accounts?
-Click the account dropdown in the sidebar or run `Antigravity Codespaces: Switch GitHub Account`. Each account's tokens are isolated in your OS keychain via VS Code `SecretStorage`.
+| Symptom | Next check |
+|---|---|
+| Extension does not appear | Reload Cursor and verify the installed extension version in the Extensions panel. If the gallery lacks the version needed, use the versioned GitHub Release VSIX. |
+| Setup Doctor says CLI is missing | Install GitHub CLI for your OS, restart Cursor, and run Setup Doctor again. |
+| CLI account or permission mismatch | Run `gh auth status --hostname github.com`; switch or refresh the CLI sign-in for the intended Codespace. |
+| Remote window does not open | Confirm a Remote-SSH provider is available in this Cursor version, rerun Setup Doctor, then try **Copy SSH Command**. |
+| Host key changed warning | Refresh SSH config and verify the Codespace was intentionally rebuilt or recreated before accepting a new key. |
+| Usage is unavailable | Usage uses GitHub's billing API and may require the optional `user` permission; core Codespaces access is separate. See the [cost guide](CODESPACES_COST_GUIDE.md). |
 
----
+## Verification boundary
 
-## Summary
-With **Antigravity Codespaces Pro**, Cursor IDE gains seamless, multi-account, persistent cloud development capabilities. Install it today from Open VSX and code anywhere.
+The repository's automated Extension Development Host smoke test checks activation and selected commands in VS Code Stable only; it does not exercise Cursor or SSH. Cursor installation and end-to-end connection should be marked **not verified** until tested with a named Cursor version and Remote-SSH provider. Use the [live smoke-test checklist](LIVE_SMOKE_TEST.md) to record evidence without claiming universal support.
