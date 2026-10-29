@@ -117,7 +117,7 @@ The package sets a dark gallery banner (`#1a1a2e`). Keep screenshots and copy le
 ## 6. Extension Listing Copy (for Open VSX / Marketplace)
 
 **Short Description (under 150 characters):**
-> Manage GitHub Codespaces in Antigravity, Cursor, and VS Code-based editors. Connect over SSH, inspect usage, and manage lifecycle actions.
+> Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code; connect over SSH, view usage, or run commands with optional MCP.
 
 **Long Description (for marketplace detail pages):**
 > Antigravity Codespaces Pro is an open-source VS Code extension for browsing GitHub Codespaces across configured accounts, connecting through the GitHub CLI and Remote-SSH, managing Codespace lifecycle actions, and viewing GitHub-reported usage. A separate optional Node.js MCP server lets an MCP client run commands in a named or repository-matched Codespace. MCP uses the active `gh` CLI account, not the extension's sign-in. Starting or creating a Codespace may incur compute charges, and stopped Codespaces may continue to incur storage charges. Editor and MCP-client compatibility must be checked for the specific host/version; marketplace availability alone does not prove integration behavior.
