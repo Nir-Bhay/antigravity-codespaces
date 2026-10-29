@@ -10,22 +10,13 @@ Open VSX is the vendor-neutral extension registry for Code-OSS, Gitpod, Eclipse 
 
 ### One-Time Setup
 
-1. **Create an account** at [open-vsx.org](https://open-vsx.org) using your GitHub account (`Nir-Bhay`).
-2. **Generate an access token**: User Settings → Access Tokens → Generate New Token. Save this as a GitHub repository secret named `OVSX_PAT`.
-3. **Claim the namespace**:
-   ```bash
-   npx ovsx create-namespace nirbhay-hiwse -p <your-token>
-   ```
-   This associates the `nirbhay-hiwse` publisher namespace with your account and marks future uploads as **verified**.
+1. Confirm the publisher account owns the `nirbhay-hiwse` namespace on [Open VSX](https://open-vsx.org).
+2. Keep the Open VSX publisher token only in the protected GitHub Actions `production-release` environment as `OVSX_PAT`; do not put it in the repository or pass it as a command-line argument.
+3. If the namespace still needs to be claimed, use the publisher's account flow and verify the namespace before publishing.
 
-### Manual Publish (First Time)
+### Publish
 
-```bash
-# From the repo root after building the VSIX
-npx @vscode/vsce package --no-git-tag-version --allow-missing-repository --skip-license
-npx ovsx publish antigravity-codespaces-<version>.vsix -p "$OVSX_PAT"
-```
-
+Use the repository's protected `v*` tag workflow after the release commit and version are reviewed. The Open VSX job receives `OVSX_PAT` only in its publish step. A main-branch build or VSIX artifact is not a registry publication. See [release and verification steps](docs/releasing.md).
 ### Automated Publish via CI (See `open-vsx-publish.yml`)
 
 The workflow in `.github/workflows/open-vsx-publish.yml` automatically publishes to Open VSX on every tagged release (`v*`). Set the `OVSX_PAT` secret in the protected `production-release` environment. Publishing is triggered by a `v*` tag; verify the tag matches the package version and points to the reviewed release commit.
@@ -36,15 +27,13 @@ The workflow in `.github/workflows/open-vsx-publish.yml` automatically publishes
 
 The Microsoft Marketplace is a separate registry with its own publisher account and listing. Its description and install copy must be kept current independently; the repository's Open VSX workflow does not update the Microsoft Marketplace.
 
-### Setup Steps
+### Listing update
 
-1. Create a **Microsoft Azure DevOps** account at [dev.azure.com](https://dev.azure.com).
-2. Go to [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) → Create Publisher.
-3. Publisher ID must match `package.json` → `"publisher": "nirbhay-hiwse"`.
-4. Generate a **Personal Access Token** with `Marketplace → Manage` scope. Save as `VSCE_PAT` in GitHub Secrets.
-5. Run: `npx @vscode/vsce publish -p "$VSCE_PAT"`
+1. Use the existing publisher account (`nirbhay-hiwse`) in the [Marketplace management portal](https://marketplace.visualstudio.com/manage).
+2. Update the overview and install instructions from the reviewed [Marketplace copy proposal](docs/MARKETPLACE_COPY.md). Confirm the released version and VSIX filename on GitHub Releases first.
+3. Publish through the Marketplace publisher portal and verify the public overview, version history, and install instructions.
 
-> Note: The extension targets Antigravity IDE / Code-OSS users. Open VSX delivers more targeted reach for this audience.
+This repository currently has no Microsoft Marketplace publishing workflow and does not use a `VSCE_PAT` secret. If automated Marketplace publishing is added later, configure its credentials through the publisher's approved secure workflow; never place them in docs or command-line arguments. Open VSX and Microsoft Marketplace are separate publication targets.
 
 ---
 
@@ -59,7 +48,7 @@ cursor, cursor-ide, cursor-codespaces, cursor-agent, codespaces,
 github-codespaces, antigravity, antigravity-ide, remote-development, remote-ssh,
 ssh, devcontainer, multi-account, windsurf, vscodium,
 code-oss, open-vsx, vscode, cloud-ide, cloud-dev,
-ai-agent, ssh-keepalive, websocket-keepalive, port-forwarding, workspace-manager,
+ai-agent, ssh-keepalive, codespaces-usage, port-forwarding, workspace-manager,
 developer-tools, mcp, mcp-server, codespaces-mcp, model-context-protocol
 ```
 
@@ -116,11 +105,15 @@ The package sets a dark gallery banner (`#1a1a2e`). Keep screenshots and copy le
 
 ## 6. Extension Listing Copy (for Open VSX / Marketplace)
 
-**Short Description (under 150 characters):**
-> Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code; connect over SSH, view usage, or run commands with optional MCP.
+**Short description:**
+> Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code-based editors with SSH, usage, and optional MCP commands.
 
-**Long Description (for marketplace detail pages):**
-> Antigravity Codespaces Pro is an open-source VS Code extension for browsing GitHub Codespaces across configured accounts, connecting through the GitHub CLI and Remote-SSH, managing Codespace lifecycle actions, and viewing GitHub-reported usage. A separate optional Node.js MCP server lets an MCP client run commands in a named or repository-matched Codespace. MCP uses the active `gh` CLI account, not the extension's sign-in. Starting or creating a Codespace may incur compute charges, and stopped Codespaces may continue to incur storage charges. Editor and MCP-client compatibility must be checked for the specific host/version; marketplace availability alone does not prove integration behavior.
+**Long description:**
+> Antigravity Codespaces Pro helps you browse and manage GitHub Codespaces from compatible VS Code-based editors. Use the sidebar and Cloud Hub to review Codespaces, connect over SSH, and manage lifecycle actions. Usage figures come from GitHub's billing API and can be delayed; check GitHub billing for current charges.
+>
+> The optional Model Context Protocol (MCP) server is a separate Node.js process for AI clients that need to run commands in a Codespace. It uses the active GitHub CLI account on the machine that starts the client. It is not installed or signed in by the editor extension. Local-change transfer is opt-in and requires reviewing a short-lived preview; Codespace provisioning can incur charges.
+>
+> Gallery availability does not guarantee that a specific editor version or Remote-SSH provider has been tested. See the [IDE compatibility guide](docs/IDE_SETUP.md), [MCP setup guide](mcp-server/SETUP.md), and [billing guide](docs/CODESPACES_COST_GUIDE.md) for requirements and limits.
 
 ---
 

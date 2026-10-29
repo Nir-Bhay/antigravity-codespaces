@@ -29,6 +29,22 @@ function ok(name, fn) {
 
 (async () => {
     console.log('workflow security');
+    await ok('marketplace discovery metadata stays focused and within the keyword limit', () => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+        assert.ok(pkg.description.length <= 256, 'marketplace description must stay under 256 characters');
+        assert.ok(pkg.description.includes('GitHub Codespaces'));
+        assert.ok(pkg.description.includes('optional MCP server'));
+        assert.ok(pkg.keywords.length <= 30, 'Open VSX supports at most 30 keywords');
+        assert.strictEqual(new Set(pkg.keywords).size, pkg.keywords.length, 'keywords must be unique');
+        assert.ok(pkg.keywords.includes('codespaces-usage'));
+        assert.ok(!pkg.keywords.includes('websocket-keepalive'), 'avoid a broad keyword that does not describe the product directly');
+        const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+        assert.doesNotMatch(readme, /Rating-★★★★★|Enterprise Edition|under 5 seconds|connect .* instantly/i);
+        const listing = fs.readFileSync(path.join(ROOT, 'MARKETPLACE.md'), 'utf8');
+        assert.ok(listing.includes('Model Context Protocol (MCP)'));
+        assert.ok(listing.includes('codespaces-usage'));
+        assert.doesNotMatch(listing, /websocket-keepalive|publish\s+-p\s+\"\$OVSX_PAT/);
+    });
     await ok('build and packaging jobs use scoped, non-persisted checkout credentials', () => {
         const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'build-and-release.yml'), 'utf8');
         assert.match(workflow, /^permissions:\n  contents: read$/m, 'default workflow token is read-only');
@@ -78,7 +94,7 @@ function ok(name, fn) {
 
     await ok('VSIX excludes local session artifacts, nested checkouts, and workspace masks', () => {
         const ignore = fs.readFileSync(path.join(ROOT, '.vscodeignore'), 'utf8').split(/\r?\n/);
-        for (const pattern of ['.artifacts/**', 'antigravity-codespaces/**', '.bash_profile', '.bashrc', '.claude/**', '.gitconfig', '.gitmodules', '.idea/**', '.mcp.json', '.profile', '.ripgreprc', '.vscode', '.zprofile', '.zshrc']) {
+        for (const pattern of ['.artifacts/**', '.vscode-test/**', 'antigravity-codespaces/**', '.bash_profile', '.bashrc', '.claude/**', '.gitconfig', '.gitmodules', '.idea/**', '.mcp.json', '.profile', '.ripgreprc', '.vscode', '.zprofile', '.zshrc']) {
             assert.ok(ignore.includes(pattern), `VSIX ignore rules must include ${pattern}`);
         }
     });
@@ -168,9 +184,17 @@ function ok(name, fn) {
         const nullApi = new GithubApi({ getActiveAccount: () => '', getToken: async () => null });
         await assert.rejects(nullApi.listCodespaces('ghost'), /account-bound GitHub token.*ghost/i);
 
-        // Bogus token must reject (401-auth when online, aggregate when offline).
-        const api = new GithubApi({ getActiveAccount: () => '', getToken: async () => 'bogus-invalid-token-xyz' });
-        await assert.rejects(api.listCodespaces('ghost'), /expired|Couldn't load|missing the "codespace" permission/);
+        // Invalid-token behavior is exercised with a mocked 401; unit tests must not call GitHub.
+        const api = new GithubApi({ getActiveAccount: () => '', getToken: async () => 'bogus-invalid-token-xyz' }, {
+            fetchImpl: async () => ({
+                status: 401,
+                ok: false,
+                headers: { get: () => null },
+                json: async () => ({ message: 'Bad credentials' })
+            }),
+            retryDelayMs: 0
+        });
+        await assert.rejects(api.listCodespaces('ghost'), /authentication expired|token is invalid/i);
     });
     await ok('Codespaces CLI fallbacks never use ambient auth for a different account', async () => {
         const calls = [];

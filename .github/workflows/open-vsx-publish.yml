@@ -30,14 +30,17 @@ jobs:
       - name: Validate Extension Syntax
         run: node -c extension.js
 
+      - name: Install Root Test Dependencies
+        run: npm ci --ignore-scripts
+
       - name: Install MCP Server Dependencies
         run: npm ci --prefix mcp-server
 
       - name: Run Unit Tests
         run: npm test
 
-      - name: Install locked publishing tool
-        run: npm ci --ignore-scripts
+      - name: Run VS Code Extension Host Smoke Test
+        run: xvfb-run -a npm run test:extension-host
 
       - name: Verify locked Open VSX publisher
         run: node scripts/check-ovsx-pin.js

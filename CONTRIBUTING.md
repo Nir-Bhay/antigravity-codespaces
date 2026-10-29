@@ -22,12 +22,15 @@ Thank you for your interest in contributing to **Antigravity Codespaces Pro**!
 
 3. **Run automated checks:**
    ```bash
+   npm ci --ignore-scripts
+   npm ci --prefix mcp-server
    npm test
    npm run check
+   npm run test:extension-host
    node --check mcp-server/index.mjs
    ```
 
-   `npm test` runs the extension and MCP server test suites. These tests use local fixtures/mocks; they do not start a live Codespace.
+   `npm test` runs the extension and MCP server unit suites with local fixtures/mocks; they do not start a live Codespace. `npm run test:extension-host` downloads and launches a clean Visual Studio Code Extension Development Host to verify activation and safe command registration. It uses isolated user data and GitHub CLI configuration, and does not test other editors or live GitHub/Codespaces behavior. On headless Linux, wrap the host test with `xvfb-run -a`; CI does so on Ubuntu.
 
 4. **Package the extension locally (optional):**
    ```bash
