@@ -15,6 +15,42 @@ function fakeProcess(outputs) {
   };
 }
 
+test('pins the active GitHub.com token with a private capture call and fails closed', async () => {
+  const calls = [];
+  const secret = 'capture-only-token-value';
+  const gh = createGhClient({
+    ghPath: '/opt/gh',
+    runProcessImpl: async (file, args, options) => {
+      calls.push({ file, args, options });
+      return { exitCode: 0, stdout: `${secret}\n`, stderr: '', timedOut: false, outputTruncated: false };
+    }
+  });
+
+  assert.equal(await gh.pinIdentity(), secret);
+  assert.deepEqual(calls[0].args, ['auth', 'token', '--hostname', 'github.com']);
+  assert.equal(calls[0].options.suppressOutputCallbacks, true);
+  assert.equal(typeof calls[0].options.onOutput, 'function');
+  assert.equal(calls[0].options.githubCliToken, undefined);
+  assert.doesNotMatch(JSON.stringify(calls[0].args), new RegExp(secret));
+
+  const failed = createGhClient({
+    runProcessImpl: async () => ({ exitCode: 1, stdout: secret, stderr: secret, timedOut: false, outputTruncated: false })
+  });
+  await assert.rejects(failed.pinIdentity(), error => {
+    assert.match(error.message, /Could not pin the active GitHub CLI account/);
+    assert.doesNotMatch(error.message, new RegExp(secret));
+    return true;
+  });
+
+  for (const result of [
+    { exitCode: 0, stdout: secret, stderr: '', timedOut: true, outputTruncated: false },
+    { exitCode: 0, stdout: secret, stderr: '', timedOut: false, outputTruncated: true }
+  ]) {
+    const incomplete = createGhClient({ runProcessImpl: async () => result });
+    await assert.rejects(incomplete.pinIdentity(), /Could not pin the active GitHub CLI account/);
+  }
+});
+
 test('lists Codespaces via GitHub CLI JSON with a bounded explicit page limit', async () => {
   const process = fakeProcess(['[{"name":"space","state":"Available"}]']);
   const gh = createGhClient({ ghPath: '/opt/gh', runProcessImpl: process.run });

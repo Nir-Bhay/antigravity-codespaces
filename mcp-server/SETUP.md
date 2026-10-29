@@ -21,7 +21,7 @@ If needed, complete sign-in interactively in your own terminal:
 gh auth login -h github.com -s codespace
 ```
 
-The server strips token-/secret-named variables from the `gh` child environment. Use `gh auth login`; do not configure `GH_TOKEN` as a substitute.
+The server strips token-/secret-named variables from ordinary child environments. For multi-step `start_codespace` and `run_repository_command` operations, it captures the active stored GitHub.com CLI token once with `gh auth token` and passes it only to the local `gh` processes for that operation, including SSH and cleanup. The token remains in memory; the server does not change global `gh` authentication. Use `gh auth login`; do not configure `GH_TOKEN` as a substitute.
 
 ## Install and configure
 

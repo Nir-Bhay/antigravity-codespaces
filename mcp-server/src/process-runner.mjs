@@ -53,15 +53,36 @@ function nextLineBoundary(text) {
 export function runProcess(
   file,
   args,
-  { spawnImpl = spawn, env = process.env, cwd, input, timeoutMs = DEFAULT_TIMEOUT_MS, onOutput = () => {}, maxOutputChars = MAX_OUTPUT_CHARS } = {}
+  {
+    spawnImpl = spawn,
+    env = process.env,
+    cwd,
+    input,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    onOutput = () => {},
+    maxOutputChars = MAX_OUTPUT_CHARS,
+    githubCliToken,
+    suppressOutputCallbacks = false,
+    captureSensitiveStdout = false
+  } = {}
 ) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > MAX_TIMEOUT_MS) {
     throw new TypeError(`timeoutMs must be an integer between 1000 and ${MAX_TIMEOUT_MS}.`);
   }
+  if (captureSensitiveStdout && !suppressOutputCallbacks) {
+    throw new TypeError('Sensitive stdout capture requires output callbacks to be suppressed.');
+  }
+  const childEnv = safeChildEnvironment(env);
+  if (githubCliToken !== undefined) {
+    if (typeof githubCliToken !== 'string' || !githubCliToken || /\s/.test(githubCliToken)) {
+      throw new TypeError('GitHub CLI identity token must be a non-empty token.');
+    }
+    childEnv.GH_TOKEN = githubCliToken;
+  }
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawnImpl(file, args, { env: safeChildEnvironment(env), cwd, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawnImpl(file, args, { env: childEnv, cwd, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], windowsHide: true });
     } catch (error) {
       reject(new Error(`Could not start ${file}: ${error.message}`));
       return;
@@ -95,14 +116,14 @@ export function runProcess(
         outputTruncated = true;
         return;
       }
-      const safeText = redactSensitiveText(rawLine);
+      const safeText = captureSensitiveStdout && streamName === 'stdout' ? rawLine : redactSensitiveText(rawLine);
       const current = streamName === 'stdout' ? stdout : stderr;
       const remaining = maxOutputChars - current.length;
       const accepted = safeText.slice(0, remaining);
       if (accepted.length < safeText.length) outputTruncated = true;
       if (streamName === 'stdout') stdout += accepted;
       else stderr += accepted;
-      if (!accepted) return;
+      if (!accepted || suppressOutputCallbacks) return;
       try {
         Promise.resolve(onOutput(streamName, accepted)).catch(() => {});
       } catch {}
@@ -173,11 +194,11 @@ export function runProcess(
 /** Run one explicitly requested command through the user's existing GitHub CLI authentication. */
 export function runCodespaceCommand(
   input,
-  { spawnImpl = spawn, ghPath = process.env.GH_PATH || 'gh', env = process.env, onOutput = () => {} } = {}
+  { spawnImpl = spawn, ghPath = process.env.GH_PATH || 'gh', env = process.env, onOutput = () => {}, identityToken } = {}
 ) {
   const { codespaceName, command, timeoutMs } = validateRunInput(input);
   const args = ['codespace', 'ssh', '--codespace', codespaceName, '--', command];
-  return runProcess(ghPath, args, { spawnImpl, env, onOutput, input: input.input, timeoutMs });
+  return runProcess(ghPath, args, { spawnImpl, env, onOutput, input: input.input, timeoutMs, githubCliToken: identityToken });
 }
 
 export const processRunnerLimits = Object.freeze({

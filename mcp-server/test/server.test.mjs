@@ -5,7 +5,7 @@ import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fileURLToPath } from 'node:url';
-import { runCodespaceCommand, safeChildEnvironment } from '../src/process-runner.mjs';
+import { runCodespaceCommand, runProcess, safeChildEnvironment } from '../src/process-runner.mjs';
 import { createCodespacesMcpServer } from '../src/server.mjs';
 
 function fakeChild({ stdout = '', stderr = '', code = 0, signal = null, delayMs = 0 } = {}) {
@@ -105,9 +105,59 @@ test('redacts credential values from remote output and progress, including token
   assert.ok(updates.every(([, chunk]) => !chunk.includes(token) && !chunk.includes(jwt)));
 });
 
+test('injects a pinned token only into the local gh SSH environment, not arguments or output', async () => {
+  const token = 'in-memory-pinned-identity';
+  const progress = [];
+  let observed;
+  const result = await runCodespaceCommand(
+    { codespaceName: 'octocat-space', command: 'npm test' },
+    {
+      identityToken: token,
+      env: { PATH: '/usr/bin', GH_TOKEN: 'ambient-token', API_SECRET: 'other-secret' },
+      onOutput: (stream, text) => progress.push([stream, text]),
+      spawnImpl: (file, args, options) => {
+        observed = { file, args, env: options.env };
+        return fakeChild({ stdout: 'remote output\n' });
+      }
+    }
+  );
+
+  assert.equal(observed.env.GH_TOKEN, token);
+  assert.equal(observed.env.API_SECRET, undefined);
+  assert.deepEqual(observed.args, ['codespace', 'ssh', '--codespace', 'octocat-space', '--', 'npm test']);
+  assert.doesNotMatch(JSON.stringify(observed.args), new RegExp(token));
+  assert.doesNotMatch(result.stdout, new RegExp(token));
+  assert.ok(progress.every(([, text]) => !text.includes(token)));
+});
+
+test('token capture mode suppresses output callbacks and keeps raw token output only in memory', async () => {
+  const token = `ghp_${'a'.repeat(36)}`;
+  const progress = [];
+  const result = await runProcess('/usr/bin/gh', ['auth', 'token', '--hostname', 'github.com'], {
+    suppressOutputCallbacks: true,
+    captureSensitiveStdout: true,
+    onOutput: (_stream, text) => progress.push(text),
+    spawnImpl: () => fakeChild({ stdout: `${token}\n` })
+  });
+  assert.equal(result.stdout.trim(), token);
+  assert.deepEqual(progress, []);
+  assert.throws(() => runProcess('/usr/bin/gh', ['auth', 'token'], {
+    captureSensitiveStdout: true,
+    spawnImpl: () => fakeChild({ stdout: `${token}\n` })
+  }), /requires output callbacks to be suppressed/);
+});
+
 test('filters standard secret-bearing environment variables before launching GitHub CLI', () => {
   assert.deepEqual(
-    safeChildEnvironment({ PATH: '/usr/bin', HOME: '/home/user', GH_TOKEN: 'sentinel', API_SECRET: 'sentinel-2' }),
+    safeChildEnvironment({
+      PATH: '/usr/bin',
+      HOME: '/home/user',
+      GH_TOKEN: 'sentinel',
+      GH_ENTERPRISE_TOKEN: 'sentinel-2',
+      API_SECRET: 'sentinel-3',
+      DB_PASSWORD: 'sentinel-4',
+      SIGNING_PRIVATE_KEY: 'sentinel-5'
+    }),
     { PATH: '/usr/bin', HOME: '/home/user' }
   );
 });

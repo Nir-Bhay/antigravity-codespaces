@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createCodespaceManager, findMatchingCodespace, withRepositoryLock } from '../src/codespace-manager.mjs';
+import { createGhClient } from '../src/gh-client.mjs';
 import { validateRunInput } from '../src/process-runner.mjs';
 import { detectRepositoryContext, parseGitHubRepository } from '../src/git-context.mjs';
 
@@ -89,6 +90,122 @@ test('reuses an already available Codespace and leaves its lifecycle unchanged',
   assert.equal(result.started, false);
   assert.equal(result.stoppedAfterRun, false);
   assert.deepEqual(gh.calls, { list: 1, create: 0, start: 0, stop: 0 });
+});
+
+test('pins one GitHub identity through repository provisioning, polling, SSH and cleanup', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codespaces-mcp-identity-'));
+  const firstToken = 'pinned-account-token';
+  let activeToken = firstToken;
+  const processCalls = [];
+  const gh = createGhClient({
+    runProcessImpl: async (_file, args, options) => {
+      processCalls.push({ args, options });
+      if (args[0] === 'auth') {
+        const captured = activeToken;
+        activeToken = 'switched-account-token';
+        return { exitCode: 0, stdout: `${captured}\n`, stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'codespace' && args[1] === 'list') {
+        return { exitCode: 0, stdout: '[]', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'api' && args[1] === 'repos/octocat/hello-world') {
+        return { exitCode: 0, stdout: '12345', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'api' && args[1] === '-X' && args[2] === 'POST') {
+        return { exitCode: 0, stdout: '{"name":"octocat-created-space","state":"Starting"}', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'api' && args[1] === '/user/codespaces/octocat-created-space') {
+        return { exitCode: 0, stdout: '{"name":"octocat-created-space","state":"Available"}', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'codespace' && args[1] === 'stop') {
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      throw new Error(`Unexpected fake gh invocation: ${args.join(' ')}`);
+    }
+  });
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => context(),
+    lock: (key, operation) => withRepositoryLock(key, operation, { directory }),
+    runCommand: async (input, { identityToken, onOutput }) => {
+      assert.equal(identityToken, firstToken);
+      assert.doesNotMatch(input.command, new RegExp(firstToken));
+      const lockFiles = await readdir(directory);
+      assert.equal(lockFiles.length, 1);
+      const lockContents = await readFile(join(directory, lockFiles[0]), 'utf8');
+      assert.doesNotMatch(lockContents, new RegExp(firstToken));
+      await onOutput('stdout', 'remote command output\n');
+      return { exitCode: 0, stdout: 'remote command output\n', stderr: '', timedOut: false, outputTruncated: false };
+    },
+    startupTimeoutMs: 1_000
+  });
+  const progress = [];
+  try {
+    const result = await manager.runRepositoryCommand({ command: 'npm test', onOutput: (stream, text) => progress.push([stream, text]) });
+    assert.equal(result.codespaceName, 'octocat-created-space');
+    assert.equal(result.created, true);
+    assert.equal(result.stoppedAfterRun, true);
+    assert.equal(activeToken, 'switched-account-token');
+    assert.equal(processCalls.filter(call => call.args[0] === 'auth').length, 1);
+    const lifecycleCalls = processCalls.filter(call => call.args[0] !== 'auth');
+    assert.ok(lifecycleCalls.length >= 5);
+    assert.ok(lifecycleCalls.every(call => call.options.githubCliToken === firstToken));
+    assert.ok(processCalls.every(call => !call.args.includes(firstToken)));
+    assert.ok(progress.every(([, text]) => !text.includes(firstToken)));
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('pins one GitHub identity across an explicit Codespace start and availability poll', async () => {
+  const firstToken = 'start-operation-token';
+  let activeToken = firstToken;
+  const processCalls = [];
+  const gh = createGhClient({
+    runProcessImpl: async (_file, args, options) => {
+      processCalls.push({ args, options });
+      if (args[0] === 'auth') {
+        activeToken = 'changed-after-capture';
+        return { exitCode: 0, stdout: `${firstToken}\n`, stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'api' && args[1] === '/user/codespaces/octocat-space') {
+        const state = args.length === 2 && processCalls.filter(call => call.args[0] === 'api' && call.args[1] === args[1]).length === 1
+          ? 'Shutdown'
+          : 'Available';
+        return { exitCode: 0, stdout: JSON.stringify({ name: 'octocat-space', state }), stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'api' && args[1] === '-X' && args[2] === 'POST') {
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      throw new Error(`Unexpected fake gh invocation: ${args.join(' ')}`);
+    }
+  });
+  const manager = createCodespaceManager({ gh, sleep: async () => {}, startupTimeoutMs: 1_000 });
+  const status = await manager.startCodespace('octocat-space');
+  assert.equal(status.state, 'Available');
+  assert.equal(activeToken, 'changed-after-capture');
+  assert.equal(processCalls.filter(call => call.args[0] === 'auth').length, 1);
+  const lifecycleCalls = processCalls.filter(call => call.args[0] !== 'auth');
+  assert.deepEqual(lifecycleCalls.map(call => call.options.githubCliToken), [firstToken, firstToken, firstToken]);
+  assert.ok(processCalls.every(call => !call.args.includes(firstToken)));
+});
+
+test('fails closed before lifecycle calls when the active token cannot be captured', async () => {
+  const calls = [];
+  const gh = createGhClient({
+    runProcessImpl: async (_file, args) => {
+      calls.push(args);
+      return { exitCode: 1, stdout: 'sensitive-token-value', stderr: 'sensitive-token-value', timedOut: false, outputTruncated: false };
+    }
+  });
+  const manager = createCodespaceManager({ gh });
+  await assert.rejects(manager.startCodespace('octocat-space'), error => {
+    assert.match(error.message, /Could not pin the active GitHub CLI account/);
+    assert.doesNotMatch(error.message, /sensitive-token-value/);
+    return true;
+  });
+  assert.deepEqual(calls, [['auth', 'token', '--hostname', 'github.com']]);
 });
 
 test('starts a matching stopped Codespace and stops it after the command', async () => {

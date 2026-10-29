@@ -77,7 +77,7 @@ for candidate in ${shellQuote(workspaceRoot)}/*; do
   remote=$(git -C "$root" remote get-url origin 2>/dev/null) || continue
   remote_lc=$(printf '%s' "$remote" | tr '[:upper:]' '[:lower:]')
   case "$remote_lc" in
-    *github.com:"$repo".git|*github.com:"$repo"|*github.com/"$repo".git|*github.com/"$repo") repo_root="$root"; break ;;
+    git@github.com:"$repo".git|git@github.com:"$repo"|https://github.com/"$repo".git|https://github.com/"$repo"|ssh://git@github.com/"$repo".git|ssh://git@github.com/"$repo"|ssh://github.com/"$repo".git|ssh://github.com/"$repo"|git://github.com/"$repo".git|git://github.com/"$repo") repo_root="$root"; break ;;
   esac
 done
 [ -n "$repo_root" ] || { echo 'Could not find the matching repository under /workspaces.' >&2; exit 44; }

@@ -24,8 +24,14 @@ jobs:
         with:
           node-version: 22
 
+      - name: Verify package version matches release tag
+        run: node scripts/check-release-tag.js "$GITHUB_REF_NAME"
+
       - name: Validate Extension Syntax
         run: node -c extension.js
+
+      - name: Install MCP Server Dependencies
+        run: npm ci --prefix mcp-server
 
       - name: Run Unit Tests
         run: npm test

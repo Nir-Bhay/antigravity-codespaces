@@ -1990,6 +1990,10 @@ html, body {
   border-color: var(--hub-accent);
   background: var(--hub-accent-soft);
 }
+.rebuild-option-card:focus-visible {
+  outline: 2px solid var(--hub-accent);
+  outline-offset: 2px;
+}
 .rebuild-icon-badge {
   width: 36px;
   height: 36px;
@@ -2315,10 +2319,10 @@ ${errorUx.UX_CSS}
 
 <!-- ── 8. Modal: Create New Codespace 4-Step Wizard ──────────────── -->
 <div class="modal-scrim" id="wizardModal">
-  <div class="modal-dialog">
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="wizardTitle" tabindex="-1">
     <div class="modal-header">
       <h3 class="modal-title" id="wizardTitle">Create New Codespace</h3>
-      <button class="modal-close" id="wizardCloseBtn">${I.close}</button>
+      <button class="modal-close" id="wizardCloseBtn" aria-label="Close create wizard">${I.close}</button>
     </div>
 
     <!-- Step 1: Select Account -->
@@ -2411,21 +2415,21 @@ ${errorUx.UX_CSS}
 
 <!-- ── 9. Modal: Rebuild DevContainer ────────────────────────────── -->
 <div class="modal-scrim" id="rebuildModal">
-  <div class="modal-dialog">
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="rebuildDialogTitle" aria-describedby="rebuildTargetTitle" tabindex="-1">
     <div class="modal-header">
-      <h3 class="modal-title">Rebuild DevContainer</h3>
-      <button class="modal-close" data-cmd="closeRebuildModal">${I.close}</button>
+      <h3 class="modal-title" id="rebuildDialogTitle">Rebuild DevContainer</h3>
+      <button class="modal-close" data-cmd="closeRebuildModal" aria-label="Close rebuild dialog">${I.close}</button>
     </div>
     <div class="modal-body">
       <div class="wizard-subtitle" id="rebuildTargetTitle">Choose the type of rebuild:</div>
-      <div class="rebuild-option-card" id="optStandardRebuild">
+      <div class="rebuild-option-card" id="optStandardRebuild" role="button" tabindex="0">
         <div class="rebuild-icon-badge rebuild-badge-blue">${I.sync}</div>
         <div class="rebuild-meta">
           <h4>Standard Rebuild</h4>
           <p>Uses layer cache (faster)</p>
         </div>
       </div>
-      <div class="rebuild-option-card" id="optFullRebuild">
+      <div class="rebuild-option-card" id="optFullRebuild" role="button" tabindex="0">
         <div class="rebuild-icon-badge rebuild-badge-red">${I.trash}</div>
         <div class="rebuild-meta">
           <h4>Full Rebuild (no cache)</h4>
@@ -2441,10 +2445,10 @@ ${errorUx.UX_CSS}
 
 <!-- ── 10. Modal: Delete Codespace Confirmation ──────────────────── -->
 <div class="modal-scrim" id="deleteModal">
-  <div class="modal-dialog" style="width:400px;">
+  <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="deleteDialogTitle" aria-describedby="deleteTargetPrompt deleteTargetDetails" tabindex="-1" style="width:400px;">
     <div class="modal-header">
-      <h3 class="modal-title">Delete Codespace</h3>
-      <button class="modal-close" data-cmd="closeDeleteModal">${I.close}</button>
+      <h3 class="modal-title" id="deleteDialogTitle">Delete Codespace</h3>
+      <button class="modal-close" data-cmd="closeDeleteModal" aria-label="Close delete dialog">${I.close}</button>
     </div>
     <div class="modal-body delete-dialog-body">
       <div class="delete-icon-circle">${I.trashModal}</div>
@@ -2474,6 +2478,52 @@ function showToast(msg, ms = 3000) {
   toastTimer = setTimeout(() => el.classList.remove('show'), ms);
 }
 
+const dialogOpeners = new Map();
+function dialogFocusables(dialog) {
+  return [...dialog.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
+    .filter(element => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true');
+}
+function openAccessibleDialog(id) {
+  const scrim = document.getElementById(id);
+  const dialog = scrim?.querySelector('[role="dialog"]');
+  if (!scrim || !dialog) return;
+  dialogOpeners.set(id, document.activeElement);
+  scrim.classList.add('is-open');
+  dialog.focus({ preventScroll: true });
+}
+function closeAccessibleDialog(id) {
+  const scrim = document.getElementById(id);
+  if (!scrim) return;
+  scrim.classList.remove('is-open');
+  const opener = dialogOpeners.get(id);
+  dialogOpeners.delete(id);
+  if (opener?.isConnected && !opener.disabled) opener.focus({ preventScroll: true });
+}
+function containDialogFocus(event, scrim) {
+  const dialog = scrim.querySelector('[role="dialog"]');
+  if (!dialog) return;
+  const focusables = dialogFocusables(dialog);
+  if (!focusables.length) {
+    event.preventDefault();
+    dialog.focus({ preventScroll: true });
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (!focusables.includes(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 // ── Webview PostMessage Receiver ──────────────────────────────────────
 window.addEventListener('message', event => {
   const msg = event.data;
@@ -2492,7 +2542,7 @@ window.addEventListener('message', event => {
   } else if (msg.command === 'createSuccess') {
     showToast('Codespace created: ' + msg.name);
     setTimeout(() => {
-      document.getElementById('wizardModal').classList.remove('is-open');
+      closeAccessibleDialog('wizardModal');
     }, 1200);
   } else if (msg.command === 'createError') {
     showToast(msg.error === 'Creation cancelled. No Codespace was created.' ? msg.error : 'Create failed: ' + msg.error);
@@ -2636,14 +2686,19 @@ document.getElementById('btnClearSearch')?.addEventListener('click', () => {
 
 // Slash Keycap & Escape Handlers
 window.addEventListener('keydown', (e) => {
-  if (e.key === '/' && document.activeElement !== qInput && !document.querySelector('.modal-scrim.is-open')) {
+  const openDialog = document.querySelector('.modal-scrim.is-open');
+  if (openDialog && e.key === 'Tab') {
+    containDialogFocus(e, openDialog);
+    return;
+  }
+  if (e.key === '/' && document.activeElement !== qInput && !openDialog) {
     e.preventDefault();
     qInput.focus();
     qInput.select();
   } else if (e.key === 'Escape') {
     document.querySelectorAll('.ws-card-menu').forEach(m => m.classList.remove('is-open'));
-    if (document.querySelector('.modal-scrim.is-open')) {
-      document.querySelectorAll('.modal-scrim').forEach(m => m.classList.remove('is-open'));
+    if (openDialog) {
+      document.querySelectorAll('.modal-scrim.is-open').forEach(m => closeAccessibleDialog(m.id));
     } else if (document.activeElement === qInput) {
       qInput.value = '';
       filterCards();
@@ -2799,31 +2854,36 @@ document.addEventListener('click', (ev) => {
 function openRebuildModal(name, account) {
   currentActionTarget = { name, account };
   document.getElementById('rebuildTargetTitle').textContent = 'Rebuild "' + name + '"?';
-  document.getElementById('rebuildModal').classList.add('is-open');
+  openAccessibleDialog('rebuildModal');
 }
 function closeRebuildModal() {
-  document.getElementById('rebuildModal').classList.remove('is-open');
+  closeAccessibleDialog('rebuildModal');
 }
-document.getElementById('optStandardRebuild').addEventListener('click', () => {
+function chooseRebuild(full) {
   if (!currentActionTarget) return;
   closeRebuildModal();
-  vscode.postMessage({ command: 'rebuild', name: currentActionTarget.name, account: currentActionTarget.account, full: false });
-});
-document.getElementById('optFullRebuild').addEventListener('click', () => {
-  if (!currentActionTarget) return;
-  closeRebuildModal();
-  vscode.postMessage({ command: 'rebuild', name: currentActionTarget.name, account: currentActionTarget.account, full: true });
-});
+  vscode.postMessage({ command: 'rebuild', name: currentActionTarget.name, account: currentActionTarget.account, full });
+}
+for (const [id, full] of [['optStandardRebuild', false], ['optFullRebuild', true]]) {
+  const option = document.getElementById(id);
+  option.addEventListener('click', () => chooseRebuild(full));
+  option.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      chooseRebuild(full);
+    }
+  });
+}
 
 // ── Delete Modal Logic ────────────────────────────────────────────────
 function openDeleteModal(name, account, state, repo, displayName) {
   currentActionTarget = { name, account, state, repo, displayName };
   document.getElementById('deleteTargetPrompt').textContent = 'Delete "' + (displayName || name) + '"?';
   document.getElementById('deleteTargetDetails').textContent = 'GitHub account: ' + account + ' · Current state: ' + (state || 'unavailable') + (repo ? ' · Repository: ' + repo : '');
-  document.getElementById('deleteModal').classList.add('is-open');
+  openAccessibleDialog('deleteModal');
 }
 function closeDeleteModal() {
-  document.getElementById('deleteModal').classList.remove('is-open');
+  closeAccessibleDialog('deleteModal');
 }
 document.getElementById('btnConfirmDelete').addEventListener('click', () => {
   if (!currentActionTarget) return;
@@ -2844,12 +2904,12 @@ function openWizard() {
   selectedAccount = checkedAcc ? checkedAcc.value : '';
   selectedRepo = '';
   showWizardStep(1);
-  document.getElementById('wizardModal').classList.add('is-open');
+  openAccessibleDialog('wizardModal');
 }
 
 document.getElementById('btnNewCs').addEventListener('click', openWizard);
 document.getElementById('wizardCloseBtn').addEventListener('click', () => {
-  document.getElementById('wizardModal').classList.remove('is-open');
+  closeAccessibleDialog('wizardModal');
 });
 
 // Row click to select radio
@@ -2916,7 +2976,7 @@ document.getElementById('wizardNextBtn').addEventListener('click', () => {
 
 document.getElementById('wizardBackBtn').addEventListener('click', () => {
   if (wizardStep === 1) {
-    document.getElementById('wizardModal').classList.remove('is-open');
+    closeAccessibleDialog('wizardModal');
   } else {
     showWizardStep(wizardStep - 1);
   }

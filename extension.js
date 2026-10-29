@@ -1124,7 +1124,7 @@ async function activate(context) {
                 }
                 if (state.kind !== 'running') { stateNeedsRefresh(cs, 'stop'); return; }
                 await githubApi.stopCodespace(cs.name, cs.account);
-                vscode.window.showInformationMessage(`Stopped ${cs.displayName || cs.name}. Compute has stopped; storage billing continues until deletion.`);
+                vscode.window.showInformationMessage(`Stop requested for ${cs.displayName || cs.name}. GitHub may take a moment to finish stopping; storage billing continues until deletion.`);
                 sidebarProvider.refresh();
                 dashboardProvider.refreshHtml();
                 statusBar.update();
@@ -1287,23 +1287,8 @@ async function activate(context) {
                 return;
             }
             
-            // Wake and connect in one step. If waking fails, show the real reason and skip SSH.
-            let startErr = null;
-            await vscode.window.withProgress(
-                { location: vscode.ProgressLocation.Notification, title: `Reconnecting to ${lastCs.displayName || lastCs.name}...`, cancellable: false },
-                async () => {
-                    try { await githubApi.startCodespace(lastCs.name, lastCs.account); }
-                    catch (e) { startErr = e; }
-                }
-            );
-            if (startErr) {
-                const ux = errorUx.startFailure(lastCs.displayName || lastCs.name, startErr);
-                logger.error(`reconnect ${lastCs.name}`, startErr && startErr.message);
-                await showOpError(ux.title, `reconnect ${lastCs.name}`, startErr, { ux, retry: () => vscode.commands.executeCommand('antigravity-codespaces.reconnectLast') });
-                return;
-            }
-            
-            // Delegate to connect command
+            // Connect owns the fresh account-scoped state check, cost confirmation, and conditional start.
+            // Delegating directly avoids a reconnect-specific path that could wake a Codespace without consent.
             await vscode.commands.executeCommand('antigravity-codespaces.connect', {
                 codespaceData: lastCs
             });
