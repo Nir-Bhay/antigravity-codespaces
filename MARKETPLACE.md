@@ -106,7 +106,7 @@ The package sets a dark gallery banner (`#1a1a2e`). Keep screenshots and copy le
 ## 6. Extension Listing Copy (for Open VSX / Marketplace)
 
 **Short description:**
-> Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code-based editors with SSH, usage, and optional MCP commands.
+> Manage GitHub Codespaces in Antigravity, Cursor, Windsurf, and VS Code-based editors. Connect over SSH, review GitHub-reported usage, or run remote commands with the optional MCP server.
 
 **Long description:**
 > Antigravity Codespaces Pro helps you browse and manage GitHub Codespaces from compatible VS Code-based editors. Use the sidebar and Cloud Hub to review Codespaces, connect over SSH, and manage lifecycle actions. Usage figures come from GitHub's billing API and can be delayed; check GitHub billing for current charges.
