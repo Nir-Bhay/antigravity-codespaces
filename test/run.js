@@ -1968,6 +1968,16 @@ function ok(name, fn) {
             assert.strictEqual(SDc.detectRemoteSsh(['codeium.windsurf-remote-openssh'], 'Some Renamed IDE').isWindsurf, true, 'detected by extension, not name');
             assert.strictEqual(SDc.detectRemoteSsh([], 'Devin Desktop').isWindsurf, true);
             assert.strictEqual(SDc.detectRemoteSsh(['ms-vscode-remote.remote-ssh'], 'Visual Studio Code').isWindsurf, false);
+            const linuxGhCheck = SDc._buildChecks({
+                platform: 'linux', ghInstalled: false, ghAuthHealth: {}, hasOpenSsh: false, hasRemoteSsh: false,
+                remotePlatformIssues: [], sshConfigIssues: []
+            }).find(check => check.id === 'gh_installed');
+            assert.strictEqual(linuxGhCheck.fixCommand, null, 'Linux must not run an assumed distro-specific installer');
+            assert.strictEqual(linuxGhCheck.fixLabel, 'View install instructions');
+            assert.strictEqual(linuxGhCheck.fixUrl, 'https://github.com/cli/cli/blob/trunk/docs/install_linux.md');
+            const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+            assert.match(readme, /GitHub CLI’s official installation guide/);
+            assert.doesNotMatch(readme, /sudo apt install gh/);
         } finally { Module._resolveFilename = orig; delete require.cache.vscode; }
     });
     await ok('docs: keep-alive guide uses accept-new; SECURITY/CONTRIBUTING no longer 4.3.x', () => {

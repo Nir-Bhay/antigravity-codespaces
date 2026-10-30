@@ -131,8 +131,10 @@ class SystemDoctor {
         const ghHealth = info.ghAuthHealth || {};
         
         const installCmd = platform === 'win32' ? 'winget install --id GitHub.cli -e' :
-                          platform === 'darwin' ? 'brew install gh' : 
-                          'sudo apt install gh || sudo dnf install gh';
+                          platform === 'darwin' ? 'brew install gh' : null;
+        const installUrl = platform === 'linux'
+            ? 'https://github.com/cli/cli/blob/trunk/docs/install_linux.md'
+            : 'https://cli.github.com';
         
         checks.push({
             id: 'gh_installed',
@@ -141,8 +143,8 @@ class SystemDoctor {
             label: 'GitHub CLI installed',
             detail: info.ghInstalled ? `gh ${info.ghVersion}` : 'gh CLI not found',
             fixCommand: installCmd,
-            fixLabel: 'Install gh CLI',
-            fixUrl: 'https://cli.github.com'
+            fixLabel: installCmd ? 'Install gh CLI' : 'View install instructions',
+            fixUrl: installUrl
         });
         
         if (info.ghInstalled) {

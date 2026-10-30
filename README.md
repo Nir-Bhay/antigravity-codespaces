@@ -108,7 +108,7 @@ SSH tunnels use the GitHub CLI. The extension's own sign-in (OAuth or a PAT) pow
 1. **GitHub CLI (`gh`) installed** — Used for secure SSH proxying:
    - **Windows:** `winget install --id GitHub.cli`
    - **macOS:** `brew install gh`
-   - **Linux:** `sudo apt install gh`
+   - **Linux:** follow [GitHub CLI’s official installation guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) for your distribution; Debian/Ubuntu users should use GitHub’s apt repository rather than a potentially outdated distro package.
 2. **Signed in to GitHub CLI:**
    ```bash
    gh auth login
