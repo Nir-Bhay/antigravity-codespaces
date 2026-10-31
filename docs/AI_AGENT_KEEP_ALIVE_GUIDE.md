@@ -74,7 +74,7 @@ Then run `Ctrl+Shift+P` → **Antigravity Codespaces: Sync SSH Config** to rewri
 
 1. **Commit Early, Commit Often**: Ensure your agent makes granular atomic git commits during each phase of its plan.
 2. **Pre-build Your DevContainers**: Add tools needed by your agents (e.g. `rg` ripgrep, `fd`, `git`, package managers) directly into `.devcontainer/devcontainer.json` so the agent doesn't waste time installing them at runtime.
-3. **Inspect Real Tunnel Latency**: Use the built-in **Test SSH Connectivity** tool (`Alt+C` or sidebar) to ensure your round-trip latency to the GitHub data center is under 120ms for smooth interactive streaming.
+3. **Inspect Real Tunnel Latency**: Run **Antigravity Codespaces: Test SSH Connectivity** from the Command Palette or Codespaces sidebar to measure your tunnel latency to the GitHub data center.
 
 ---
 
