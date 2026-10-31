@@ -482,7 +482,7 @@ function hubUsageScript(initialPage) {
   if (rail) rail.addEventListener('click', () => showUsage(true));
   document.querySelectorAll('.rail-link:not(#railUsageBtn)').forEach(l => l.addEventListener('click', () => { if (canvas && canvas.classList.contains('show-usage')) showUsage(false); }));
   const hero = document.getElementById('usageHero');
-  if (hero) { hero.addEventListener('click', () => showUsage(true)); hero.addEventListener('keydown', (e) => { if (e.key === 'Enter') showUsage(true); }); }
+  if (hero) { hero.addEventListener('click', () => showUsage(true)); hero.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showUsage(true); } }); }
   document.querySelectorAll('[data-usage-grant]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ command: 'usageGrant', account: b.getAttribute('data-usage-grant') }); }));
   document.querySelectorAll('[data-usage-signin]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ command: 'loginGitHub' }); }));
   const rb = document.getElementById('usageRefreshBtn');
