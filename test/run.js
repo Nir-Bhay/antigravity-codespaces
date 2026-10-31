@@ -1783,6 +1783,8 @@ function ok(name, fn) {
         assert.ok(!/<button[^>]*>[^<]*delete/i.test(page), 'no delete action');
         const card = uv.hubUsageCardHtml(u);
         assert.match(card, /At this pace/);
+        const script = uv.hubUsageScript('usage');
+        assert.match(script, /if \(e\.key === 'Enter' \|\| e\.key === ' '\) \{ e\.preventDefault\(\); showUsage\(true\); \}/, 'usage card button activates with Enter and Space without scrolling');
         const dollars = uv.hubUsageCardHtml(u, '', { preferredUnit: 'dollars' });
         assert.match(dollars, /<b>\$6\.88<\/b> \/ \$16\.20 <small>\(76\.5 \/ 180 core-hrs\)/);
         assert.strictEqual(uv.sidebarSummaryHtml(u, 'n', { show: false }), '');
