@@ -45,6 +45,11 @@ function ok(name, fn) {
         assert.ok(listing.includes('codespaces-usage'));
         assert.doesNotMatch(listing, /websocket-keepalive|publish\s+-p\s+\"\$OVSX_PAT/);
     });
+    await ok('Marketplace install copy follows the latest release without pinning a VSIX version', () => {
+        const copy = fs.readFileSync(path.join(ROOT, 'docs', 'MARKETPLACE_COPY.md'), 'utf8');
+        assert.ok(copy.includes('https://github.com/Nir-Bhay/antigravity-codespaces/releases/latest'));
+        assert.doesNotMatch(copy, /antigravity-codespaces-\d+\.\d+\.\d+\.vsix/);
+    });
     await ok('build and packaging jobs use scoped, non-persisted checkout credentials', () => {
         const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'build-and-release.yml'), 'utf8');
         assert.match(workflow, /^permissions:\n  contents: read$/m, 'default workflow token is read-only');
