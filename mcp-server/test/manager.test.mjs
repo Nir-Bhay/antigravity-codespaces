@@ -191,6 +191,47 @@ test('pins one GitHub identity across an explicit Codespace start and availabili
   assert.ok(processCalls.every(call => !call.args.includes(firstToken)));
 });
 
+test('does not call GitHub start when an explicit start sees a failed Codespace', async () => {
+  const gh = fakeGh({ codespaces: [{ name: 'octocat-failed', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Failed' }], state: 'Failed' });
+  const manager = createCodespaceManager({ gh });
+
+  await assert.rejects(manager.startCodespace('octocat-failed'), /Cannot start Codespace octocat-failed while GitHub reports state "Failed"/);
+  assert.equal(gh.calls.start, 0);
+});
+
+test('waits for an already starting Codespace without sending another start request', async () => {
+  let statusReads = 0;
+  let startCalls = 0;
+  const gh = {
+    async getCodespace(name) {
+      statusReads++;
+      return { name, state: statusReads === 1 ? 'Starting' : 'Available' };
+    },
+    async startCodespace() { startCalls++; }
+  };
+  const manager = createCodespaceManager({ gh, sleep: async () => {}, startupTimeoutMs: 1_000 });
+
+  const status = await manager.startCodespace('octocat-starting');
+  assert.equal(status.state, 'Available');
+  assert.equal(startCalls, 0);
+});
+
+test('does not start or run a command in a failed matching Codespace', async () => {
+  const gh = fakeGh({ codespaces: [{ name: 'octocat-failed', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Failed' }], state: 'Failed' });
+  let commandCalls = 0;
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => context(),
+    lock: async (_key, operation) => operation(),
+    runCommand: async () => { commandCalls++; return { exitCode: 0, stdout: '', stderr: '', timedOut: false, outputTruncated: false }; }
+  });
+
+  await assert.rejects(manager.runRepositoryCommand({ command: 'npm test' }), /Cannot start Codespace octocat-failed while GitHub reports state "Failed"/);
+  assert.equal(gh.calls.start, 0);
+  assert.equal(gh.calls.stop, 0);
+  assert.equal(commandCalls, 0);
+});
+
 test('fails closed before lifecycle calls when the active token cannot be captured', async () => {
   const calls = [];
   const gh = createGhClient({
