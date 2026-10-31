@@ -216,6 +216,25 @@ test('waits for an already starting Codespace without sending another start requ
   assert.equal(startCalls, 0);
 });
 
+test('waits for a shutting down Codespace to stop before restarting it', async () => {
+  const lifecycle = [];
+  let statusRead = 0;
+  const states = ['ShuttingDown', 'Shutdown', 'Available'];
+  const gh = {
+    async getCodespace(name) {
+      const state = states[Math.min(statusRead++, states.length - 1)];
+      lifecycle.push(`status:${state}`);
+      return { name, state };
+    },
+    async startCodespace() { lifecycle.push('start'); }
+  };
+  const manager = createCodespaceManager({ gh, sleep: async () => {}, startupTimeoutMs: 1_000 });
+
+  const status = await manager.startCodespace('octocat-shutting-down');
+  assert.equal(status.state, 'Available');
+  assert.deepEqual(lifecycle, ['status:ShuttingDown', 'status:Shutdown', 'start', 'status:Available']);
+});
+
 test('does not start or run a command in a failed matching Codespace', async () => {
   const gh = fakeGh({ codespaces: [{ name: 'octocat-failed', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Failed' }], state: 'Failed' });
   let commandCalls = 0;
