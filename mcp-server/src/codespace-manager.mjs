@@ -32,8 +32,27 @@ export function findMatchingCodespace(codespaces, repository, branch) {
   }) || null;
 }
 
+const STARTING_CODESPACE_STATES = new Set(['awaiting', 'creating', 'provisioning', 'queued', 'rebuilding', 'starting']);
+
+function normalizeState(state) {
+  return String(state || '').trim().toLowerCase();
+}
+
 function isAvailable(state) {
-  return String(state || '').toLowerCase() === 'available';
+  return normalizeState(state) === 'available';
+}
+
+function isStopped(state) {
+  return normalizeState(state) === 'shutdown';
+}
+
+async function startStoppedCodespace(gh, name, state, identityToken) {
+  if (isStopped(state)) {
+    await gh.startCodespace(name, identityToken === undefined ? {} : { identityToken });
+    return true;
+  }
+  if (STARTING_CODESPACE_STATES.has(normalizeState(state))) return false;
+  throw new Error(`Cannot start Codespace ${name} while GitHub reports state "${state || 'unknown'}"; refresh and try again when it is stopped.`);
 }
 
 function processIsAlive(pid) {
@@ -138,8 +157,7 @@ export function createCodespaceManager({
       codespace = await gh.createCodespace(context.repository, context.branch, identityOptions(identityToken));
       created = true;
     } else if (!isAvailable(codespace.state)) {
-      await gh.startCodespace(codespace.name, identityOptions(identityToken));
-      started = true;
+      started = await startStoppedCodespace(gh, codespace.name, codespace.state, identityToken);
     }
     try {
       const status = await waitUntilAvailable(codespace.name, identityToken);
@@ -229,7 +247,7 @@ export function createCodespaceManager({
       const identityToken = await pinIdentity();
       const current = await gh.getCodespace(name, identityOptions(identityToken));
       if (!isAvailable(current.state)) {
-        await gh.startCodespace(name, identityOptions(identityToken));
+        await startStoppedCodespace(gh, name, current.state, identityToken);
         return waitUntilAvailable(name, identityToken);
       }
       return current;
