@@ -220,6 +220,37 @@ test('pins one GitHub identity across an explicit Codespace start and availabili
   assert.ok(processCalls.every(call => !call.args.includes(firstToken)));
 });
 
+test('passes lifecycle cancellation signals from the manager to GitHub operations', async () => {
+  const controller = new AbortController();
+  const signals = [];
+  let statusReads = 0;
+  const states = ['Available', 'Shutdown', 'Available'];
+  const observe = options => signals.push(options?.signal);
+  const gh = {
+    async pinIdentity(options) { observe(options); return 'test-account-token'; },
+    async listCodespaces(options) { observe(options); return []; },
+    async getCodespace(name, options) {
+      observe(options);
+      return { name, state: states[statusReads++] || 'Available' };
+    },
+    async startCodespace(_name, options) { observe(options); },
+    async stopCodespace(_name, options) { observe(options); },
+    async getCodespaceLogs(_name, options) { observe(options); return 'logs'; },
+    async getCodespacePorts(_name, options) { observe(options); return []; }
+  };
+  const manager = createCodespaceManager({ gh, sleep: async () => {}, startupTimeoutMs: 1_000 });
+
+  await manager.listCodespaces({ signal: controller.signal });
+  await manager.getCodespace('octocat-space', { signal: controller.signal });
+  await manager.startCodespace('octocat-space', { signal: controller.signal });
+  await manager.stopCodespace('octocat-space', { signal: controller.signal });
+  await manager.getCodespaceLogs('octocat-space', { signal: controller.signal });
+  await manager.getCodespacePorts('octocat-space', { signal: controller.signal });
+
+  assert.ok(signals.length >= 8);
+  assert.ok(signals.every(signal => signal === controller.signal));
+});
+
 test('does not call GitHub start when an explicit start sees a failed Codespace', async () => {
   const gh = fakeGh({ codespaces: [{ name: 'octocat-failed', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Failed' }], state: 'Failed' });
   const manager = createCodespaceManager({ gh });

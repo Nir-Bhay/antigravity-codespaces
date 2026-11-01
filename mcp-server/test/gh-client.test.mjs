@@ -104,6 +104,40 @@ test('calls the documented start, stop, logs, ports, and status commands', async
   ]);
 });
 
+test('forwards cancellation signals to every GitHub CLI lifecycle process', async () => {
+  const controller = new AbortController();
+  const calls = [];
+  const outputs = [
+    'captured-token',
+    '[]',
+    '{"state":"Available"}',
+    '12345',
+    '{"name":"created-space"}',
+    '',
+    '',
+    'logs',
+    '[]'
+  ];
+  const gh = createGhClient({
+    runProcessImpl: async (_file, args, options) => {
+      calls.push({ args, signal: options.signal });
+      return { exitCode: 0, stdout: outputs.shift(), stderr: '', timedOut: false, outputTruncated: false };
+    }
+  });
+
+  await gh.pinIdentity({ signal: controller.signal });
+  await gh.listCodespaces({ signal: controller.signal });
+  await gh.getCodespace('octocat-space', { signal: controller.signal });
+  await gh.createCodespace('octocat/hello-world', 'main', { signal: controller.signal });
+  await gh.startCodespace('octocat-space', { signal: controller.signal });
+  await gh.stopCodespace('octocat-space', { signal: controller.signal });
+  await gh.getCodespaceLogs('octocat-space', { signal: controller.signal });
+  await gh.getCodespacePorts('octocat-space', { signal: controller.signal });
+
+  assert.equal(calls.length, 9);
+  assert.ok(calls.every(call => call.signal === controller.signal));
+});
+
 test('maps rate limits, Codespaces quota errors, and start failures to actionable messages', async () => {
   const rateLimited = createGhClient({ runProcessImpl: fakeProcess([{
     exitCode: 1, stdout: '', stderr: 'HTTP 403: API rate limit exceeded', timedOut: false, outputTruncated: false

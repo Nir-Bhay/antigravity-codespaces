@@ -36,17 +36,18 @@ function parseJson(text, description) {
 }
 
 export function createGhClient({ ghPath = DEFAULT_GH_PATH, env = process.env, runProcessImpl = runProcess } = {}) {
-  async function execute(args, { timeoutMs = 30_000, identityToken } = {}) {
+  async function execute(args, { timeoutMs = 30_000, identityToken, signal } = {}) {
     const result = await runProcessImpl(ghPath, args, {
       env,
       timeoutMs,
-      ...(identityToken === undefined ? {} : { githubCliToken: identityToken })
+      ...(identityToken === undefined ? {} : { githubCliToken: identityToken }),
+      ...(signal === undefined ? {} : { signal })
     });
     if (result.exitCode !== 0) throw cliError(args, result);
     return result.stdout.trim();
   }
 
-  async function pinIdentity() {
+  async function pinIdentity({ signal } = {}) {
     let result;
     try {
       result = await runProcessImpl(ghPath, ['auth', 'token', '--hostname', 'github.com'], {
@@ -55,9 +56,11 @@ export function createGhClient({ ghPath = DEFAULT_GH_PATH, env = process.env, ru
         suppressOutputCallbacks: true,
         captureSensitiveStdout: true,
         maxOutputChars: 4_096,
-        onOutput: () => {}
+        onOutput: () => {},
+        ...(signal === undefined ? {} : { signal })
       });
-    } catch {
+    } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
       throw new Error('Could not pin the active GitHub CLI account; `gh auth token --hostname github.com` could not run.');
     }
     const token = typeof result.stdout === 'string' ? result.stdout.trim() : '';
@@ -69,52 +72,52 @@ export function createGhClient({ ghPath = DEFAULT_GH_PATH, env = process.env, ru
 
   return {
     pinIdentity,
-    async listCodespaces({ identityToken } = {}) {
+    async listCodespaces({ identityToken, signal } = {}) {
       const output = await execute([
         'codespace', 'list', '--limit', '1000', '--json',
         'name,displayName,repository,gitStatus,state,lastUsedAt,machineName'
-      ], { timeoutMs: 30_000, identityToken });
+      ], { timeoutMs: 30_000, identityToken, signal });
       const result = parseJson(output || '[]', 'Codespaces list');
       if (!Array.isArray(result)) throw new Error('GitHub CLI returned a non-list Codespaces response.');
       return result;
     },
 
-    async getCodespace(name, { identityToken } = {}) {
-      const output = await execute(['api', `/user/codespaces/${encodeURIComponent(name)}`], { timeoutMs: 30_000, identityToken });
+    async getCodespace(name, { identityToken, signal } = {}) {
+      const output = await execute(['api', `/user/codespaces/${encodeURIComponent(name)}`], { timeoutMs: 30_000, identityToken, signal });
       return parseJson(output, 'Codespace status');
     },
 
-    async createCodespace(repository, branch, { identityToken } = {}) {
+    async createCodespace(repository, branch, { identityToken, signal } = {}) {
       if (!REPOSITORY_RE.test(repository)) throw new TypeError('repository must use owner/repository format.');
-      const id = await execute(['api', `repos/${repository}`, '--jq', '.id'], { timeoutMs: 30_000, identityToken });
+      const id = await execute(['api', `repos/${repository}`, '--jq', '.id'], { timeoutMs: 30_000, identityToken, signal });
       if (!/^\d+$/.test(id)) throw new Error('GitHub CLI returned an invalid repository id.');
       const output = await execute([
         'api', '-X', 'POST', '/user/codespaces',
         '-F', `repository_id=${id}`,
         '-F', `ref=${branch}`
-      ], { timeoutMs: 60_000, identityToken });
+      ], { timeoutMs: 60_000, identityToken, signal });
       const created = parseJson(output, 'Codespace creation');
       if (typeof created.name !== 'string' || !created.name) throw new Error('GitHub did not return a Codespace name after creation.');
       return created;
     },
 
-    async startCodespace(name, { identityToken } = {}) {
-      await execute(['api', '-X', 'POST', `/user/codespaces/${encodeURIComponent(name)}/start`], { timeoutMs: 120_000, identityToken });
+    async startCodespace(name, { identityToken, signal } = {}) {
+      await execute(['api', '-X', 'POST', `/user/codespaces/${encodeURIComponent(name)}/start`], { timeoutMs: 120_000, identityToken, signal });
     },
 
-    async stopCodespace(name, { identityToken } = {}) {
-      await execute(['codespace', 'stop', '--codespace', name], { timeoutMs: 60_000, identityToken });
+    async stopCodespace(name, { identityToken, signal } = {}) {
+      await execute(['codespace', 'stop', '--codespace', name], { timeoutMs: 60_000, identityToken, signal });
     },
 
-    async getCodespaceLogs(name) {
-      return execute(['codespace', 'logs', '--codespace', name], { timeoutMs: 30_000 });
+    async getCodespaceLogs(name, { identityToken, signal } = {}) {
+      return execute(['codespace', 'logs', '--codespace', name], { timeoutMs: 30_000, identityToken, signal });
     },
 
-    async getCodespacePorts(name) {
+    async getCodespacePorts(name, { identityToken, signal } = {}) {
       const output = await execute([
         'codespace', 'ports', '--codespace', name,
         '--json', 'portNumber,protocol,visibility,forwardedUrl'
-      ], { timeoutMs: 30_000 });
+      ], { timeoutMs: 30_000, identityToken, signal });
       const result = parseJson(output || '[]', 'Codespace ports');
       if (!Array.isArray(result)) throw new Error('GitHub CLI returned a non-list ports response.');
       return result;
