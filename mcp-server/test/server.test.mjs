@@ -6,6 +6,7 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fileURLToPath } from 'node:url';
 import { createCodespaceManager } from '../src/codespace-manager.mjs';
+import { createGhClient } from '../src/gh-client.mjs';
 import { runCodespaceCommand, runProcess, safeChildEnvironment } from '../src/process-runner.mjs';
 import { createCodespacesMcpServer, progressReporter } from '../src/server.mjs';
 
@@ -430,6 +431,135 @@ test('MCP cancellation terminates the explicitly targeted Codespace SSH process'
   } finally {
     child?.finish('SIGKILL');
     await finished;
+    await client.close();
+    await server.close();
+  }
+});
+
+test('MCP cancellation reaches Codespace lifecycle tool handlers', async () => {
+  const lifecycleCalls = [
+    { tool: 'list_codespaces', args: {}, method: 'listCodespaces' },
+    { tool: 'get_codespace_status', args: { codespaceName: 'octocat-space' }, method: 'getCodespace' },
+    { tool: 'start_codespace', args: { codespaceName: 'octocat-space' }, method: 'startCodespace' },
+    { tool: 'stop_codespace', args: { codespaceName: 'octocat-space' }, method: 'stopCodespace' },
+    { tool: 'get_codespace_logs', args: { codespaceName: 'octocat-space' }, method: 'getCodespaceLogs' },
+    { tool: 'get_codespace_ports', args: { codespaceName: 'octocat-space' }, method: 'getCodespacePorts' }
+  ];
+  let probe;
+  const waitForAbort = async signal => {
+    probe.signal = signal;
+    probe.started();
+    let timer;
+    const aborted = await new Promise(resolve => {
+      timer = setTimeout(() => resolve(false), 100);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        resolve(true);
+      }, { once: true });
+    });
+    return aborted;
+  };
+  const manager = Object.fromEntries(lifecycleCalls.map(({ method }) => [method, async (...args) => {
+    const options = typeof args[0] === 'string' ? args[1] : args[0];
+    try { return await waitForAbort(options?.signal); }
+    finally { probe.finished(); }
+  }]));
+  const server = createCodespacesMcpServer({ manager });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'lifecycle-cancel-test-client', version: '1.0.0' });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    for (const { tool, args } of lifecycleCalls) {
+      let resolveStarted;
+      let resolveFinished;
+      const started = new Promise(resolve => { resolveStarted = resolve; });
+      const finished = new Promise(resolve => { resolveFinished = resolve; });
+      probe = { signal: null, started: resolveStarted, finished: resolveFinished };
+      const controller = new AbortController();
+      const request = client.callTool({ name: tool, arguments: args }, { signal: controller.signal });
+      await started;
+      controller.abort(new Error('test lifecycle cancellation'));
+      await assert.rejects(request);
+      assert.equal(await finished.then(() => true), true);
+      assert.equal(probe.signal?.aborted, true, `${tool} receives the MCP request signal`);
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test('MCP cancellation aborts repository provisioning and keeps owned-Codespace cleanup independent', async () => {
+  let resolveStatusStarted;
+  const statusStarted = new Promise(resolve => { resolveStatusStarted = resolve; });
+  let resolveCleanupFinished;
+  const cleanupFinished = new Promise(resolve => { resolveCleanupFinished = resolve; });
+  let resolveManagerFinished;
+  const managerFinished = new Promise(resolve => { resolveManagerFinished = resolve; });
+  let statusSignal;
+  let cleanupSignal = 'not-called';
+  const gh = createGhClient({
+    runProcessImpl: async (_file, args, options) => {
+      if (args[0] === 'auth') return { exitCode: 0, stdout: 'test-token', stderr: '', timedOut: false, outputTruncated: false };
+      if (args[0] === 'codespace' && args[1] === 'list') return { exitCode: 0, stdout: '[]', stderr: '', timedOut: false, outputTruncated: false };
+      if (args[0] === 'api' && args[1] === 'repos/octocat/hello-world') return { exitCode: 0, stdout: '12345', stderr: '', timedOut: false, outputTruncated: false };
+      if (args[0] === 'api' && args[1] === '-X' && args[2] === 'POST') {
+        return { exitCode: 0, stdout: '{"name":"octocat-created-space","state":"Starting"}', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      if (args[0] === 'api' && args[1] === '/user/codespaces/octocat-created-space') {
+        statusSignal = options.signal;
+        resolveStatusStarted();
+        return new Promise((_, reject) => {
+          const onAbort = () => {
+            options.signal.removeEventListener('abort', onAbort);
+            const error = new Error('Process was cancelled.');
+            error.name = 'AbortError';
+            reject(error);
+          };
+          if (options.signal?.aborted) onAbort();
+          else options.signal?.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      if (args[0] === 'codespace' && args[1] === 'stop') {
+        cleanupSignal = options.signal;
+        resolveCleanupFinished();
+        return { exitCode: 0, stdout: '', stderr: '', timedOut: false, outputTruncated: false };
+      }
+      throw new Error(`Unexpected fake gh invocation: ${args.join(' ')}`);
+    }
+  });
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => ({ repository: 'octocat/hello-world', branch: 'feature/cancel-setup', cwd: '/tmp/repo' }),
+    lock: async (_key, operation) => operation(),
+    runCommand: async () => { throw new Error('the remote command must not start before provisioning finishes'); }
+  });
+  const runRepositoryCommand = manager.runRepositoryCommand.bind(manager);
+  manager.runRepositoryCommand = async options => {
+    try { return await runRepositoryCommand(options); }
+    finally { resolveManagerFinished(); }
+  };
+  const server = createCodespacesMcpServer({ manager });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'cancel-setup-test-client', version: '1.0.0' });
+  const controller = new AbortController();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const request = client.callTool(
+      { name: 'run_repository_command', arguments: { command: 'npm test' } },
+      { signal: controller.signal }
+    );
+    await statusStarted;
+    assert.ok(statusSignal, 'the status process receives a cancellation signal');
+    controller.abort(new Error('test provisioning cancellation'));
+    await assert.rejects(request);
+    await cleanupFinished;
+    await managerFinished;
+    assert.equal(statusSignal.aborted, true, 'the in-flight status process is cancelled');
+    assert.equal(cleanupSignal, undefined, 'cleanup must not inherit the cancelled request signal');
+  } finally {
     await client.close();
     await server.close();
   }

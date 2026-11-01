@@ -182,9 +182,9 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       description: 'List Codespaces visible to the active GitHub CLI account without starting them.',
       inputSchema: z.object({})
     },
-    async () => {
+    async (_args, ctx) => {
       try {
-        const result = await codespaceManager.listCodespaces();
+        const result = await codespaceManager.listCodespaces({ signal: ctx.mcpReq?.signal });
         return outputResult(JSON.stringify(result.map(summarizeCodespace), null, 2));
       } catch (error) {
         return outputResult(error.message || 'Could not list Codespaces.', true);
@@ -199,9 +199,9 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       description: 'Read current state and machine details for one Codespace.',
       inputSchema: codespaceNameSchema
     },
-    async ({ codespaceName }) => {
+    async ({ codespaceName }, ctx) => {
       try {
-        return outputResult(JSON.stringify(safeStatus(await codespaceManager.getCodespace(codespaceName)), null, 2));
+        return outputResult(JSON.stringify(safeStatus(await codespaceManager.getCodespace(codespaceName, { signal: ctx.mcpReq?.signal })), null, 2));
       } catch (error) {
         return outputResult(error.message || 'Could not read Codespace status.', true);
       }
@@ -215,9 +215,9 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       description: 'Start a stopped Codespace and wait for it to become available. This can incur compute charges; the Codespace is left running for subsequent use.',
       inputSchema: codespaceNameSchema
     },
-    async ({ codespaceName }) => {
+    async ({ codespaceName }, ctx) => {
       try {
-        return outputResult(JSON.stringify(safeStatus(await codespaceManager.startCodespace(codespaceName)), null, 2));
+        return outputResult(JSON.stringify(safeStatus(await codespaceManager.startCodespace(codespaceName, { signal: ctx.mcpReq?.signal })), null, 2));
       } catch (error) {
         return outputResult(error.message || 'Could not start Codespace.', true);
       }
@@ -231,9 +231,9 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       description: 'Stop a running Codespace to end compute usage. Its storage can continue to incur charges; this tool never deletes a Codespace.',
       inputSchema: codespaceNameSchema
     },
-    async ({ codespaceName }) => {
+    async ({ codespaceName }, ctx) => {
       try {
-        await codespaceManager.stopCodespace(codespaceName);
+        await codespaceManager.stopCodespace(codespaceName, { signal: ctx.mcpReq?.signal });
         return outputResult(`Stopped Codespace ${codespaceName}.`);
       } catch (error) {
         return outputResult(error.message || 'Could not stop Codespace.', true);
@@ -248,9 +248,9 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       description: 'Read logs for one Codespace. Logs can contain sensitive output; review before sharing them.',
       inputSchema: codespaceNameSchema
     },
-    async ({ codespaceName }) => {
+    async ({ codespaceName }, ctx) => {
       try {
-        return outputResult(await codespaceManager.getCodespaceLogs(codespaceName));
+        return outputResult(await codespaceManager.getCodespaceLogs(codespaceName, { signal: ctx.mcpReq?.signal }));
       } catch (error) {
         return outputResult(error.message || 'Could not read Codespace logs.', true);
       }
@@ -264,9 +264,9 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       description: 'List forwarded ports and URLs for one Codespace. A forwarded URL may grant access to a running service.',
       inputSchema: codespaceNameSchema
     },
-    async ({ codespaceName }) => {
+    async ({ codespaceName }, ctx) => {
       try {
-        return outputResult(JSON.stringify(await codespaceManager.getCodespacePorts(codespaceName), null, 2));
+        return outputResult(JSON.stringify(await codespaceManager.getCodespacePorts(codespaceName, { signal: ctx.mcpReq?.signal }), null, 2));
       } catch (error) {
         return outputResult(error.message || 'Could not read Codespace ports.', true);
       }
