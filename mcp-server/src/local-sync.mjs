@@ -165,16 +165,28 @@ repo=${shellQuote(repository.toLowerCase())}
 expected_head=${shellQuote(head)}
 run_id=${shellQuote(runId)}
 repo_root=''
+repository_seen=0
 for candidate in ${shellQuote(workspaceRoot)}/*; do
   [ -d "$candidate" ] || continue
   root=$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null) || continue
   remote=$(git -C "$root" remote get-url origin 2>/dev/null) || continue
   remote_lc=$(printf '%s' "$remote" | tr '[:upper:]' '[:lower:]')
   case "$remote_lc" in
-    git@github.com:"$repo".git|git@github.com:"$repo"|https://github.com/"$repo".git|https://github.com/"$repo"|ssh://git@github.com/"$repo".git|ssh://git@github.com/"$repo"|ssh://github.com/"$repo".git|ssh://github.com/"$repo"|git://github.com/"$repo".git|git://github.com/"$repo") repo_root="$root"; break ;;
+    git@github.com:"$repo".git|git@github.com:"$repo"|https://github.com/"$repo".git|https://github.com/"$repo"|ssh://git@github.com/"$repo".git|ssh://git@github.com/"$repo"|ssh://github.com/"$repo".git|ssh://github.com/"$repo"|git://github.com/"$repo".git|git://github.com/"$repo")
+      repository_seen=1
+      candidate_head=$(git -C "$root" rev-parse HEAD 2>/dev/null) || continue
+      if [ "$candidate_head" = "$expected_head" ]; then repo_root="$root"; break; fi
+      ;;
   esac
 done
-[ -n "$repo_root" ] || { echo 'Could not find the matching repository under /workspaces.' >&2; exit 44; }
+if [ -z "$repo_root" ]; then
+  if [ "$repository_seen" -eq 1 ]; then
+    echo 'No matching repository checkout has the expected HEAD; refusing to apply local changes.' >&2
+    exit 45
+  fi
+  echo 'Could not find the matching repository under /workspaces.' >&2
+  exit 44
+fi
 actual_head=$(git -C "$repo_root" rev-parse HEAD)
 [ "$actual_head" = "$expected_head" ] || { echo 'Codespace HEAD differs from the local HEAD; refusing to apply local changes.' >&2; exit 45; }
 worktree="/tmp/antigravity-codespaces-mcp-$run_id"
