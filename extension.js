@@ -85,14 +85,13 @@ async function activate(context) {
     const USAGE_ALERTS_KEY = 'antigravity.usageAlertsShown.v1';
     usageService.onLoaded((u) => {
         const c = vscode.workspace.getConfiguration('antigravity-codespaces');
-        const { pendingAlerts } = require('./src/usageService');
+        const { pendingAlerts, formatPendingAlerts } = require('./src/usageService');
         const shown = context.globalState.get(USAGE_ALERTS_KEY, {}) || {};
         const alerts = pendingAlerts(u, c.get('usage.alertThresholds', [75, 90]), shown);
         if (!alerts.length) return;
         for (const al of alerts) shown[al.key] = Date.now();
         context.globalState.update(USAGE_ALERTS_KEY, shown);
-        const top = alerts[alerts.length - 1];
-        vscode.window.showWarningMessage(top.message, 'Open Usage').then((pick) => {
+        vscode.window.showWarningMessage(formatPendingAlerts(alerts), 'Open Usage').then((pick) => {
             if (pick === 'Open Usage') vscode.commands.executeCommand('antigravity-codespaces.openDashboard', 'usage');
         });
     });
