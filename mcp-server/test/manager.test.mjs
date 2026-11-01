@@ -76,6 +76,35 @@ test('selects only an exact repository and branch match', () => {
   assert.equal(findMatchingCodespace(codespaces, 'octocat/hello-world', 'feature/other'), null);
 });
 
+test('prefers an available Codespace when duplicate exact matches include a failed one', async () => {
+  const matching = [
+    { name: 'failed-match', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Failed' },
+    { name: 'available-match', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Available' }
+  ];
+  const gh = {
+    async listCodespaces() { return matching; },
+    async getCodespace(name) { return matching.find(item => item.name === name); },
+    async startCodespace() { throw new Error('must reuse the available Codespace'); },
+    async stopCodespace() { throw new Error('must not stop a Codespace it did not start'); }
+  };
+  let commandCodespace;
+  const manager = createCodespaceManager({
+    gh,
+    detectContext: async () => context(),
+    lock: async (_key, operation) => operation(),
+    runCommand: async ({ codespaceName }) => {
+      commandCodespace = codespaceName;
+      return { exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, outputTruncated: false };
+    }
+  });
+
+  const result = await manager.runRepositoryCommand({ command: 'npm test' });
+  assert.equal(commandCodespace, 'available-match');
+  assert.equal(result.codespaceName, 'available-match');
+  assert.equal(result.created, false);
+  assert.equal(result.started, false);
+});
+
 test('reuses an already available Codespace and leaves its lifecycle unchanged', async () => {
   const gh = fakeGh({ codespaces: [{ name: 'octocat-running', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Available' }] });
   const manager = createCodespaceManager({
