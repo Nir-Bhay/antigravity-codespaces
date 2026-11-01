@@ -5,6 +5,7 @@ import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fileURLToPath } from 'node:url';
+import { createCodespaceManager } from '../src/codespace-manager.mjs';
 import { runCodespaceCommand, runProcess, safeChildEnvironment } from '../src/process-runner.mjs';
 import { createCodespacesMcpServer, progressReporter } from '../src/server.mjs';
 
@@ -367,6 +368,147 @@ test('marks remote nonzero exits as MCP tool errors', async () => {
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /Exit code: 23/);
   } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test('MCP cancellation terminates the explicitly targeted Codespace SSH process', async () => {
+  let child;
+  let resolveStarted;
+  const started = new Promise(resolve => { resolveStarted = resolve; });
+  let resolveFinished;
+  const finished = new Promise(resolve => { resolveFinished = resolve; });
+  const server = createCodespacesMcpServer({
+    runCommand: async (input, { signal, onOutput }) => {
+      try {
+        return await runCodespaceCommand(input, {
+          signal,
+          onOutput,
+          spawnImpl: () => {
+            child = new EventEmitter();
+            child.stdout = new PassThrough();
+            child.stderr = new PassThrough();
+            child.killSignals = [];
+            child.closed = false;
+            child.finish = requestedSignal => {
+              if (child.closed) return;
+              child.closed = true;
+              child.stdout.end();
+              child.stderr.end();
+              child.emit('close', null, requestedSignal);
+            };
+            child.kill = requestedSignal => {
+              child.killSignals.push(requestedSignal);
+              queueMicrotask(() => child.finish(requestedSignal));
+              return true;
+            };
+            resolveStarted();
+            return child;
+          }
+        });
+      } finally {
+        resolveFinished();
+      }
+    }
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'cancel-test-client', version: '1.0.0' });
+  const controller = new AbortController();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const request = client.callTool(
+      { name: 'run_codespace_command', arguments: { codespaceName: 'octocat-space', command: 'sleep 3600', timeoutMs: 60_000 } },
+      { signal: controller.signal }
+    );
+    await started;
+    controller.abort(new Error('test cancellation'));
+    await assert.rejects(request);
+    assert.deepEqual(child.killSignals, ['SIGTERM']);
+    await finished;
+  } finally {
+    child?.finish('SIGKILL');
+    await finished;
+    await client.close();
+    await server.close();
+  }
+});
+
+test('MCP cancellation stops a Codespace created for a repository command', async () => {
+  let child;
+  let resolveStarted;
+  const started = new Promise(resolve => { resolveStarted = resolve; });
+  let resolveFinished;
+  const finished = new Promise(resolve => { resolveFinished = resolve; });
+  let resolveStopped;
+  const stopped = new Promise(resolve => { resolveStopped = resolve; });
+  let stopCalls = 0;
+  const runCommand = async (input, { signal, onOutput }) => {
+    try {
+      return await runCodespaceCommand(input, {
+        signal,
+        onOutput,
+        spawnImpl: () => {
+          child = new EventEmitter();
+          child.stdout = new PassThrough();
+          child.stderr = new PassThrough();
+          child.killSignals = [];
+          child.closed = false;
+          child.finish = requestedSignal => {
+            if (child.closed) return;
+            child.closed = true;
+            child.stdout.end();
+            child.stderr.end();
+            child.emit('close', null, requestedSignal);
+          };
+          child.kill = requestedSignal => {
+            child.killSignals.push(requestedSignal);
+            queueMicrotask(() => child.finish(requestedSignal));
+            return true;
+          };
+          resolveStarted();
+          return child;
+        }
+      });
+    } finally {
+      resolveFinished();
+    }
+  };
+  const manager = createCodespaceManager({
+    gh: {
+      async listCodespaces() { return []; },
+      async createCodespace(repository, branch) {
+        return { name: 'octocat-created-space', repository, gitStatus: { ref: branch }, state: 'Available' };
+      },
+      async getCodespace(name) { return { name, state: 'Available' }; },
+      async stopCodespace() { stopCalls++; resolveStopped(); }
+    },
+    detectContext: async () => ({ repository: 'octocat/hello-world', branch: 'feature/cancel', cwd: '/tmp/repo' }),
+    lock: async (_key, operation) => operation(),
+    runCommand
+  });
+  const server = createCodespacesMcpServer({ manager });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'cancel-test-client', version: '1.0.0' });
+  const controller = new AbortController();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const request = client.callTool(
+      { name: 'run_repository_command', arguments: { command: 'sleep 3600', timeoutMs: 60_000 } },
+      { signal: controller.signal }
+    );
+    await started;
+    controller.abort(new Error('test cancellation'));
+    await assert.rejects(request);
+    assert.deepEqual(child.killSignals, ['SIGTERM']);
+    await finished;
+    await stopped;
+    assert.equal(stopCalls, 1);
+  } finally {
+    child?.finish('SIGKILL');
+    await finished;
     await client.close();
     await server.close();
   }
