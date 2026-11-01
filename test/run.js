@@ -730,6 +730,21 @@ function ok(name, fn) {
         const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
         assert.match(src, /const stateDisplay = quickConnectStateDisplay\(cs\.state\);/);
     });
+    await ok('Quick Connect warns when one account fails but other Codespaces load', () => {
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        const start = src.indexOf("registerCommand('antigravity-codespaces.quickConnect'");
+        const end = src.indexOf('// ── Command: Quick Actions Menu', start);
+        const handler = src.slice(start, end);
+        const resultsStart = handler.indexOf('const allCs = settled.flat();');
+        const sortStart = handler.indexOf('allCs.sort(', resultsStart);
+        const partialResultHandling = handler.slice(resultsStart, sortStart);
+        assert.ok(resultsStart >= 0 && sortStart > resultsStart, 'expected partial-result handling before the picker is sorted');
+        assert.match(partialResultHandling, /allCs\.length > 0 && failedAccounts\.length > 0/);
+        assert.match(partialResultHandling, /showWarningMessage/);
+        assert.match(partialResultHandling, /results are incomplete/i);
+        assert.match(partialResultHandling, /retry === 'Retry'/);
+        assert.match(partialResultHandling, /return;/);
+    });
 
     console.log('authManager');
     await ok('authManager tracks active account and manages token cache', () => {
