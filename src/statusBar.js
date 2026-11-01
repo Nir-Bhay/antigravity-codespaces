@@ -58,17 +58,31 @@ class StatusBarManager {
 
             const settled = await Promise.all(accounts.map(async (acc) => {
                 try {
-                    return await this._githubApi.listCodespaces(acc.account);
+                    return { list: await this._githubApi.listCodespaces(acc.account), failed: false };
                 } catch {
-                    return [];
+                    return { list: [], failed: true };
                 }
             }));
+            const failedCount = settled.filter(result => result.failed).length;
             let onlineCount = 0;
-            for (const list of settled) {
+            for (const { list } of settled) {
                 onlineCount += list.filter(c => c.state === 'Available').length;
             }
 
-            if (onlineCount > 0) {
+            if (failedCount > 0) {
+                const accountLabel = accounts.length === 1 ? 'account' : 'accounts';
+                const failureSummary = `Could not load Codespaces for ${failedCount} of ${accounts.length} ${accountLabel}.`;
+                if (failedCount === accounts.length) {
+                    this._item.text = '$(cloud) Codespaces: Status unavailable';
+                    this._item.tooltip = `Antigravity Codespaces: ${failureSummary} Click to retry.`;
+                } else {
+                    this._item.text = onlineCount > 0
+                        ? `$(cloud) Codespaces: ${onlineCount} Online (partial)`
+                        : '$(cloud) Codespaces: Partial';
+                    const runningSummary = onlineCount > 0 ? ` ${onlineCount} cloud environment(s) running.` : '';
+                    this._item.tooltip = `Antigravity Codespaces: Showing incomplete results. ${failureSummary}${runningSummary} Click to retry.`;
+                }
+            } else if (onlineCount > 0) {
                 this._item.text = `$(cloud) Codespaces: ${onlineCount} Online`;
                 this._item.tooltip = `Antigravity Codespaces: ${onlineCount} cloud environment(s) running. Click for quick actions.`;
             } else {

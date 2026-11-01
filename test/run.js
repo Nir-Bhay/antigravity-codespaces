@@ -132,6 +132,57 @@ function ok(name, fn) {
     });
 
     console.log('utils');
+    await ok('status bar reports unavailable and partial Codespaces results', async () => {
+        const Module = require('module');
+        const originalResolve = Module._resolveFilename;
+        const statusBarPath = require.resolve('../src/statusBar');
+        const previousStatusBar = require.cache[statusBarPath];
+        const previousVscode = require.cache.vscode;
+        const items = [];
+        Module._resolveFilename = function (request, ...args) {
+            return request === 'vscode' ? 'vscode' : originalResolve.call(this, request, ...args);
+        };
+        try {
+            require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: {
+                window: { createStatusBarItem: () => {
+                    const item = { show() {}, hide() {} };
+                    items.push(item);
+                    return item;
+                } },
+                StatusBarAlignment: { Left: 0 },
+                workspace: { getConfiguration: () => ({ get: (_key, fallback) => fallback }) }
+            } };
+            delete require.cache[statusBarPath];
+            const { StatusBarManager } = require(statusBarPath);
+            const failed = new StatusBarManager({ subscriptions: [] }, {
+                getAccounts: async () => [{ account: 'alice' }]
+            }, {
+                listCodespaces: async () => { throw new Error('permission denied'); }
+            });
+            await failed.update();
+            assert.match(items[0].text, /unavailable/i);
+            assert.match(items[0].tooltip, /1 of 1 account/i);
+
+            const partial = new StatusBarManager({ subscriptions: [] }, {
+                getAccounts: async () => [{ account: 'alice' }, { account: 'bob' }]
+            }, {
+                listCodespaces: async account => {
+                    if (account === 'bob') throw new Error('network unavailable');
+                    return [{ name: 'alice-space', state: 'Available' }];
+                }
+            });
+            await partial.update();
+            assert.match(items[1].text, /1 Online/i);
+            assert.match(items[1].text, /partial/i);
+            assert.match(items[1].tooltip, /1 of 2 accounts/i);
+        } finally {
+            Module._resolveFilename = originalResolve;
+            delete require.cache[statusBarPath];
+            if (previousStatusBar) require.cache[statusBarPath] = previousStatusBar;
+            if (previousVscode) require.cache.vscode = previousVscode;
+            else delete require.cache.vscode;
+        }
+    });
     await ok('escapeHtml escapes all five entities', () => {
         assert.strictEqual(escapeHtml('&<>"\''), '&amp;&lt;&gt;&quot;&#39;');
         assert.strictEqual(escapeHtml(null), '');
