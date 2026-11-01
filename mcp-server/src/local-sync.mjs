@@ -87,7 +87,7 @@ export async function buildLocalPatch(cwd, { runProcessImpl = runProcess } = {})
   const head = (await runGit(['rev-parse', 'HEAD'], root, runProcessImpl, 10_000)).trim();
   if (!HEAD_RE.test(head)) throw new Error('Could not identify the local repository HEAD commit.');
 
-  let patch = await runGit(['diff', '--binary', '--ignore-submodules=none', 'HEAD'], root, runProcessImpl);
+  let patch = await runGit(['diff', '--binary', '--no-textconv', '--ignore-submodules=none', 'HEAD'], root, runProcessImpl);
   const tracked = (await runGit(['diff', '--name-only', '--ignore-submodules=none', '-z', 'HEAD'], root, runProcessImpl, MAX_PATCH_BYTES))
     .split('\0').filter(Boolean);
   if ((await changedTrackedSubmodules(root, tracked, runProcessImpl)).length > 0) {
@@ -121,7 +121,7 @@ export async function buildLocalPatch(cwd, { runProcessImpl = runProcess } = {})
   for (const filename of includedUntrackedPaths) {
     const remaining = MAX_PATCH_BYTES - Buffer.byteLength(patch);
     if (remaining <= 0) throw new Error('Local changes exceed the 5 MiB transfer limit.');
-    const result = await runProcessImpl('git', ['diff', '--no-index', '--binary', '--', '/dev/null', filename], {
+    const result = await runProcessImpl('git', ['diff', '--no-index', '--binary', '--no-textconv', '--', '/dev/null', filename], {
       cwd: root,
       timeoutMs: 60_000,
       maxOutputChars: remaining
