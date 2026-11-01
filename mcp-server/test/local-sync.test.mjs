@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -54,6 +54,64 @@ test('snapshots staged, unstaged, binary, and untracked changes while excluding 
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(remote, { recursive: true, force: true });
+  }
+});
+
+test('includes the working files of an untracked nested Git repository in local sync', async () => {
+  const root = await makeRepo();
+  const nested = join(root, 'nested repository');
+  const inner = join(nested, 'inner repository');
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'codespaces mcp nested workspace '));
+  const remoteRepo = join(workspaceRoot, 'hello-world');
+  try {
+    await writeFile(join(root, '.gitignore'), 'ignored.txt\nnested repository/parent-ignored.txt\n');
+    git(root, ['add', '.gitignore']);
+    git(root, ['commit', '-m', 'ignore nested sync file']);
+    await mkdir(nested, { recursive: true });
+    execFileSync('git', ['init', '-b', 'main', nested], { stdio: 'ignore' });
+    execFileSync('git', ['-C', nested, 'config', 'user.name', 'MCP Test']);
+    execFileSync('git', ['-C', nested, 'config', 'user.email', 'mcp-test@example.invalid']);
+    await writeFile(join(nested, '.gitignore'), 'ignored.txt\n');
+    await writeFile(join(nested, 'tracked.txt'), 'nested tracked\n');
+    execFileSync('git', ['-C', nested, 'add', '.gitignore', 'tracked.txt']);
+    execFileSync('git', ['-C', nested, 'commit', '-m', 'nested base'], { stdio: 'ignore' });
+    await writeFile(join(nested, 'only-local.txt'), 'nested local\n');
+    await writeFile(join(nested, 'ignored.txt'), 'nested ignored\n');
+    await writeFile(join(nested, 'parent-ignored.txt'), 'parent ignored secret\n');
+    await mkdir(inner, { recursive: true });
+    execFileSync('git', ['init', '-b', 'main', inner], { stdio: 'ignore' });
+    execFileSync('git', ['-C', inner, 'config', 'user.name', 'MCP Test']);
+    execFileSync('git', ['-C', inner, 'config', 'user.email', 'mcp-test@example.invalid']);
+    await writeFile(join(inner, 'inner.txt'), 'nested repo inside nested repo\n');
+    execFileSync('git', ['-C', inner, 'add', 'inner.txt']);
+    execFileSync('git', ['-C', inner, 'commit', '-m', 'inner base'], { stdio: 'ignore' });
+
+    const snapshot = await buildLocalPatch(root);
+    assert.deepEqual(snapshot.files, [
+      'nested repository/.gitignore',
+      'nested repository/inner repository/inner.txt',
+      'nested repository/only-local.txt',
+      'nested repository/tracked.txt'
+    ]);
+    assert.deepEqual(snapshot.untrackedFiles, snapshot.files);
+    assert.doesNotMatch(snapshot.patch, /nested ignored/);
+    assert.doesNotMatch(snapshot.patch, /parent ignored secret/);
+
+    git(root, ['remote', 'add', 'origin', 'https://github.com/octocat/hello-world.git']);
+    execFileSync('git', ['clone', '-q', root, remoteRepo], { stdio: 'ignore' });
+    git(remoteRepo, ['remote', 'set-url', 'origin', 'https://github.com/octocat/hello-world.git']);
+    const script = buildRemoteWorktreeCommand({
+      repository: 'octocat/hello-world',
+      head: snapshot.head,
+      command: "cat 'nested repository/tracked.txt' 'nested repository/only-local.txt' 'nested repository/inner repository/inner.txt'",
+      workspaceRoot
+    });
+    const result = spawnSync('bash', ['-c', script], { cwd: remoteRepo, input: snapshot.patch, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'nested tracked\nnested local\nnested repo inside nested repo\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
 
