@@ -57,6 +57,42 @@ test('snapshots staged, unstaged, binary, and untracked changes while excluding 
   }
 });
 
+test('rejects local edits inside a tracked submodule instead of silently omitting them', async () => {
+  const root = await makeRepo();
+  const submodule = await mkdtemp(join(tmpdir(), 'codespaces-mcp-tracked-submodule-'));
+  const submodulePath = join(root, 'nested submodule');
+  try {
+    execFileSync('git', ['init', '-b', 'main', submodule], { stdio: 'ignore' });
+    git(submodule, ['config', 'user.name', 'MCP Test']);
+    git(submodule, ['config', 'user.email', 'mcp-test@example.invalid']);
+    await writeFile(join(submodule, 'tracked.txt'), 'submodule base\n');
+    git(submodule, ['add', 'tracked.txt']);
+    git(submodule, ['commit', '-m', 'submodule base']);
+    execFileSync('git', [
+      '-C', root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', submodule, submodulePath
+    ], { stdio: 'ignore' });
+    git(root, ['commit', '-m', 'add tracked submodule']);
+
+    git(root, ['config', 'diff.ignoreSubmodules', 'all']);
+    await writeFile(join(submodulePath, 'tracked.txt'), 'submodule local edit\n');
+    await writeFile(join(submodulePath, 'new.txt'), 'submodule untracked file\n');
+
+    await assert.rejects(
+      buildLocalPatch(root),
+      /Local changes to tracked submodules cannot be synced safely/
+    );
+
+    await writeFile(join(submodulePath, 'tracked.txt'), 'submodule base\n');
+    await assert.rejects(
+      buildLocalPatch(root),
+      /Local changes to tracked submodules cannot be synced safely/
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(submodule, { recursive: true, force: true });
+  }
+});
+
 test('includes the working files of an untracked nested Git repository in local sync', async () => {
   const root = await makeRepo();
   const nested = join(root, 'nested repository');

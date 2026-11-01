@@ -98,7 +98,7 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
     'preview_local_changes',
     {
       title: 'Preview local changes before syncing',
-      description: 'Read-only preview of changed tracked and non-ignored untracked file names and patch size. Does not return file contents, contact GitHub, or provision a Codespace. Ignored files are excluded. Review the file list and patch size, then pass the returned previewId as localChangesPreviewId when opting into syncLocalChanges; changes to repository context or patch are rejected.',
+      description: 'Read-only preview of changed tracked and non-ignored untracked file names and patch size. Does not return file contents, contact GitHub, or provision a Codespace. Ignored files are excluded. Review the file list and patch size, then pass the returned previewId as localChangesPreviewId when opting into syncLocalChanges; changes to repository context or patch are rejected. Local changes to tracked submodules are rejected because their file-level contents are not supported.',
       inputSchema: localContextSchema
     },
     async ({ cwd }) => {
