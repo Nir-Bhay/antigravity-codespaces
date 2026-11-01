@@ -23,15 +23,6 @@ function normalizeBranch(value) {
   return typeof value === 'string' ? value.replace(/^refs\/heads\//, '') : '';
 }
 
-export function findMatchingCodespace(codespaces, repository, branch) {
-  const repoKey = repository.toLowerCase();
-  return codespaces.find(codespace => {
-    const repo = normalizeRepository(codespace.repository ?? codespace.repository?.full_name);
-    const ref = normalizeBranch(codespace.gitStatus?.ref || codespace.git_status?.ref);
-    return repo === repoKey && ref === branch;
-  }) || null;
-}
-
 const STARTING_CODESPACE_STATES = new Set(['awaiting', 'creating', 'provisioning', 'queued', 'rebuilding', 'starting']);
 
 function normalizeState(state) {
@@ -44,6 +35,27 @@ function isAvailable(state) {
 
 function isStopped(state) {
   return normalizeState(state) === 'shutdown';
+}
+
+function matchingCodespacePriority(state) {
+  const normalized = normalizeState(state);
+  if (normalized === 'available') return 0;
+  if (STARTING_CODESPACE_STATES.has(normalized)) return 1;
+  if (normalized === 'shutdown') return 2;
+  if (normalized === 'shuttingdown') return 3;
+  return 4;
+}
+
+export function findMatchingCodespace(codespaces, repository, branch) {
+  const repoKey = repository.toLowerCase();
+  const matches = codespaces.filter(codespace => {
+    const repo = normalizeRepository(codespace.repository ?? codespace.repository?.full_name);
+    const ref = normalizeBranch(codespace.gitStatus?.ref || codespace.git_status?.ref);
+    return repo === repoKey && ref === branch;
+  });
+  return matches.reduce((best, candidate) => (
+    matchingCodespacePriority(candidate.state) < matchingCodespacePriority(best.state) ? candidate : best
+  ), matches[0]) || null;
 }
 
 async function startStoppedCodespace(gh, name, state, identityToken, waitUntilStopped) {
