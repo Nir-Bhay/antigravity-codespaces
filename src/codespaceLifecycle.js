@@ -24,6 +24,14 @@ function classifyCodespaceState(state) {
     return { kind: 'unknown', label: raw ? humanizeState(raw) : 'State unavailable', raw, actionable: false };
 }
 
+function quickConnectStateDisplay(state) {
+    const status = classifyCodespaceState(state);
+    if (status.kind === 'running') return { icon: '$(debug-start)', label: 'ONLINE' };
+    if (status.kind === 'stopped') return { icon: '$(debug-stop)', label: 'STOPPED' };
+    if (status.kind === 'transitioning') return { icon: '$(sync~spin)', label: status.label.toUpperCase() };
+    return { icon: '$(question)', label: 'UNKNOWN' };
+}
+
 function targetName(codespace) {
     return String(codespace && (codespace.displayName || codespace.name) || 'Codespace');
 }
@@ -59,6 +67,7 @@ function deleteConfirmationText(codespace) {
 
 module.exports = {
     classifyCodespaceState,
+    quickConnectStateDisplay,
     createConfirmationText,
     startConfirmationText,
     stopConfirmationText,

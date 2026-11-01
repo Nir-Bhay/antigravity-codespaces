@@ -722,6 +722,14 @@ function ok(name, fn) {
         assert.match(creation, /alice\/repo.*branch "main".*GitHub account "alice"/);
         assert.match(creation, /charges.*Storage is billed/);
     });
+    await ok('Quick Connect displays running, stopped, transitional, and unknown states accurately', () => {
+        assert.deepStrictEqual(lifecycle.quickConnectStateDisplay('Available'), { icon: '$(debug-start)', label: 'ONLINE' });
+        assert.deepStrictEqual(lifecycle.quickConnectStateDisplay('Shutdown'), { icon: '$(debug-stop)', label: 'STOPPED' });
+        assert.deepStrictEqual(lifecycle.quickConnectStateDisplay('Starting'), { icon: '$(sync~spin)', label: 'STARTING' });
+        assert.deepStrictEqual(lifecycle.quickConnectStateDisplay('FutureState'), { icon: '$(question)', label: 'UNKNOWN' });
+        const src = fs.readFileSync(path.join(ROOT, 'extension.js'), 'utf8');
+        assert.match(src, /const stateDisplay = quickConnectStateDisplay\(cs\.state\);/);
+    });
 
     console.log('authManager');
     await ok('authManager tracks active account and manages token cache', () => {

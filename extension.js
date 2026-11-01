@@ -31,7 +31,7 @@ const { SidebarProvider } = require('./src/sidebarProvider');
 const { DashboardProvider } = require('./src/dashboardProvider');
 const { StatusBarManager } = require('./src/statusBar');
 const { SetupDoctorProvider } = require('./src/setupDoctorProvider');
-const { classifyCodespaceState, createConfirmationText, startConfirmationText, stopConfirmationText, deleteConfirmationText } = require('./src/codespaceLifecycle');
+const { classifyCodespaceState, quickConnectStateDisplay, createConfirmationText, startConfirmationText, stopConfirmationText, deleteConfirmationText } = require('./src/codespaceLifecycle');
 
 // Concurrency tracker for active connections (fixes BUG-13)
 const connectingSet = new Set();
@@ -428,12 +428,10 @@ async function activate(context) {
                     });
 
                     const items = allCs.map(cs => {
-                        const isOnline = cs.state === 'Available';
-                        const icon = isOnline ? '$(debug-start)' : '$(debug-stop)';
-                        const stateLabel = isOnline ? 'ONLINE' : 'STOPPED';
+                        const stateDisplay = quickConnectStateDisplay(cs.state);
                         return {
-                            label: `${icon} ${cs.displayName || cs.name}`,
-                            description: `[${stateLabel}] ${cs.repository || cs.name} (${cs.account})`,
+                            label: `${stateDisplay.icon} ${cs.displayName || cs.name}`,
+                            description: `[${stateDisplay.label}] ${cs.repository || cs.name} (${cs.account})`,
                             detail: `Branch: ${cs.gitStatus?.ref || '—'} | Last active: ${formatRelativeTime(cs.lastUsedAt)}`,
                             cs
                         };
