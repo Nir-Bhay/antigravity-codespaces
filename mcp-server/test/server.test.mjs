@@ -6,7 +6,25 @@ import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fileURLToPath } from 'node:url';
 import { runCodespaceCommand, runProcess, safeChildEnvironment } from '../src/process-runner.mjs';
-import { createCodespacesMcpServer } from '../src/server.mjs';
+import { createCodespacesMcpServer, progressReporter } from '../src/server.mjs';
+
+test('progress notification failures do not reject the completed command response', async () => {
+  let notifications = 0;
+  const reporter = progressReporter({
+    mcpReq: {
+      _meta: { progressToken: 'test-token' },
+      async notify() {
+        notifications++;
+        throw new Error('progress transport unavailable');
+      }
+    }
+  });
+
+  reporter.onOutput('stdout', 'tests passed\n').catch(() => {});
+  reporter.onOutput('stderr', 'build complete\n').catch(() => {});
+  await assert.doesNotReject(reporter.flush());
+  assert.equal(notifications, 1, 'stop sending progress after the transport fails');
+});
 
 function fakeChild({ stdout = '', stderr = '', code = 0, signal = null, delayMs = 0 } = {}) {
   const child = new EventEmitter();

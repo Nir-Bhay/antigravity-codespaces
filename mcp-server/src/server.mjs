@@ -33,17 +33,26 @@ function formatRunResult(result) {
   return sections.join('\n\n');
 }
 
-function progressReporter(ctx) {
+export function progressReporter(ctx) {
   let progress = 0;
   let queue = Promise.resolve();
+  let progressAvailable = true;
   const token = ctx.mcpReq?._meta?.progressToken;
   return {
     onOutput(stream, chunk) {
-      if (token === undefined) return;
-      queue = queue.then(() => ctx.mcpReq.notify({
-        method: 'notifications/progress',
-        params: { progressToken: token, progress: ++progress, message: `${stream}: ${chunk}` }
-      }));
+      if (token === undefined || !progressAvailable) return queue;
+      queue = queue.then(async () => {
+        if (!progressAvailable) return;
+        try {
+          await ctx.mcpReq.notify({
+            method: 'notifications/progress',
+            params: { progressToken: token, progress: ++progress, message: `${stream}: ${chunk}` }
+          });
+        } catch {
+          // Progress is advisory; preserve the command result if a client cannot receive it.
+          progressAvailable = false;
+        }
+      });
       return queue;
     },
     flush() { return queue; }
