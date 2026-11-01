@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -417,6 +418,56 @@ test('validates repository commands and timeouts before Codespace lifecycle call
   await assert.rejects(manager.runRepositoryCommand({ command: 'npm test', timeoutMs: 999 }), /timeoutMs/);
   assert.equal(detectCalls, 0);
   assert.deepEqual(gh.calls, { list: 0, create: 0, start: 0, stop: 0 });
+});
+
+test('does not let a stale-lock reclaimer remove a fresh lock acquired by a peer', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codespaces-mcp-stale-lock-'));
+  const key = 'octocat/hello-world@feature/test';
+  const lockPath = join(directory, `${createHash('sha256').update(key).digest('hex')}.lock`);
+  await writeFile(lockPath, JSON.stringify({ pid: 2_147_483_647, createdAt: Date.now() - 60_000 }), { mode: 0o600 });
+
+  let bothInspectedResolve;
+  const bothInspected = new Promise(resolve => { bothInspectedResolve = resolve; });
+  let firstEnteredResolve;
+  const firstEntered = new Promise(resolve => { firstEnteredResolve = resolve; });
+  let releaseFirstResolve;
+  const releaseFirst = new Promise(resolve => { releaseFirstResolve = resolve; });
+  let secondEnteredResolve;
+  const secondEntered = new Promise(resolve => { secondEnteredResolve = resolve; });
+  let inspections = 0;
+  let operations = 0;
+  const beforeStaleLockUnlink = async () => {
+    const inspection = ++inspections;
+    if (inspection === 2) bothInspectedResolve();
+    await (inspection === 1 ? bothInspected : firstEntered);
+  };
+  const operation = async () => {
+    if (++operations === 1) {
+      firstEnteredResolve();
+      await releaseFirst;
+    } else {
+      secondEnteredResolve();
+    }
+  };
+  const lock = () => withRepositoryLock(key, operation, {
+    directory,
+    timeoutMs: 1_000,
+    pollIntervalMs: 5,
+    beforeStaleLockUnlink
+  });
+
+  const first = lock();
+  const second = lock();
+  try {
+    await firstEntered;
+    await Promise.race([secondEntered, new Promise(resolve => setTimeout(resolve, 50))]);
+    assert.equal(operations, 1, 'the second operation must wait while the first owns the fresh lock');
+  } finally {
+    releaseFirstResolve();
+    await Promise.all([first, second]);
+    await rm(directory, { recursive: true, force: true });
+  }
+  assert.equal(operations, 2);
 });
 
 test('serializes concurrent requests across server processes to prevent duplicate creation', async () => {

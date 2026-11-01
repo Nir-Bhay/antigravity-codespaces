@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { open, mkdir, readFile, stat, unlink } from 'node:fs/promises';
+import { open, mkdir, unlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectRepositoryContext } from './git-context.mjs';
@@ -94,13 +94,33 @@ function processIsAlive(pid) {
   }
 }
 
-async function removeStaleLock(lockPath) {
+async function readLockFile(lockPath) {
+  const handle = await open(lockPath, 'r');
   try {
-    const [raw, info] = await Promise.all([readFile(lockPath, 'utf8'), stat(lockPath)]);
+    const [raw, info] = await Promise.all([handle.readFile('utf8'), handle.stat()]);
+    return { raw, info };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+async function removeStaleLock(lockPath, beforeStaleLockUnlink) {
+  try {
+    const { raw, info } = await readLockFile(lockPath);
     let owner;
     try { owner = JSON.parse(raw); } catch {}
     if (owner?.pid && processIsAlive(owner.pid)) return false;
     if (!owner?.pid && Date.now() - info.mtimeMs < 5_000) return false;
+    await beforeStaleLockUnlink?.({ lockPath, owner, info });
+
+    // A competing reclaimer may have replaced this stale entry with a live owner's lock.
+    const current = await readLockFile(lockPath);
+    if (current.info.dev !== info.dev || current.info.ino !== info.ino || current.raw !== raw) return false;
+    let currentOwner;
+    try { currentOwner = JSON.parse(current.raw); } catch {}
+    if (currentOwner?.pid && processIsAlive(currentOwner.pid)) return false;
+    if (!currentOwner?.pid && Date.now() - current.info.mtimeMs < 5_000) return false;
+
     await unlink(lockPath);
     return true;
   } catch (error) {
@@ -112,7 +132,8 @@ export async function withRepositoryLock(key, operation, {
   directory = join(tmpdir(), 'antigravity-codespaces-mcp-locks'),
   timeoutMs = LOCK_WAIT_TIMEOUT_MS,
   pollIntervalMs = 250,
-  sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  beforeStaleLockUnlink
 } = {}) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const filename = `${createHash('sha256').update(key).digest('hex')}.lock`;
@@ -132,7 +153,7 @@ export async function withRepositoryLock(key, operation, {
       }
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      await removeStaleLock(lockPath);
+      await removeStaleLock(lockPath, beforeStaleLockUnlink);
       if (Date.now() >= deadline) throw new Error('Timed out waiting for another MCP request to finish preparing this repository Codespace.');
       await sleep(pollIntervalMs);
     }
