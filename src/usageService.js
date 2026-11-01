@@ -389,6 +389,14 @@ function pendingAlerts(u, thresholds, shown = {}) {
     return out;
 }
 
+/** Keep every pending quota warning visible when the UI presents one notification. */
+function formatPendingAlerts(alerts) {
+    return (Array.isArray(alerts) ? alerts : [])
+        .map(alert => alert && typeof alert.message === 'string' ? alert.message.trim() : '')
+        .filter(Boolean)
+        .join(' ');
+}
+
 function isNetworkError(err) {
     if (!err) return false;
     if (err.kind === 'network' || err.kind === 'timeout') return true;
@@ -692,5 +700,5 @@ class UsageService {
 module.exports = {
     UsageService, PLAN_QUOTAS, PRICE_PER_HOUR, STORAGE_PRICE_PER_GB_MONTH, CORE_HOUR_PRICE, CACHE_TTL_MS,
     coreHoursFor, pricePerHour, resolvePlan, billingCycle, parseSummary, parseDaily, computeStats,
-    isOrgBilled, coresFromSku, buildAnalytics, compareMonths, monthOptions, toCsv, toJson, MACHINE_SIZES, pendingAlerts, billingShapeError, rateLimitInfo, isNetworkError
+    isOrgBilled, coresFromSku, buildAnalytics, compareMonths, monthOptions, toCsv, toJson, MACHINE_SIZES, pendingAlerts, formatPendingAlerts, billingShapeError, rateLimitInfo, isNetworkError
 };

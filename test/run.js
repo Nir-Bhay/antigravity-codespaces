@@ -1740,6 +1740,8 @@ function ok(name, fn) {
         const u = { mode: 'live', isCurrent: true, login: 'octocat', period: { year: 2026, month: 10 }, compute: { used: 140, quota: 180 }, storage: { used: 19, quota: 20 } };
         const a = us.pendingAlerts(u, [75, 90], {});
         assert.deepStrictEqual(a.map(x => x.kind + x.threshold), ['compute75', 'storage75', 'storage90']);
+        assert.equal(us.formatPendingAlerts(a), a.map(alert => alert.message).join(' '), 'every pending quota alert must be included in the notification shown to users');
+        assert.equal(us.formatPendingAlerts([]), '');
         const shown = Object.fromEntries(a.map(x => [x.key, 1]));
         assert.strictEqual(us.pendingAlerts(u, [75, 90], shown).length, 0);
         assert.strictEqual(us.pendingAlerts(u, [50], {}).length, 2);
