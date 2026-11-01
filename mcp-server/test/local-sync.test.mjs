@@ -57,6 +57,31 @@ test('snapshots staged, unstaged, binary, and untracked changes while excluding 
   }
 });
 
+test('snapshots raw tracked bytes instead of configured textconv output', async () => {
+  const root = await makeRepo();
+  const remote = await mkdtemp(join(tmpdir(), 'codespaces-mcp-textconv-remote-'));
+  try {
+    await writeFile(join(root, '.gitattributes'), '*.dat diff=masked\n');
+    await writeFile(join(root, 'data.dat'), 'base secret\n');
+    git(root, ['add', '.gitattributes', 'data.dat']);
+    git(root, ['commit', '-m', 'add textconv fixture']);
+    git(root, ['config', 'diff.masked.textconv', "sed 's/secret/REDACTED/g'"]);
+    await writeFile(join(root, 'data.dat'), 'new secret\n');
+    await writeFile(join(root, 'new.dat'), 'untracked secret\n');
+
+    const snapshot = await buildLocalPatch(root);
+    execFileSync('git', ['clone', '-q', root, remote], { stdio: 'ignore' });
+    const patchFile = join(remote, 'local.patch');
+    await writeFile(patchFile, snapshot.patch);
+    git(remote, ['apply', '--binary', patchFile]);
+    assert.equal(await readFile(join(remote, 'data.dat'), 'utf8'), 'new secret\n');
+    assert.equal(await readFile(join(remote, 'new.dat'), 'utf8'), 'untracked secret\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(remote, { recursive: true, force: true });
+  }
+});
+
 test('rejects local edits inside a tracked submodule instead of silently omitting them', async () => {
   const root = await makeRepo();
   const submodule = await mkdtemp(join(tmpdir(), 'codespaces-mcp-tracked-submodule-'));
