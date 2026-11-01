@@ -15,6 +15,18 @@ async function runGit(args, cwd, runProcessImpl, maxOutputChars = MAX_PATCH_BYTE
   return result.stdout;
 }
 
+async function changedTrackedSubmodules(root, changedPaths, runProcessImpl) {
+  if (changedPaths.length === 0) return [];
+  const entries = await runGit(['ls-files', '--stage', '-z'], root, runProcessImpl);
+  const gitlinks = new Set();
+  for (const entry of entries.split('\0').filter(Boolean)) {
+    const tab = entry.indexOf('\t');
+    if (tab < 0 || entry.slice(0, tab).split(' ')[0] !== '160000') continue;
+    gitlinks.add(entry.slice(tab + 1));
+  }
+  return changedPaths.filter(filename => gitlinks.has(filename));
+}
+
 async function nestedRepositoryFiles(root, repositoryRoot, runProcessImpl, pathBudget) {
   try {
     await lstat(join(repositoryRoot, '.git'));
@@ -75,9 +87,12 @@ export async function buildLocalPatch(cwd, { runProcessImpl = runProcess } = {})
   const head = (await runGit(['rev-parse', 'HEAD'], root, runProcessImpl, 10_000)).trim();
   if (!HEAD_RE.test(head)) throw new Error('Could not identify the local repository HEAD commit.');
 
-  let patch = await runGit(['diff', '--binary', 'HEAD'], root, runProcessImpl);
-  const tracked = (await runGit(['diff', '--name-only', '-z', 'HEAD'], root, runProcessImpl, MAX_PATCH_BYTES))
+  let patch = await runGit(['diff', '--binary', '--ignore-submodules=none', 'HEAD'], root, runProcessImpl);
+  const tracked = (await runGit(['diff', '--name-only', '--ignore-submodules=none', '-z', 'HEAD'], root, runProcessImpl, MAX_PATCH_BYTES))
     .split('\0').filter(Boolean);
+  if ((await changedTrackedSubmodules(root, tracked, runProcessImpl)).length > 0) {
+    throw new Error('Local changes to tracked submodules cannot be synced safely.');
+  }
   const untracked = (await runGit(['ls-files', '--others', '--exclude-standard', '-z'], root, runProcessImpl, MAX_PATCH_BYTES))
     .split('\0').filter(Boolean);
   const untrackedPaths = [];

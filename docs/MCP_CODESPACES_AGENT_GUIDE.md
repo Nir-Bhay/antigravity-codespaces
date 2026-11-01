@@ -22,7 +22,7 @@ This guide describes the intended workflow and safety boundaries. For installati
 
 `preview_local_changes` returns a single-use `previewId`. It expires after 10 minutes. To sync, explicitly set `syncLocalChanges: true` and pass that preview's ID as `localChangesPreviewId` to `run_repository_command`.
 
-The server rejects a stale preview when repository, branch, HEAD, or patch content differs. Only the reviewed patch is applied, in a detached temporary worktree; the local and remote HEAD commits must match. Git-ignored files are excluded, but non-ignored untracked files can be included. The patch limit is 5 MiB. The preview returns file paths and size, not file contents.
+The server rejects a stale preview when repository, branch, HEAD, or patch content differs. Only the reviewed patch is applied, in a detached temporary worktree; the local and remote HEAD commits must match. Git-ignored files are excluded, but non-ignored untracked files can be included. The patch limit is 5 MiB. The preview returns file paths and size, not file contents. Local changes inside tracked Git submodules are rejected because their file-level contents are not yet supported.
 
 If anything changed since preview, generate and inspect a new preview rather than retrying with the old ID.
 

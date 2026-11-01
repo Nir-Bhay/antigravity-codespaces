@@ -246,7 +246,7 @@ export function createCodespaceManager({
         transferLimitBytes: 5 * 1024 * 1024,
         codespaceProvisioningAttempted: false,
         untrackedFiles: snapshot.untrackedFiles,
-        note: 'Ignored files are excluded. File names and byte count are shown; file contents are not returned. Pass previewId as localChangesPreviewId when opting into syncLocalChanges. The preview expires after 10 minutes and is single-use; syncing is refused if the repository, branch, HEAD, or local patch changes. Preview does not contact GitHub or provision a Codespace.'
+        note: 'Ignored files are excluded. Local changes to tracked submodules are not supported. File names and byte count are shown; file contents are not returned. Pass previewId as localChangesPreviewId when opting into syncLocalChanges. The preview expires after 10 minutes and is single-use; syncing is refused if the repository, branch, HEAD, or local patch changes. Preview does not contact GitHub or provision a Codespace.'
       };
     },
 
