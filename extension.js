@@ -411,6 +411,17 @@ async function activate(context) {
                     }));
                     const allCs = settled.flat();
 
+                    if (allCs.length > 0 && failedAccounts.length > 0) {
+                        const retry = await vscode.window.showWarningMessage(
+                            `Quick Connect results are incomplete: couldn't load Codespaces for ${failedAccounts.join(', ')}. Check connection or sign-in; the list may be missing Codespaces.`,
+                            'Retry'
+                        );
+                        if (retry === 'Retry') {
+                            await vscode.commands.executeCommand('antigravity-codespaces.quickConnect');
+                            return;
+                        }
+                    }
+
                     if (allCs.length === 0) {
                         const msg = failedAccounts.length
                             ? `Couldn't load Codespaces (${failedAccounts.join(', ')} failed). Check connection and sign-in, then retry.`
