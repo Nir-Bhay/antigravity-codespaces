@@ -298,7 +298,7 @@ export function createCodespaceManager({
       return gh.getCodespacePorts(name);
     },
 
-    async runRepositoryCommand({ cwd, command, timeoutMs, onOutput, syncLocalChanges = false, localChangesPreviewId } = {}) {
+    async runRepositoryCommand({ cwd, command, timeoutMs, onOutput, signal, syncLocalChanges = false, localChangesPreviewId } = {}) {
       const validated = validateCommandInput({ command, timeoutMs });
       if (localChangesPreviewId && !syncLocalChanges) throw new Error('localChangesPreviewId can only be used with syncLocalChanges=true.');
       const context = await detectContext({ cwd });
@@ -336,7 +336,7 @@ export function createCodespaceManager({
         try {
           result = await runCommand(
             { codespaceName: resource.codespace.name, command: remoteCommand, timeoutMs: validated.timeoutMs, input: localSnapshot?.patch },
-            { onOutput, ...identityOptions(identityToken) }
+            { onOutput, signal, ...identityOptions(identityToken) }
           );
         } catch (error) {
           runError = error;

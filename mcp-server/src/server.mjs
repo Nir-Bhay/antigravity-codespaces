@@ -131,7 +131,7 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
       try {
         const result = await runCommand(
           { codespaceName, command, timeoutMs: timeoutMs ?? processRunnerLimits.defaultTimeoutMs },
-          { onOutput: reporter.onOutput }
+          { onOutput: reporter.onOutput, signal: ctx.mcpReq?.signal }
         );
         await reporter.flush();
         return { ...outputResult(formatRunResult(result), result.exitCode !== 0), structuredContent: result };
@@ -152,7 +152,7 @@ export function createCodespacesMcpServer({ runCommand = runCodespaceCommand, ma
     async ({ command, cwd, timeoutMs, syncLocalChanges, localChangesPreviewId }, ctx) => {
       const reporter = progressReporter(ctx);
       try {
-        const summary = await codespaceManager.runRepositoryCommand({ command, cwd, timeoutMs, syncLocalChanges, localChangesPreviewId, onOutput: reporter.onOutput });
+        const summary = await codespaceManager.runRepositoryCommand({ command, cwd, timeoutMs, syncLocalChanges, localChangesPreviewId, onOutput: reporter.onOutput, signal: ctx.mcpReq?.signal });
         await reporter.flush();
         const metadata = [
           `Repository: ${summary.repository}`,

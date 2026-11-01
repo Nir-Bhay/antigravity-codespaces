@@ -49,6 +49,12 @@ function nextLineBoundary(text) {
   return Math.min(newline, carriageReturn);
 }
 
+function cancellationError() {
+  const error = new Error('Process was cancelled.');
+  error.name = 'AbortError';
+  return error;
+}
+
 /** Spawn a local process without a shell, stream bounded stdout/stderr, and enforce a deadline. */
 export function runProcess(
   file,
@@ -63,7 +69,8 @@ export function runProcess(
     maxOutputChars = MAX_OUTPUT_CHARS,
     githubCliToken,
     suppressOutputCallbacks = false,
-    captureSensitiveStdout = false
+    captureSensitiveStdout = false,
+    signal
   } = {}
 ) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > MAX_TIMEOUT_MS) {
@@ -72,6 +79,7 @@ export function runProcess(
   if (captureSensitiveStdout && !suppressOutputCallbacks) {
     throw new TypeError('Sensitive stdout capture requires output callbacks to be suppressed.');
   }
+  if (signal?.aborted) return Promise.reject(cancellationError());
   const childEnv = safeChildEnvironment(env);
   if (githubCliToken !== undefined) {
     if (typeof githubCliToken !== 'string' || !githubCliToken || /\s/.test(githubCliToken)) {
@@ -96,16 +104,27 @@ export function runProcess(
       stderr: { pending: '', rawLength: 0, stopped: false }
     };
     let timedOut = false;
+    let cancelled = false;
     let inputError;
     let settled = false;
     let forceKillTimer;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = () => {
       child.kill('SIGTERM');
       forceKillTimer = setTimeout(() => {
         if (!settled) child.kill('SIGKILL');
       }, 5_000);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
     }, timeoutMs);
+    const onAbort = () => {
+      if (settled || cancelled || timedOut) return;
+      cancelled = true;
+      clearTimeout(timer);
+      terminate();
+    };
+    const cleanupSignal = () => signal?.removeEventListener('abort', onAbort);
 
     const appendSafeOutput = (streamName, rawLine) => {
       const state = redactionState[streamName];
@@ -156,6 +175,10 @@ export function runProcess(
       }
     };
 
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }
     if (input !== undefined && child.stdin) {
       child.stdin.once('error', error => { inputError = error; });
       child.stdin.end(input);
@@ -167,6 +190,7 @@ export function runProcess(
       settled = true;
       clearTimeout(timer);
       clearTimeout(forceKillTimer);
+      cleanupSignal();
       reject(new Error(`${file} could not run: ${error.message}`));
     });
     child.once('close', (code, signal) => {
@@ -175,6 +199,11 @@ export function runProcess(
       settled = true;
       clearTimeout(timer);
       clearTimeout(forceKillTimer);
+      cleanupSignal();
+      if (cancelled) {
+        reject(cancellationError());
+        return;
+      }
       if (inputError) {
         reject(new Error(`Could not send input to ${file}: ${inputError.message}`));
         return;
@@ -194,11 +223,11 @@ export function runProcess(
 /** Run one explicitly requested command through the user's existing GitHub CLI authentication. */
 export function runCodespaceCommand(
   input,
-  { spawnImpl = spawn, ghPath = process.env.GH_PATH || 'gh', env = process.env, onOutput = () => {}, identityToken } = {}
+  { spawnImpl = spawn, ghPath = process.env.GH_PATH || 'gh', env = process.env, onOutput = () => {}, identityToken, signal } = {}
 ) {
   const { codespaceName, command, timeoutMs } = validateRunInput(input);
   const args = ['codespace', 'ssh', '--codespace', codespaceName, '--', command];
-  return runProcess(ghPath, args, { spawnImpl, env, onOutput, input: input.input, timeoutMs, githubCliToken: identityToken });
+  return runProcess(ghPath, args, { spawnImpl, env, onOutput, input: input.input, timeoutMs, githubCliToken: identityToken, signal });
 }
 
 export const processRunnerLimits = Object.freeze({
