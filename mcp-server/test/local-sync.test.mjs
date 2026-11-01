@@ -348,6 +348,48 @@ test('executes the remote setup locally to prove patch application and cleanup o
   }
 });
 
+test('selects a matching HEAD from a later same-origin checkout when the first clone is stale', async () => {
+  const root = await makeRepo();
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'codespaces mcp workspaces '));
+  const staleRepo = join(workspaceRoot, 'a-stale');
+  const matchingRepo = join(workspaceRoot, 'z-matching');
+  try {
+    git(root, ['remote', 'add', 'origin', 'https://github.com/octocat/hello-world.git']);
+    await writeFile(join(root, 'tracked.txt'), 'patched tracked file\n');
+    await writeFile(join(root, 'new.txt'), 'patched untracked file\n');
+    const snapshot = await buildLocalPatch(root);
+    for (const checkout of [staleRepo, matchingRepo]) {
+      execFileSync('git', ['clone', '-q', root, checkout], { stdio: 'ignore' });
+      git(checkout, ['remote', 'set-url', 'origin', 'https://github.com/octocat/hello-world.git']);
+    }
+    git(staleRepo, ['config', 'user.name', 'MCP Test']);
+    git(staleRepo, ['config', 'user.email', 'mcp-test@example.invalid']);
+    await writeFile(join(staleRepo, 'stale.txt'), 'stale clone only\n');
+    git(staleRepo, ['add', 'stale.txt']);
+    git(staleRepo, ['commit', '-m', 'advance stale clone']);
+
+    const script = buildRemoteWorktreeCommand({
+      repository: 'octocat/hello-world', head: snapshot.head, command: 'cat tracked.txt new.txt', workspaceRoot
+    });
+    const result = spawnSync('bash', ['-c', script], { cwd: root, input: snapshot.patch, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'patched tracked file\npatched untracked file\n');
+    assert.notEqual(git(staleRepo, ['rev-parse', 'HEAD']), snapshot.head);
+    assert.equal(git(matchingRepo, ['rev-parse', 'HEAD']), snapshot.head);
+
+    const mismatchScript = buildRemoteWorktreeCommand({
+      repository: 'octocat/hello-world', head: 'f'.repeat(40), command: 'true', workspaceRoot
+    });
+    const mismatch = spawnSync('bash', ['-c', mismatchScript], { cwd: root, encoding: 'utf8' });
+    assert.equal(mismatch.status, 45);
+    assert.match(mismatch.stderr, /No matching repository checkout has the expected HEAD/);
+    assert.equal(git(matchingRepo, ['worktree', 'list', '--porcelain']).split('worktree ').length - 1, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('rejects remotes whose hostname only contains github.com before applying local changes', async () => {
   const root = await makeRepo();
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'codespaces mcp workspaces '));
