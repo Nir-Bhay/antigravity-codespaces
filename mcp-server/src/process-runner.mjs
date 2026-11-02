@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_TIMEOUT_MS = 6 * 60 * 60 * 1000;
@@ -100,8 +101,8 @@ export function runProcess(
     let stderr = '';
     let outputTruncated = false;
     const redactionState = {
-      stdout: { pending: '', rawLength: 0, stopped: false },
-      stderr: { pending: '', rawLength: 0, stopped: false }
+      stdout: { decoder: new StringDecoder('utf8'), pending: '', rawLength: 0, stopped: false },
+      stderr: { decoder: new StringDecoder('utf8'), pending: '', rawLength: 0, stopped: false }
     };
     let timedOut = false;
     let cancelled = false;
@@ -150,7 +151,7 @@ export function runProcess(
     const capture = (streamName, chunk) => {
       const state = redactionState[streamName];
       if (state.stopped) return;
-      state.pending += chunk.toString('utf8');
+      state.pending += state.decoder.write(chunk);
       let boundary;
       while ((boundary = nextLineBoundary(state.pending)) >= 0) {
         const line = state.pending.slice(0, boundary + 1);
@@ -167,6 +168,7 @@ export function runProcess(
     const flushRedactionBuffers = () => {
       for (const streamName of ['stdout', 'stderr']) {
         const state = redactionState[streamName];
+        if (!state.stopped) state.pending += state.decoder.end();
         if (state.pending && !state.stopped) {
           const remaining = state.pending;
           state.pending = '';

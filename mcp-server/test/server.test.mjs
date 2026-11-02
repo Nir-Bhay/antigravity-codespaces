@@ -74,6 +74,40 @@ test('runs gh codespace ssh with argument-safe local process invocation and capt
   });
 });
 
+test('preserves UTF-8 characters split across streamed output chunks', async () => {
+  const expectedStdout = 'A€B\n';
+  const expectedStderr = 'warn: 🧪\n';
+  const progress = [];
+  const splitAfterFirstUtf8Byte = value => {
+    const bytes = Buffer.from(value);
+    const firstUtf8Byte = bytes.findIndex(byte => byte >= 0x80);
+    return [bytes.subarray(0, firstUtf8Byte + 1), bytes.subarray(firstUtf8Byte + 1)];
+  };
+  const result = await runProcess('fake', [], {
+    timeoutMs: 5_000,
+    onOutput: (stream, text) => progress.push([stream, text]),
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      queueMicrotask(() => {
+        for (const chunk of splitAfterFirstUtf8Byte(expectedStdout)) child.stdout.write(chunk);
+        for (const chunk of splitAfterFirstUtf8Byte(expectedStderr)) child.stderr.write(chunk);
+        child.stdout.end();
+        child.stderr.end();
+        child.emit('close', 0, null);
+      });
+      return child;
+    }
+  });
+
+  assert.equal(result.stdout, expectedStdout);
+  assert.equal(result.stderr, expectedStderr);
+  assert.equal(progress.filter(([stream]) => stream === 'stdout').map(([, text]) => text).join(''), expectedStdout);
+  assert.equal(progress.filter(([stream]) => stream === 'stderr').map(([, text]) => text).join(''), expectedStderr);
+});
+
 test('pipes an opted-in local patch to the remote SSH command over stdin', async () => {
   let options;
   let received = '';
