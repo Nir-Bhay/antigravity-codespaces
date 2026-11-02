@@ -108,6 +108,62 @@ test('preserves UTF-8 characters split across streamed output chunks', async () 
   assert.equal(progress.filter(([stream]) => stream === 'stderr').map(([, text]) => text).join(''), expectedStderr);
 });
 
+test('streams safe partial output before the child process exits', async () => {
+  let childExited = false;
+  const updates = [];
+  const resultPromise = runProcess('fake', [], {
+    timeoutMs: 5_000,
+    onOutput: (_stream, text) => updates.push({ text, beforeExit: !childExited }),
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      setTimeout(() => child.stdout.write('started'), 0);
+      setTimeout(() => {
+        childExited = true;
+        child.stdout.end();
+        child.stderr.end();
+        child.emit('close', 0, null);
+      }, 40);
+      return child;
+    }
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.stdout, 'started');
+  assert.ok(updates.some(update => update.text === 'started' && update.beforeExit));
+});
+
+test('streams ordinary text but withholds split credential values until redacted', async () => {
+  const token = `ghp_${'a'.repeat(36)}`;
+  const updates = [];
+  const resultPromise = runProcess('fake', [], {
+    timeoutMs: 5_000,
+    onOutput: (_stream, text) => updates.push(text),
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = () => true;
+      setTimeout(() => child.stdout.write('starting '), 0);
+      setTimeout(() => child.stdout.write(`GITHUB_TOKEN=${token.slice(0, 12)}`), 10);
+      setTimeout(() => child.stdout.write(`${token.slice(12)}\n`), 20);
+      setTimeout(() => {
+        child.stdout.end();
+        child.stderr.end();
+        child.emit('close', 0, null);
+      }, 40);
+      return child;
+    }
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.stdout, 'starting GITHUB_TOKEN="[REDACTED]"\n');
+  assert.ok(updates.includes('starting '));
+  assert.ok(updates.every(text => !text.includes('ghp_') && !text.includes(token)));
+});
+
 test('pipes an opted-in local patch to the remote SSH command over stdin', async () => {
   let options;
   let received = '';

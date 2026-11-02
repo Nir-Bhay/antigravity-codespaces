@@ -36,10 +36,10 @@ export function validateRunInput({ codespaceName, command, timeoutMs } = {}) {
 
 export function redactSensitiveText(text) {
   return String(text)
+    .replace(/((?:^|[^A-Z0-9_.-])["']?[A-Z0-9_.-]{0,128}(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_.-]{0,128}["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1"[REDACTED]"')
     .replace(/\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9_]{20,})\b/gi, '[REDACTED TOKEN]')
     .replace(/\bBearer\s+["']?[A-Za-z0-9._~+/-]{12,}=?["']?/gi, 'Bearer [REDACTED TOKEN]')
-    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED JWT]')
-    .replace(/((?:^|[^A-Z0-9_.-])["']?[A-Z0-9_.-]{0,128}(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_.-]{0,128}["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1"[REDACTED]"');
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED JWT]');
 }
 
 function nextLineBoundary(text) {
@@ -48,6 +48,40 @@ function nextLineBoundary(text) {
   if (newline < 0) return carriageReturn;
   if (carriageReturn < 0) return newline;
   return Math.min(newline, carriageReturn);
+}
+
+const STREAMING_SECRET_MARKERS = [
+  'github_pat_', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'bearer', 'eyj',
+  'token', 'secret', 'password', 'credential', 'private_key', 'access_key'
+];
+
+function unsafeStreamingStart(text) {
+  let start = text.length;
+  const candidates = [
+    /\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]*$/i,
+    /\bBearer\s+["']?[A-Za-z0-9._~+/-]*=?["']?$/i,
+    /\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}$/
+  ];
+  for (const pattern of candidates) {
+    const match = pattern.exec(text);
+    if (match) start = Math.min(start, match.index);
+  }
+
+  // Keep an unfinished credential assignment together so its value cannot leak
+  // when a secret-bearing key or value is split across process output chunks.
+  const assignment = /(?:^|[^A-Z0-9_.-])["']?[A-Z0-9_.-]{0,128}(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|PRIVATE_KEY|ACCESS_KEY)["']?\s*[:=]\s*(?:"[^"]*$|'[^']*$|[^\s,;}]*$)/i.exec(text);
+  if (assignment) start = Math.min(start, assignment.index);
+
+  // Retain suffixes that could become a sensitive marker in the next chunk.
+  const lower = text.toLowerCase();
+  for (const marker of STREAMING_SECRET_MARKERS) {
+    for (let length = 1; length <= marker.length; length++) {
+      if (lower.endsWith(marker.slice(0, length))) {
+        start = Math.min(start, text.length - length);
+      }
+    }
+  }
+  return start;
 }
 
 function cancellationError() {
@@ -157,6 +191,13 @@ export function runProcess(
         const line = state.pending.slice(0, boundary + 1);
         state.pending = state.pending.slice(boundary + 1);
         appendSafeOutput(streamName, line);
+        if (state.stopped) return;
+      }
+      const safeBoundary = unsafeStreamingStart(state.pending);
+      if (safeBoundary > 0) {
+        const safePartial = state.pending.slice(0, safeBoundary);
+        state.pending = state.pending.slice(safeBoundary);
+        appendSafeOutput(streamName, safePartial);
         if (state.stopped) return;
       }
       if (state.pending.length > maxOutputChars - state.rawLength) {
