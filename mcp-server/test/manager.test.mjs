@@ -252,6 +252,23 @@ test('passes lifecycle cancellation signals from the manager to GitHub operation
   assert.ok(signals.every(signal => signal === controller.signal));
 });
 
+test('passes request cancellation to repository lock acquisition', async () => {
+  const controller = new AbortController();
+  let lockSignal;
+  const manager = createCodespaceManager({
+    gh: fakeGh({ codespaces: [{ name: 'octocat-running', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Available' }] }),
+    detectContext: async () => context(),
+    lock: async (_key, operation, options) => {
+      lockSignal = options?.signal;
+      return operation();
+    },
+    runCommand: async () => ({ exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, outputTruncated: false })
+  });
+
+  await manager.runRepositoryCommand({ command: 'npm test', signal: controller.signal });
+  assert.equal(lockSignal, controller.signal);
+});
+
 test('does not call GitHub start when an explicit start sees a failed Codespace', async () => {
   const gh = fakeGh({ codespaces: [{ name: 'octocat-failed', repository: 'octocat/hello-world', gitStatus: { ref: 'feature/test' }, state: 'Failed' }], state: 'Failed' });
   const manager = createCodespaceManager({ gh });
@@ -418,6 +435,61 @@ test('validates repository commands and timeouts before Codespace lifecycle call
   await assert.rejects(manager.runRepositoryCommand({ command: 'npm test', timeoutMs: 999 }), /timeoutMs/);
   assert.equal(detectCalls, 0);
   assert.deepEqual(gh.calls, { list: 0, create: 0, start: 0, stop: 0 });
+});
+
+test('cancels promptly while waiting for a repository lock', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'codespaces-mcp-lock-cancel-'));
+  const key = 'octocat/hello-world@feature/test';
+  let releaseOwner;
+  const ownerGate = new Promise(resolve => { releaseOwner = resolve; });
+  let ownerEnteredResolve;
+  const ownerEntered = new Promise(resolve => { ownerEnteredResolve = resolve; });
+  const owner = withRepositoryLock(key, async () => {
+    ownerEnteredResolve();
+    await ownerGate;
+  }, { directory });
+  const controller = new AbortController();
+  let waitingResolve;
+  const waiting = new Promise(resolve => { waitingResolve = resolve; });
+  const abortAwareSleep = ms => new Promise(resolve => {
+    let timer;
+    const finish = () => {
+      clearTimeout(timer);
+      controller.signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    timer = setTimeout(finish, ms);
+    controller.signal.addEventListener('abort', finish, { once: true });
+    if (controller.signal.aborted) finish();
+  });
+  let waitingOperationCalled = false;
+  let waiter;
+  let waiterOutcome;
+
+  try {
+    await ownerEntered;
+    waiter = withRepositoryLock(key, async () => { waitingOperationCalled = true; }, {
+      directory,
+      signal: controller.signal,
+      sleep: ms => { waitingResolve(); return abortAwareSleep(ms); },
+      pollIntervalMs: 5,
+      timeoutMs: 2_000
+    });
+    waiterOutcome = waiter.then(value => ({ value }), error => ({ error }));
+    await waiting;
+    controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    releaseOwner();
+    await owner;
+    const outcome = await waiterOutcome;
+    assert.equal(outcome.error?.name, 'AbortError');
+    assert.equal(waitingOperationCalled, false);
+  } finally {
+    releaseOwner();
+    await owner.catch(() => {});
+    if (waiter) await waiter.catch(() => {});
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('does not let a stale-lock reclaimer remove a fresh lock acquired by a peer', async () => {

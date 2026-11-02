@@ -84,6 +84,26 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw cancellationError();
 }
 
+async function waitForLockRetry(ms, signal, sleep) {
+  throwIfAborted(signal);
+  if (!signal) return sleep(ms);
+  let onAbort;
+  try {
+    const retry = Promise.resolve().then(() => {
+      throwIfAborted(signal);
+      return sleep(ms);
+    });
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(cancellationError());
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    await Promise.race([retry, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 function processIsAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -133,18 +153,22 @@ export async function withRepositoryLock(key, operation, {
   timeoutMs = LOCK_WAIT_TIMEOUT_MS,
   pollIntervalMs = 250,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
-  beforeStaleLockUnlink
+  beforeStaleLockUnlink,
+  signal
 } = {}) {
+  throwIfAborted(signal);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const filename = `${createHash('sha256').update(key).digest('hex')}.lock`;
   const lockPath = join(directory, filename);
   const deadline = Date.now() + timeoutMs;
   let handle;
   while (!handle) {
+    throwIfAborted(signal);
     try {
       handle = await open(lockPath, 'wx', 0o600);
       try {
         await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
+        throwIfAborted(signal);
       } catch (writeError) {
         await handle.close().catch(() => {});
         await unlink(lockPath).catch(() => {});
@@ -155,10 +179,11 @@ export async function withRepositoryLock(key, operation, {
       if (error.code !== 'EEXIST') throw error;
       await removeStaleLock(lockPath, beforeStaleLockUnlink);
       if (Date.now() >= deadline) throw new Error('Timed out waiting for another MCP request to finish preparing this repository Codespace.');
-      await sleep(pollIntervalMs);
+      await waitForLockRetry(pollIntervalMs, signal, sleep);
     }
   }
   try {
+    throwIfAborted(signal);
     return await operation();
   } finally {
     await handle.close().catch(() => {});
@@ -416,7 +441,7 @@ export function createCodespaceManager({
           localChangesSynced: Boolean(localSnapshot),
           result
         };
-      });
+      }, { signal });
     }
   };
 }
